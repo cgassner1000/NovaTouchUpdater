@@ -56,3 +56,31 @@ jobs:
             --title "NovaTouchUpdater $env:RELEASE_TAG" `
             --generate-notes `
             --latest
+
+        
+      - name: Nur die 3 neuesten Releases behalten
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $json = gh api --paginate `
+            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+            --slurp
+          if ($LASTEXITCODE -ne 0) {
+            throw "Releases konnten nicht geladen werden."
+          }
+
+          $releases = @($json | ConvertFrom-Json |
+            ForEach-Object { $_ } |
+            ForEach-Object { $_ } |
+            Where-Object { -not $_.draft } |
+            Sort-Object published_at -Descending)
+
+          foreach ($release in ($releases | Select-Object -Skip 3)) {
+            gh release delete "$($release.tag_name)" `
+              --yes --cleanup-tag
+            if ($LASTEXITCODE -ne 0) {
+              throw "Loeschen fehlgeschlagen: $($release.tag_name)"
+            }
+          }
+
