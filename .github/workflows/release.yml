@@ -1,0 +1,46 @@
+name: NovaTouchUpdater Release
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Quellcode auschecken
+        uses: actions/checkout@v4
+
+      - name: .NET 8 einrichten
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Windows-x64-EXE bauen
+        shell: cmd
+        run: call Build-win64.cmd
+
+      - name: EXE pruefen
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'publish-single/NovaTouchUpdater.exe')) {
+            throw 'Build fehlgeschlagen: publish-single/NovaTouchUpdater.exe nicht gefunden.'
+          }
+
+      - name: GitHub Release erstellen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v1.0.${{ github.run_number }}
+        run: |
+          gh release create "$env:RELEASE_TAG" "publish-single/NovaTouchUpdater.exe" `
+            --target "$env:GITHUB_SHA" `
+            --title "NovaTouchUpdater $env:RELEASE_TAG" `
+            --generate-notes `
+            --latest
