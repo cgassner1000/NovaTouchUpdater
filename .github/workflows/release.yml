@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Quellcode auschecken
@@ -29,9 +29,21 @@ jobs:
       - name: EXE pruefen
         shell: pwsh
         run: |
-          if (-not (Test-Path 'publish-single/NovaTouchUpdater.exe')) {
-            throw 'Build fehlgeschlagen: publish-single/NovaTouchUpdater.exe nicht gefunden.'
+          $publishDir = 'bin/Release/net8.0-windows/win-x64/publish'
+          $exe = Join-Path $publishDir 'NovaTouchUpdater.exe'
+
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            Write-Host 'Gefundene EXE-Dateien:'
+            Get-ChildItem -Path 'bin/Release' -Filter '*.exe' -File -Recurse -ErrorAction SilentlyContinue |
+              Select-Object FullName, Length | Format-Table -AutoSize
+            throw "Build fehlgeschlagen: $exe nicht gefunden."
           }
+
+          Get-ChildItem -Path $publishDir -File |
+            Select-Object Name, Length | Format-Table -AutoSize
+
+          $sizeMB = [math]::Round((Get-Item -LiteralPath $exe).Length / 1MB, 2)
+          Write-Host "EXE erfolgreich erstellt: $sizeMB MB"
 
       - name: GitHub Release erstellen
         shell: pwsh
@@ -39,7 +51,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: v1.0.${{ github.run_number }}
         run: |
-          gh release create "$env:RELEASE_TAG" "publish-single/NovaTouchUpdater.exe" `
+          gh release create "$env:RELEASE_TAG" "bin/Release/net8.0-windows/win-x64/publish/NovaTouchUpdater.exe" `
             --target "$env:GITHUB_SHA" `
             --title "NovaTouchUpdater $env:RELEASE_TAG" `
             --generate-notes `
