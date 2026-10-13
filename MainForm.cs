@@ -72,7 +72,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "NovaTouch Updater 1.0";
+        Text = $"NovaTouch Updater v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
         Font = new Font("Segoe UI", 9F);
         BackColor = Color.FromArgb(247, 249, 252);
         ClientSize = new Size(1230, 790);
