@@ -50,6 +50,7 @@ public sealed class MainForm : Form
     private readonly Button btnImport = Button("Hostliste laden");
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
+    private readonly Button btnWinRm = Button("Test WinRM");
     private readonly Button btnScan = Button("1. Prüfen + Versionen");
     private readonly Button btnUpdate = Button("2. Updates starten");
     private readonly Button btnRetry = Button("Fehler erneut versuchen");
@@ -189,7 +190,7 @@ public sealed class MainForm : Form
         configuration.Controls.Add(options, 1, 2);
 
         var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = true };
-        foreach (Button btn in new[] { btnScan, btnUpdate, btnRetry, btnExport, btnCancel })
+        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnRetry, btnExport, btnCancel })
         {
             btn.Margin = new Padding(0, 5, 9, 0);
             bar.Controls.Add(btn);
@@ -265,6 +266,13 @@ public sealed class MainForm : Form
         btnImport.Click += (_, _) => LoadHosts();
         btnPayment.Click += (_, _) => ChooseZip("payment");
         btnFiscal.Click += (_, _) => ChooseZip("fiscal");
+        btnWinRm.Click += (_, _) =>
+        {
+            if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
+            using var dialog = new WinRmTestForm(hosts.Select(h => h.Host).ToArray(),
+                txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value);
+            dialog.ShowDialog(this);
+        };
         btnScan.Click += async (_, _) => await RunScansAsync();
         btnUpdate.Click += async (_, _) => await RunUpdatesAsync(false);
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
@@ -641,6 +649,7 @@ public sealed class MainForm : Form
     private void UpdateButtons()
     {
         btnImport.Enabled = !busy; btnPayment.Enabled = !busy; btnFiscal.Enabled = !busy;
+        btnWinRm.Enabled = !busy && hosts.Count > 0;
         btnScan.Enabled = !busy && hosts.Count > 0;
         btnUpdate.Enabled = !busy && hosts.Any(h => h.Scanned);
         btnRetry.Enabled = !busy && hosts.Any(h => h.Result == "Fehler");

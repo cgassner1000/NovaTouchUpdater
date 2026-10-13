@@ -112,3 +112,16 @@ Damit wird eine eigenständige `win-x64`-EXE veröffentlicht.
 
 Im Projektordner 
 dotnet publish .\NovaTouchUpdater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o ".\publish-single"
+### WinRM separat testen
+
+Der Button **Test WinRM** prüft alle importierten Hosts mit der unter **Prüfen parallel** eingestellten Parallelität und den vorhandenen Anmeldedaten (leerer Benutzername: aktuelle Windows-Anmeldung). Pro Host werden HTTP/5985 und HTTPS/5986 unabhängig von der HTTPS-Auswahl nacheinander geprüft; verschiedene Hosts laufen parallel.
+
+Das separate Ergebnisfenster zeigt TCP-Erreichbarkeit, `New-PSSession` und `Invoke-Command` jeweils einzeln. Eine ausgewählte Zeile zeigt vollständige Fehlerdetails. Ohne erfolgreiche Sitzung wird die Befehlsprüfung ausdrücklich als übersprungen ausgewiesen. Die TLS-Zertifikatsprüfung bleibt aktiv. Pro Protokoll gilt ein Gesamtzeitlimit von 60 Sekunden; der TCP-Test wartet maximal 5 Sekunden.
+
+Der Remote-Testbefehl gibt lediglich einen konstanten Text zurück. Es werden keine Dateien, Dienste oder Einstellungen auf den Zielrechnern verändert. Sitzungen werden nach dem Test entfernt. **Abbrechen** beendet lokale Testprozesse und verhindert weitere Tests. Scan-, Update- und Wiederholungsstatus bleiben unverändert.
+
+Lokaler Test der Diagnose-Fehlerpfade ohne Netzwerkzugriff:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\WinRmWorker.Tests.ps1
+```

@@ -48,6 +48,9 @@ public sealed class WorkerResult
     public bool Success { get; set; }
     public string Message { get; set; } = "";
     public string Error { get; set; } = "";
+    public string Tcp { get; set; } = "Nicht getestet";
+    public string Session { get; set; } = "Nicht getestet";
+    public string Command { get; set; } = "Nicht getestet";
     public bool Changed { get; set; }
     public ServiceInfo[] Services { get; set; } = [];
 }
@@ -57,13 +60,13 @@ public sealed class WorkerRunner : IDisposable
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly string scriptFile;
 
-    public WorkerRunner()
+    public WorkerRunner(string resourceName = "NovaTouchUpdater.RemoteWorker.ps1")
     {
         string directory = Path.Combine(Path.GetTempPath(), "NovaTouchUpdater");
         Directory.CreateDirectory(directory);
         scriptFile = Path.Combine(directory, "Worker-" + Guid.NewGuid().ToString("N") + ".ps1");
-        using Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("NovaTouchUpdater.RemoteWorker.ps1")
-            ?? throw new InvalidOperationException("Die eingebettete RemoteWorker.ps1 ist nicht vorhanden.");
+        using Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException($"Die eingebettete Ressource {resourceName} ist nicht vorhanden.");
         using StreamReader reader = new(stream, Encoding.UTF8);
         File.WriteAllText(scriptFile, reader.ReadToEnd(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     }
