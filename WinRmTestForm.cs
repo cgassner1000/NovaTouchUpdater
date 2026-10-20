@@ -11,9 +11,10 @@ internal sealed class WinRmTestForm : Form
     private bool running = true;
     private int completed;
 
-    public WinRmTestForm(string[] hosts, string username, string password, int parallelism)
+    public WinRmTestForm(string[] hosts, string username, string password, int parallelism, bool useSsl)
     {
-        Text = "Test WinRM – HTTP und HTTPS";
+        string protocol = useSsl ? "HTTPS / 5986" : "HTTP / 5985";
+        Text = "Test WinRM – " + (useSsl ? "HTTPS" : "HTTP");
         Size = new Size(1100, 700);
         MinimumSize = new Size(850, 550);
         StartPosition = FormStartPosition.CenterParent;
@@ -24,7 +25,7 @@ internal sealed class WinRmTestForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         summary.Dock = DockStyle.Fill;
-        summary.Text = $"{hosts.Length} Hosts; maximal {parallelism} Hosts parallel. Beide Protokolle werden unabhängig geprüft.\nZeile auswählen für vollständige Details. Der Testbefehl gibt ausschließlich einen konstanten Text zurück.";
+        summary.Text = $"{hosts.Length} Hosts; maximal {parallelism} Hosts parallel. Es wird ausschließlich {protocol} geprüft.\nZeile auswählen für vollständige Details. Der Testbefehl gibt ausschließlich einen konstanten Text zurück.";
         layout.Controls.Add(summary, 0, 0);
         grid.Dock = DockStyle.Fill;
         grid.ReadOnly = true;
@@ -46,11 +47,8 @@ internal sealed class WinRmTestForm : Form
         cancel.Anchor = AnchorStyles.Right;
         layout.Controls.Add(cancel, 0, 3);
         Controls.Add(layout);
-        var rows = hosts.Select(host => new[]
-        {
-            grid.Rows[grid.Rows.Add(host, "HTTP / 5985", "Wartet", "Wartet", "Wartet", "Wartet")],
-            grid.Rows[grid.Rows.Add(host, "HTTPS / 5986", "Wartet", "Wartet", "Wartet", "Wartet")]
-        }).ToArray();
+        var rows = hosts.Select(host =>
+            grid.Rows[grid.Rows.Add(host, protocol, "Wartet", "Wartet", "Wartet", "Wartet")]).ToArray();
         grid.SelectionChanged += (_, _) => ShowDetails();
         cancel.Click += (_, _) => { if (running) { cancellation.Cancel(); cancel.Enabled = false; } else Close(); };
         FormClosing += (_, e) =>
@@ -70,28 +68,25 @@ internal sealed class WinRmTestForm : Form
                     new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = cancellation.Token },
                     async (index, token) =>
                     {
-                        for (int transport = 0; transport < 2; transport++)
+                        token.ThrowIfCancellationRequested();
+                        var row = rows[index];
+                        Post(() => row.Cells[5].Value = "Läuft");
+                        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                        timeout.CancelAfter(TimeSpan.FromSeconds(60));
+                        WorkerResult result;
+                        try
                         {
-                            token.ThrowIfCancellationRequested();
-                            var row = rows[index][transport];
-                            Post(() => row.Cells[5].Value = "Läuft");
-                            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-                            timeout.CancelAfter(TimeSpan.FromSeconds(60));
-                            WorkerResult result;
-                            try
+                            result = await runner.RunAsync(new WorkerRequest
                             {
-                                result = await runner.RunAsync(new WorkerRequest
-                                {
-                                    Action = "winrm-test", Host = hosts[index], Username = username,
-                                    Password = password, UseSsl = transport == 1
-                                }, _ => { }, timeout.Token);
-                            }
-                            catch (OperationCanceledException) when (!token.IsCancellationRequested)
-                            {
-                                result = new WorkerResult { Error = "Gesamtzeitlimit von 60 Sekunden für dieses Protokoll überschritten. Der lokale Testprozess wurde beendet; noch laufende Schritte sind nicht bestätigt." };
-                            }
-                            Post(() => DisplayResult(row, result));
+                                Action = "winrm-test", Host = hosts[index], Username = username,
+                                Password = password, UseSsl = useSsl
+                            }, _ => { }, timeout.Token);
                         }
+                        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+                        {
+                            result = new WorkerResult { Error = "Gesamtzeitlimit von 60 Sekunden für dieses Protokoll überschritten. Der lokale Testprozess wurde beendet; noch laufende Schritte sind nicht bestätigt." };
+                        }
+                        Post(() => DisplayResult(row, result));
                     });
             }
             catch (OperationCanceledException) { }
@@ -104,16 +99,16 @@ internal sealed class WinRmTestForm : Form
             {
                 password = "";
                 running = false;
-                foreach (var row in rows.SelectMany(r => r))
+                foreach (var row in rows)
                     if (row.Cells[5].Value is "Wartet" or "Läuft")
                     {
                         row.Cells[5].Value = cancellation.IsCancellationRequested ? "Abgebrochen" : "Nicht abgeschlossen";
                         row.Tag = $"{row.Cells[0].Value} – {row.Cells[1].Value}\r\n{row.Cells[5].Value}. Es liegt kein vollständiges Testergebnis vor.";
                         for (int column = 2; column <= 4; column++) row.Cells[column].Value = "Nicht bestätigt";
                     }
-                summary.Text = $"{completed} von {hosts.Length * 2} Protokolltests abgeschlossen" +
+                summary.Text = $"{completed} von {hosts.Length} Hosttests abgeschlossen" +
                     (cancellation.IsCancellationRequested ? " – abgebrochen." : ".") +
-                    "\nZeile auswählen für vollständige Details. HTTP und HTTPS sind getrennte Ergebnisse.";
+                    $"\nGeprüft wurde ausschließlich {protocol}. Zeile auswählen für vollständige Details.";
                 cancel.Enabled = true;
                 cancel.Text = "Schließen";
                 ShowDetails();
@@ -133,7 +128,7 @@ internal sealed class WinRmTestForm : Form
         row.Tag = $"{row.Cells[0].Value} – {row.Cells[1].Value}\r\nTCP: {result.Tcp}\r\nNew-PSSession: {result.Session}\r\nInvoke-Command: {result.Command}\r\n\r\n{result.Message}\r\n{result.Error}";
         foreach (DataGridViewCell cell in row.Cells) cell.ToolTipText = result.Error;
         completed++;
-        summary.Text = $"{completed} Protokolltests abgeschlossen. Zeile auswählen für vollständige Details.\nTCP, New-PSSession und Invoke-Command werden separat ausgewertet.";
+        summary.Text = $"{completed} Hosttests abgeschlossen. Zeile auswählen für vollständige Details.\nTCP, New-PSSession und Invoke-Command werden separat ausgewertet.";
         ShowDetails();
     }
 

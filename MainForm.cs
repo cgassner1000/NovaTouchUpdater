@@ -48,6 +48,8 @@ public sealed class MainForm : Form
     private readonly CheckBox chkForceUpdate = new();
     private readonly ProgressBar progress = new();
     private readonly Button btnImport = Button("Hostliste laden");
+    private readonly Button btnAddHost = Button("Host hinzufügen");
+    private readonly Button btnRemoveHost = Button("Entfernen");
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
     private readonly Button btnWinRm = Button("Test WinRM");
@@ -143,7 +145,17 @@ public sealed class MainForm : Form
             configuration.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / 3F));
         main.Controls.Add(configuration, 0, 1);
 
-        configuration.Controls.Add(PanelRow(btnImport, lblFile), 0, 0);
+        var hostList = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoSize = false };
+        foreach (Button btn in new[] { btnImport, btnAddHost, btnRemoveHost })
+        {
+            btn.Margin = new Padding(0, 0, 5, 0);
+            hostList.Controls.Add(btn);
+        }
+        lblFile.AutoEllipsis = true; lblFile.AutoSize = false; lblFile.Width = 180; lblFile.Height = 34;
+        lblFile.TextAlign = ContentAlignment.MiddleLeft;
+        lblFile.ForeColor = Color.FromArgb(85, 98, 115);
+        hostList.Controls.Add(lblFile);
+        configuration.Controls.Add(hostList, 0, 0);
         configuration.Controls.Add(PanelRow(btnPayment, lblPayment), 0, 1);
         configuration.Controls.Add(PanelRow(btnFiscal, lblFiscal), 0, 2);
         lblFile.Text = "Keine Hostliste";
@@ -250,6 +262,7 @@ public sealed class MainForm : Form
             if (e.RowIndex < 0) return;
             if (table.Rows[e.RowIndex].Tag is HostState host) ShowHostLog(host);
         };
+        table.SelectionChanged += (_, _) => UpdateButtons();
         main.Controls.Add(table, 0, 3);
 
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
@@ -264,13 +277,15 @@ public sealed class MainForm : Form
         main.Controls.Add(footer, 0, 4);
 
         btnImport.Click += (_, _) => LoadHosts();
+        btnAddHost.Click += (_, _) => AddHost();
+        btnRemoveHost.Click += (_, _) => RemoveSelectedHost();
         btnPayment.Click += (_, _) => ChooseZip("payment");
         btnFiscal.Click += (_, _) => ChooseZip("fiscal");
         btnWinRm.Click += (_, _) =>
         {
             if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
             using var dialog = new WinRmTestForm(hosts.Select(h => h.Host).ToArray(),
-                txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value);
+                txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked);
             dialog.ShowDialog(this);
         };
         btnScan.Click += async (_, _) => await RunScansAsync();
@@ -334,6 +349,103 @@ public sealed class MainForm : Form
         lblFile.Text = Path.GetFileName(dialog.FileName) + $" ({hosts.Count})";
         Log("SYSTEM", $"Hostliste eingelesen: {dialog.FileName}, {hosts.Count} eindeutige Hosts");
         UpdateSummary(); UpdateButtons();
+    }
+
+    private void AddHost()
+    {
+        using var dialog = new Form
+        {
+            Text = "Computer hinzufügen oder bearbeiten", Width = 560, Height = 350,
+            FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false, MaximizeBox = false
+        };
+        var label = new Label { Text = "Computernamen (ein Computer pro Zeile):", Dock = DockStyle.Top, Height = 28, TextAlign = ContentAlignment.MiddleLeft };
+        var hostNames = new TextBox
+        {
+            Dock = DockStyle.Fill, Multiline = true, AcceptsReturn = true,
+            ScrollBars = ScrollBars.Vertical, WordWrap = false
+        };
+        hostNames.Lines = hosts.Select(h => h.Host).ToArray();
+        var buttons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 48,
+            Padding = new Padding(8), WrapContents = false
+        };
+        var add = new Button { Text = "OK", AutoSize = true };
+        var cancel = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, AutoSize = true };
+        var browse = new Button { Text = "Durchsuchen...", AutoSize = true };
+        browse.Click += (_, _) =>
+        {
+            try
+            {
+                string[] selected = ActiveDirectoryComputerPicker.SelectComputers(dialog.Handle);
+                if (selected.Length > 0)
+                    hostNames.AppendText((hostNames.TextLength == 0 || hostNames.Text.EndsWith(Environment.NewLine) ? "" : Environment.NewLine)
+                        + string.Join(Environment.NewLine, selected));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(dialog,
+                    "Der Active-Directory-Browser ist nicht verfügbar. Du kannst Computernamen unten manuell eingeben.\n\n" + ex.Message,
+                    "Computer durchsuchen", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        };
+        add.Click += (_, _) =>
+        {
+            string[] values = hostNames.Lines.Select(x => x.Trim())
+                .Where(x => x.Length > 0 && !x.StartsWith('#') && !x.StartsWith(';'))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (values.Length == 0)
+            {
+                MessageBox.Show(dialog, "Bitte mindestens einen Computernamen eingeben oder auswählen.",
+                    "Computer hinzufügen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            string[] invalid = values.Where(x => x.Any(char.IsWhiteSpace)).ToArray();
+            if (invalid.Length > 0)
+            {
+                MessageBox.Show(dialog, "Jede Zeile muss genau einen Computernamen oder eine IP-Adresse enthalten:\n" +
+                    string.Join(Environment.NewLine, invalid), "Ungültige Eingabe", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            dialog.DialogResult = DialogResult.OK;
+            dialog.Close();
+        };
+        buttons.Controls.Add(browse);
+        buttons.Controls.Add(add);
+        buttons.Controls.Add(cancel);
+        dialog.Controls.Add(hostNames);
+        dialog.Controls.Add(label);
+        dialog.Controls.Add(buttons);
+        dialog.AcceptButton = add;
+        dialog.CancelButton = cancel;
+        dialog.Shown += (_, _) => hostNames.Focus();
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        string[] entries = hostNames.Lines.Select(x => x.Trim())
+            .Where(x => x.Length > 0 && !x.StartsWith('#') && !x.StartsWith(';'))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var existing = hosts.ToDictionary(h => h.Host, StringComparer.OrdinalIgnoreCase);
+        int removed = hosts.Count(h => !entries.Contains(h.Host, StringComparer.OrdinalIgnoreCase));
+        int added = entries.Count(value => !existing.ContainsKey(value));
+        hosts.Clear();
+        foreach (string value in entries)
+            hosts.Add(existing.TryGetValue(value, out HostState? host) ? host : new HostState { Host = value });
+        lblFile.Text = $"{hosts.Count} Hosts (manuell ergänzt)";
+        RebuildRows();
+        UpdateSummary();
+        UpdateButtons();
+        Log("SYSTEM", $"Hostliste manuell bearbeitet: {added} hinzugefügt, {removed} entfernt");
+    }
+
+    private void RemoveSelectedHost()
+    {
+        if (busy || table.CurrentRow?.Tag is not HostState host) return;
+        hosts.Remove(host);
+        lblFile.Text = $"{hosts.Count} Hosts";
+        RebuildRows();
+        UpdateSummary();
+        UpdateButtons();
     }
 
     private void RebuildRows()
@@ -648,7 +760,9 @@ public sealed class MainForm : Form
     }
     private void UpdateButtons()
     {
-        btnImport.Enabled = !busy; btnPayment.Enabled = !busy; btnFiscal.Enabled = !busy;
+        btnImport.Enabled = !busy; btnAddHost.Enabled = !busy;
+        btnRemoveHost.Enabled = !busy && table.CurrentRow?.Tag is HostState;
+        btnPayment.Enabled = !busy; btnFiscal.Enabled = !busy;
         btnWinRm.Enabled = !busy && hosts.Count > 0;
         btnScan.Enabled = !busy && hosts.Count > 0;
         btnUpdate.Enabled = !busy && hosts.Any(h => h.Scanned);
