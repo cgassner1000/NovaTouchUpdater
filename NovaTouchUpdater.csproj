@@ -12,6 +12,7 @@
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="RemoteWorker.ps1" LogicalName="NovaTouchUpdater.RemoteWorker.ps1" />
+    <EmbeddedResource Include="RemoteCommand.ps1" LogicalName="NovaTouchUpdater.RemoteCommand.ps1" />
     <EmbeddedResource Include="WinRmWorker.ps1" LogicalName="NovaTouchUpdater.WinRmWorker.ps1" />
   </ItemGroup>
 </Project>

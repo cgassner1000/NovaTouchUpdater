@@ -23,6 +23,9 @@ public sealed class WorkerRequest
     public string PaymentSha256 { get; set; } = "";
     public string FiscalSha256 { get; set; } = "";
     public TransferFileRequest[] TransferFiles { get; set; } = [];
+    public bool RestartPayment { get; set; }
+    public bool RestartFiscal { get; set; }
+    public bool StartServerSuite { get; set; }
 }
 
 public sealed class TransferFileRequest

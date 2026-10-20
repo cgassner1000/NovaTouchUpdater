@@ -58,6 +58,7 @@ public sealed class MainForm : Form
     private readonly Button btnScan = Button("1. Prüfen + Versionen");
     private readonly Button btnUpdate = Button("2. Updates starten");
     private readonly Button btnTransfer = Button("Upload");
+    private readonly Button btnSendCommand = Button("Befehl senden");
     private readonly Button btnRetry = Button("Fehler erneut versuchen");
     private readonly Button btnExport = Button("HTML-Bericht erstellen");
     private readonly Button btnCancel = Button("Abbrechen");
@@ -248,7 +249,7 @@ public sealed class MainForm : Form
         actionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
         actionPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = true };
-        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnTransfer, btnRetry, btnExport, btnCancel })
+        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
         {
             btn.Margin = new Padding(0, 3, 9, 0);
             bar.Controls.Add(btn);
@@ -340,6 +341,7 @@ public sealed class MainForm : Form
         btnScan.Click += async (_, _) => await RunScansAsync();
         btnUpdate.Click += async (_, _) => await RunUpdatesAsync(false);
         btnTransfer.Click += async (_, _) => await TransferFilesAsync();
+        btnSendCommand.Click += async (_, _) => await RestartServicesAsync();
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
         btnExport.Click += (_, _) => ExportHtml();
         btnCancel.Click += (_, _) => cancellation?.Cancel();
@@ -654,6 +656,104 @@ public sealed class MainForm : Form
             failures.IsEmpty && succeeded == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
+    private async Task RestartServicesAsync()
+    {
+        if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
+
+        using var dialog = new Form
+        {
+            Text = "Dienste starten / neu starten", Width = 460, Height = 270,
+            FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+            MinimizeBox = false, MaximizeBox = false, BackColor = Color.White, Font = Font
+        };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), RowCount = 5, ColumnCount = 1 };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var payment = new CheckBox { Text = "nt.payment neu starten (beendete starten)", AutoSize = true };
+        var fiscal = new CheckBox { Text = "nt.fiscal neu starten (beendete starten)", AutoSize = true };
+        var serverSuite = new CheckBox { Text = "nt3_server_suite starten (alle Namensvarianten)", AutoSize = true };
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
+        var run = new Button { Text = "Ausführen", AutoSize = true, DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "Abbrechen", AutoSize = true, DialogResult = DialogResult.Cancel };
+        buttons.Controls.Add(run);
+        buttons.Controls.Add(cancel);
+        layout.Controls.Add(new Label { Text = $"Aktion auf allen {hosts.Count} Hosts ausführen:", AutoSize = true }, 0, 0);
+        layout.Controls.Add(payment, 0, 1);
+        layout.Controls.Add(fiscal, 0, 2);
+        layout.Controls.Add(serverSuite, 0, 3);
+        layout.Controls.Add(buttons, 0, 4);
+        dialog.Controls.Add(layout);
+        dialog.AcceptButton = run;
+        dialog.CancelButton = cancel;
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (!payment.Checked && !fiscal.Checked && !serverSuite.Checked)
+        {
+            MessageBox.Show(this, "Bitte mindestens einen Dienst auswählen.", "Dienste neu starten", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        CaptureCredentials();
+        HostState[] targets = hosts.ToArray();
+        var failures = new ConcurrentBag<string>();
+        int succeeded = 0;
+        bool completedRestart = false;
+        await InBatchAsync(async ct =>
+        {
+            await Parallel.ForEachAsync(targets,
+                new ParallelOptions { MaxDegreeOfParallelism = (int)nUpdate.Value, CancellationToken = ct },
+                async (host, token) =>
+                {
+                    try
+                    {
+                        Mark(host, h => { h.Phase = "Dienste werden neu gestartet"; h.Error = ""; });
+                        using var commandRunner = new WorkerRunner("NovaTouchUpdater.RemoteCommand.ps1");
+                        WorkerResult result = await commandRunner.RunAsync(new WorkerRequest
+                        {
+                            Action = "restart-services", Host = host.Host,
+                            Username = activeUser, Password = activePassword, UseSsl = activeSsl,
+                            RestartPayment = payment.Checked, RestartFiscal = fiscal.Checked,
+                            StartServerSuite = serverSuite.Checked
+                        }, ev =>
+                        {
+                            Log(host.Host, ev.Phase + ": " + ev.Message);
+                            Mark(host, h => h.Phase = ev.Phase + " – " + ev.Message);
+                        }, token);
+                        if (result.Success)
+                        {
+                            Interlocked.Increment(ref succeeded);
+                            Mark(host, h => h.Phase = "Dienste neu gestartet");
+                            Log(host.Host, "RESTART-SERVICES => OK " + result.Message);
+                        }
+                        else
+                        {
+                            string error = FriendlyError(result);
+                            failures.Add(host.Host + ": " + error);
+                            Mark(host, h => { h.Phase = "Neustart fehlgeschlagen"; h.Error = error; });
+                            Log(host.Host, "RESTART-SERVICES => FEHLER " + error);
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        failures.Add(host.Host + ": " + ex.Message);
+                        Mark(host, h => { h.Phase = "Neustart fehlgeschlagen"; h.Error = ex.Message; });
+                        Log(host.Host, "RESTART-SERVICES => FEHLER " + ex);
+                    }
+                    finally { CountCompleted(); }
+                });
+            completedRestart = true;
+        });
+
+        if (!completedRestart) return;
+        string report = $"Neustart: {succeeded} von {targets.Length} Hosts erfolgreich.";
+        if (!failures.IsEmpty) report += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, failures);
+        else if (succeeded < targets.Length) report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
+        MessageBox.Show(this, report, "Dienste neu starten", MessageBoxButtons.OK,
+            failures.IsEmpty && succeeded == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+    }
+
     private void CaptureCredentials()
     {
         // Capture UI state on the UI thread BEFORE Parallel.ForEachAsync.
@@ -943,6 +1043,7 @@ public sealed class MainForm : Form
         btnScan.Enabled = !busy && hosts.Count > 0;
         btnUpdate.Enabled = !busy && hosts.Any(h => h.Scanned);
         btnTransfer.Enabled = !busy && hosts.Count > 0;
+        btnSendCommand.Enabled = !busy && hosts.Count > 0;
         btnRetry.Enabled = !busy && hosts.Any(h => h.Result == "Fehler");
         btnExport.Enabled = !busy && hosts.Count > 0;
         btnCancel.Enabled = busy;
