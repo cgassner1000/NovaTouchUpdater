@@ -42,10 +42,12 @@ public sealed class MainForm : Form
     private readonly Label lblFiscal = new();
     private readonly TextBox txtUser = new();
     private readonly TextBox txtPassword = new();
+    private readonly TextBox txtRemotePath = new();
     private readonly NumericUpDown nScan = new();
     private readonly NumericUpDown nUpdate = new();
     private readonly CheckBox chkSsl = new();
     private readonly CheckBox chkForceUpdate = new();
+    private readonly CheckBox chkSkipZipTransfer = new();
     private readonly ProgressBar progress = new();
     private readonly Button btnImport = Button("Hostliste laden");
     private readonly Button btnAddHost = Button("Host hinzufügen");
@@ -55,6 +57,7 @@ public sealed class MainForm : Form
     private readonly Button btnWinRm = Button("Test WinRM");
     private readonly Button btnScan = Button("1. Prüfen + Versionen");
     private readonly Button btnUpdate = Button("2. Updates starten");
+    private readonly Button btnTransfer = Button("Upload");
     private readonly Button btnRetry = Button("Fehler erneut versuchen");
     private readonly Button btnExport = Button("HTML-Bericht erstellen");
     private readonly Button btnCancel = Button("Abbrechen");
@@ -71,6 +74,8 @@ public sealed class MainForm : Form
     private string activePassword = "";
     private bool activeSsl;
     private bool activeForceUpdate;
+    private string activeRemoteInstallPath = @"C:\install\Novacom";
+    private bool activeSkipZipTransfer;
     private bool lastUpdateForce;
 
     public MainForm()
@@ -114,8 +119,8 @@ public sealed class MainForm : Form
             BackColor = BackColor
         };
         main.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 170));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
+        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 162));
+        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 122));
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         main.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
         Controls.Add(main);
@@ -141,8 +146,9 @@ public sealed class MainForm : Form
         };
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
-        for (int i = 0; i < 3; i++)
-            configuration.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / 3F));
+        configuration.RowStyles.Add(new RowStyle(SizeType.Absolute, 39));
+        configuration.RowStyles.Add(new RowStyle(SizeType.Absolute, 39));
+        configuration.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
         main.Controls.Add(configuration, 0, 1);
 
         var hostList = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoSize = false };
@@ -157,7 +163,27 @@ public sealed class MainForm : Form
         hostList.Controls.Add(lblFile);
         configuration.Controls.Add(hostList, 0, 0);
         configuration.Controls.Add(PanelRow(btnPayment, lblPayment), 0, 1);
-        configuration.Controls.Add(PanelRow(btnFiscal, lblFiscal), 0, 2);
+        var fiscalAndPath = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+        fiscalAndPath.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        fiscalAndPath.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        fiscalAndPath.Controls.Add(PanelRow(btnFiscal, lblFiscal), 0, 0);
+        var targetPath = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 2, 0, 0)
+        };
+        targetPath.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
+        targetPath.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        targetPath.Controls.Add(new Label
+        {
+            Text = "Zielpfad auf den Clients:", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 0);
+        txtRemotePath.Text = activeRemoteInstallPath;
+        txtRemotePath.Dock = DockStyle.Fill;
+        txtRemotePath.TextAlign = HorizontalAlignment.Left;
+        txtRemotePath.Margin = new Padding(3, 2, 8, 2);
+        targetPath.Controls.Add(txtRemotePath, 1, 0);
+        fiscalAndPath.Controls.Add(targetPath, 0, 1);
+        configuration.Controls.Add(fiscalAndPath, 0, 2);
         lblFile.Text = "Keine Hostliste";
         lblPayment.Text = "Payment Target: –";
         lblFiscal.Text = "Fiscal Target: –";
@@ -180,42 +206,60 @@ public sealed class MainForm : Form
         configuration.Controls.Add(login, 1, 0);
         configuration.SetRowSpan(login, 2);
 
-        var options = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = false, WrapContents = true };
-        options.Controls.Add(new Label { Text = "Prüfen parallel:", AutoSize = true, Margin = new Padding(4, 10, 0, 0) });
+        var options = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+        options.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        options.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var optionBar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = false, WrapContents = false };
+        optionBar.Controls.Add(new Label { Text = "Prüfen parallel:", AutoSize = true, Margin = new Padding(4, 10, 0, 0) });
         nScan.Minimum = 1; nScan.Maximum = 150; nScan.Value = 40; nScan.Width = 55;
-        options.Controls.Add(nScan);
-        options.Controls.Add(new Label { Text = "Update parallel:", AutoSize = true, Margin = new Padding(6, 10, 0, 0) });
+        optionBar.Controls.Add(nScan);
+        optionBar.Controls.Add(new Label { Text = "Update parallel:", AutoSize = true, Margin = new Padding(6, 10, 0, 0) });
         nUpdate.Minimum = 1; nUpdate.Maximum = 100; nUpdate.Value = 8; nUpdate.Width = 55;
-        options.Controls.Add(nUpdate);
+        optionBar.Controls.Add(nUpdate);
         chkSsl.Text = "HTTPS"; chkSsl.AutoSize = true; chkSsl.Margin = new Padding(5, 8, 0, 0);
-        options.Controls.Add(chkSsl);
+        optionBar.Controls.Add(chkSsl);
         chkForceUpdate.Text = "Force Update";
         chkForceUpdate.AutoSize = true;
         chkForceUpdate.Margin = new Padding(5, 8, 0, 0);
         chkForceUpdate.Checked = false;
-        options.Controls.Add(chkForceUpdate);
+        optionBar.Controls.Add(chkForceUpdate);
+        options.Controls.Add(optionBar, 0, 0);
+        chkSkipZipTransfer.Text = "Installationsdatei nicht übertragen" + Environment.NewLine + "Lokale Datei verwenden";
+        chkSkipZipTransfer.AutoSize = false;
+        chkSkipZipTransfer.Size = new Size(280, 46);
+        chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
+        chkSkipZipTransfer.Anchor = AnchorStyles.Left;
+        options.Controls.Add(chkSkipZipTransfer, 0, 1);
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts (WinRM und Versionsprüfung).");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-Dienste auch bei identischer IST-/Zielversion erneut installieren.");
+        tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
+        tips.SetToolTip(chkSkipZipTransfer, "Lokale ZIPs bestimmen weiterhin die Zielversion. ZIPs auf den Clients werden bei Updates nicht übertragen.");
         tips.SetToolTip(btnRetry, "Nur Hosts mit Ergebnis 'Fehler' erneut prüfen/aktualisieren; erfolgreiche Hosts bleiben unberührt.");
         configuration.Controls.Add(options, 1, 2);
 
+        var actionPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
+        actionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
+        actionPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = true };
-        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnRetry, btnExport, btnCancel })
+        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnTransfer, btnRetry, btnExport, btnCancel })
         {
-            btn.Margin = new Padding(0, 5, 9, 0);
+            btn.Margin = new Padding(0, 3, 9, 0);
             bar.Controls.Add(btn);
         }
-        bar.Controls.Add(new Label { Text = "Anzeige:", AutoSize = true, Margin = new Padding(13, 14, 5, 0) });
+        actionPanel.Controls.Add(bar, 0, 0);
+        var filterBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        filterBar.Controls.Add(new Label { Text = "Anzeige:", AutoSize = true, Margin = new Padding(13, 8, 5, 0) });
         statusFilter.DropDownStyle = ComboBoxStyle.DropDownList;
         statusFilter.Width = 146;
-        statusFilter.Margin = new Padding(0, 7, 0, 0);
+        statusFilter.Margin = new Padding(0, 2, 0, 0);
         statusFilter.Items.AddRange(new object[] { "Alle Hosts", "Nur Fehler", "Erfolgreich", "Bereits aktuell", "Nicht erreichbar" });
         statusFilter.SelectedIndex = 0;
         statusFilter.SelectedIndexChanged += (_, _) => { if (!busy) RebuildRows(); };
-        bar.Controls.Add(statusFilter);
-        main.Controls.Add(bar, 0, 2);
+        filterBar.Controls.Add(statusFilter);
+        actionPanel.Controls.Add(filterBar, 0, 1);
+        main.Controls.Add(actionPanel, 0, 2);
 
         table.Dock = DockStyle.Fill;
         table.AllowUserToAddRows = false;
@@ -290,6 +334,7 @@ public sealed class MainForm : Form
         };
         btnScan.Click += async (_, _) => await RunScansAsync();
         btnUpdate.Click += async (_, _) => await RunUpdatesAsync(false);
+        btnTransfer.Click += async (_, _) => await TransferFilesAsync();
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
         btnExport.Click += (_, _) => ExportHtml();
         btnCancel.Click += (_, _) => cancellation?.Cancel();
@@ -327,7 +372,9 @@ public sealed class MainForm : Form
     private static Control PanelRow(Button btn, Label lbl)
     {
         var pnl = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoSize = false };
+        btn.Margin = Padding.Empty;
         lbl.AutoEllipsis = true; lbl.AutoSize = false; lbl.Width = 280; lbl.Height = 34;
+        lbl.Margin = Padding.Empty;
         lbl.TextAlign = ContentAlignment.MiddleLeft;
         lbl.ForeColor = Color.FromArgb(85, 98, 115);
         pnl.Controls.Add(btn); pnl.Controls.Add(lbl);
@@ -486,6 +533,131 @@ public sealed class MainForm : Form
         UpdateButtons();
     }
 
+    private async Task TransferFilesAsync()
+    {
+        if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
+        string remotePath = txtRemotePath.Text.Trim();
+        if (!Regex.IsMatch(remotePath, @"^[A-Za-z]:\\"))
+        {
+            MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad auf den Clients eingeben, z. B. C:\\install\\Novacom.",
+                "Zielpfad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var files = new List<string>();
+        if (!string.IsNullOrWhiteSpace(paymentZip)) files.Add(paymentZip);
+        if (!string.IsNullOrWhiteSpace(fiscalZip)) files.Add(fiscalZip);
+        DialogResult chooseExtras = MessageBox.Show(this,
+            "Sollen zusätzlich EXE- oder MSI-Dateien ausgewählt werden?\n\nNein überträgt nur die ausgewählten ZIPs.",
+            "Zusatzdateien auswählen", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+        if (chooseExtras == DialogResult.Cancel) return;
+        if (chooseExtras == DialogResult.Yes)
+        {
+            using OpenFileDialog dialog = new()
+            {
+                Filter = "Programme und Installer (*.exe;*.msi)|*.exe;*.msi|Alle Dateien (*.*)|*.*",
+                Multiselect = true, Title = "EXE-/MSI-Dateien auswählen"
+            };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            files.AddRange(dialog.FileNames);
+        }
+
+        files = files.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (files.Count == 0)
+        {
+            MessageBox.Show(this, "Bitte zuerst mindestens eine ZIP auswählen oder EXE-/MSI-Dateien angeben.",
+                "Dateiübertragung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        string[] missing = files.Where(path => !File.Exists(path)).ToArray();
+        if (missing.Length > 0)
+        {
+            MessageBox.Show(this, "Diese Dateien wurden nicht gefunden:\n" + string.Join(Environment.NewLine, missing),
+                "Dateiübertragung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        string[] duplicateNames = files.Select(path => Path.GetFileName(path))
+            .GroupBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1).Select(group => group.Key).ToArray();
+        if (duplicateNames.Length > 0)
+        {
+            MessageBox.Show(this, "Mehrere ausgewählte Dateien haben denselben Dateinamen:\n" +
+                string.Join(Environment.NewLine, duplicateNames), "Dateinamen doppelt", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (MessageBox.Show(this,
+            $"{files.Count} Datei(en) an alle {hosts.Count} Hosts nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'Installationsdateien nicht übertragen' aktiviert ist.",
+            "Dateiübertragung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+
+        CaptureCredentials();
+        HostState[] targets = hosts.ToArray();
+        var failures = new ConcurrentBag<string>();
+        int succeeded = 0;
+        bool completedTransfer = false;
+        await InBatchAsync(async ct =>
+        {
+            var transferFiles = new TransferFileRequest[files.Count];
+            for (int i = 0; i < files.Count; i++)
+            {
+                transferFiles[i] = new TransferFileRequest
+                {
+                    LocalPath = files[i],
+                    Sha256 = await WorkerRunner.Sha256Async(files[i], ct)
+                };
+            }
+
+            await Parallel.ForEachAsync(targets,
+                new ParallelOptions { MaxDegreeOfParallelism = (int)nUpdate.Value, CancellationToken = ct },
+                async (host, token) =>
+                {
+                    try
+                    {
+                        Mark(host, h => h.Phase = "Dateien werden übertragen");
+                        WorkerResult result = await runner.RunAsync(new WorkerRequest
+                        {
+                            Action = "transfer", Host = host.Host, Username = activeUser, Password = activePassword,
+                            UseSsl = activeSsl, RemoteInstallPath = activeRemoteInstallPath, TransferFiles = transferFiles
+                        }, ev =>
+                        {
+                            Log(host.Host, ev.Phase + ": " + ev.Message);
+                            Mark(host, h => h.Phase = ev.Phase + " – " + ev.Message);
+                        }, token);
+                        if (result.Success)
+                        {
+                            Interlocked.Increment(ref succeeded);
+                            Mark(host, h => h.Phase = "Dateiübertragung abgeschlossen");
+                            Log(host.Host, "TRANSFER => OK " + result.Message);
+                        }
+                        else
+                        {
+                            string error = FriendlyError(result);
+                            failures.Add(host.Host + ": " + error);
+                            Mark(host, h => { h.Phase = "Dateiübertragung fehlgeschlagen"; h.Error = error; });
+                            Log(host.Host, "TRANSFER => FEHLER " + error);
+                        }
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        failures.Add(host.Host + ": " + ex.Message);
+                        Mark(host, h => { h.Phase = "Dateiübertragung fehlgeschlagen"; h.Error = ex.Message; });
+                        Log(host.Host, "TRANSFER => FEHLER " + ex);
+                    }
+                    finally { CountCompleted(); }
+                });
+            completedTransfer = true;
+        });
+
+        if (!completedTransfer) return;
+        string report = $"Dateiübertragung: {succeeded} von {targets.Length} Hosts erfolgreich.";
+        if (!failures.IsEmpty)
+            report += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, failures);
+        else if (succeeded < targets.Length)
+            report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
+        MessageBox.Show(this, report, "Dateiübertragung", MessageBoxButtons.OK,
+            failures.IsEmpty && succeeded == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+    }
+
     private void CaptureCredentials()
     {
         // Capture UI state on the UI thread BEFORE Parallel.ForEachAsync.
@@ -493,13 +665,15 @@ public sealed class MainForm : Form
         activePassword = txtPassword.Text;
         activeSsl = chkSsl.Checked;
         activeForceUpdate = chkForceUpdate.Checked;
+        activeRemoteInstallPath = txtRemotePath.Text.Trim();
+        activeSkipZipTransfer = chkSkipZipTransfer.Checked;
     }
 
     private WorkerRequest Request(string action, HostState host) => new()
     {
         Action = action, Host = host.Host,
         Username = activeUser, Password = activePassword, UseSsl = activeSsl, ForceUpdate = activeForceUpdate,
-        RemoteInstallPath = @"C:\install\Novacom",
+        RemoteInstallPath = activeRemoteInstallPath, SkipZipTransfer = activeSkipZipTransfer,
         PaymentZip = paymentZip, PaymentVersion = paymentVersion, PaymentSha256 = paymentHash,
         FiscalZip = fiscalZip, FiscalVersion = fiscalVersion, FiscalSha256 = fiscalHash
     };
@@ -561,13 +735,19 @@ public sealed class MainForm : Form
         {
             MessageBox.Show(this, "Mindestens eine Update-ZIP auswählen."); return;
         }
+        if (!Regex.IsMatch(txtRemotePath.Text.Trim(), @"^[A-Za-z]:\\"))
+        {
+            MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad auf den Clients eingeben, z. B. C:\\install\\Novacom.",
+                "Zielpfad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         var selected = onlyFailed ? hosts.Where(h => h.Result == "Fehler").ToArray() : hosts.Where(h => h.Scanned).ToArray();
         if (selected.Length == 0)
         {
             MessageBox.Show(this, onlyFailed ? "Keine fehlerhaften Hosts vorhanden." : "Zuerst die Hosts prüfen und Versionen auslesen."); return;
         }
         if (MessageBox.Show(this,
-            $"Update für {selected.Length} Hosts starten?\n\nModus: {(chkForceUpdate.Checked ? "FORCE UPDATE (Versiongleichheit ignorieren)" : "Normal (gleiche Version überspringen)")}\nPayment Target: {(paymentVersion.Length == 0 ? "–" : paymentVersion)}\nFiscal Target: {(fiscalVersion.Length == 0 ? "–" : fiscalVersion)}\n\nNur Dienste mit ausgewählter ZIP werden während des Updates angehalten.",
+            $"Update für {selected.Length} Hosts starten?\n\nModus: {(chkForceUpdate.Checked ? "FORCE UPDATE (Versiongleichheit ignorieren)" : "Normal (gleiche Version überspringen)")}\nPayment Target: {(paymentVersion.Length == 0 ? "–" : paymentVersion)}\nFiscal Target: {(fiscalVersion.Length == 0 ? "–" : fiscalVersion)}\nZielpfad: {txtRemotePath.Text.Trim()}\nZIP-Übertragung: {(chkSkipZipTransfer.Checked ? "deaktiviert (ZIPs auf Hosts werden geprüft)" : "aktiv")}\n\nNur Dienste mit ausgewählter ZIP werden während des Updates angehalten.",
             "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         CaptureCredentials();
         lastUpdateForce = activeForceUpdate;
@@ -575,7 +755,7 @@ public sealed class MainForm : Form
         {
             paymentHash = await WorkerRunner.Sha256Async(paymentZip, ct);
             fiscalHash = await WorkerRunner.Sha256Async(fiscalZip, ct);
-            Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}");
+            Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Zielpfad: {activeRemoteInstallPath}; ZIP-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
             await ParallelPhaseAsync(selected, (int)nUpdate.Value, async (host, token) =>
             {
                 for (int attempt = 1; attempt <= 3; attempt++)
@@ -766,10 +946,12 @@ public sealed class MainForm : Form
         btnWinRm.Enabled = !busy && hosts.Count > 0;
         btnScan.Enabled = !busy && hosts.Count > 0;
         btnUpdate.Enabled = !busy && hosts.Any(h => h.Scanned);
+        btnTransfer.Enabled = !busy && hosts.Count > 0;
         btnRetry.Enabled = !busy && hosts.Any(h => h.Result == "Fehler");
         btnExport.Enabled = !busy && hosts.Count > 0;
         btnCancel.Enabled = busy;
         nScan.Enabled = !busy; nUpdate.Enabled = !busy; chkSsl.Enabled = !busy; chkForceUpdate.Enabled = !busy;
+        txtRemotePath.Enabled = !busy; chkSkipZipTransfer.Enabled = !busy;
         txtUser.Enabled = !busy; txtPassword.Enabled = !busy; statusFilter.Enabled = !busy;
     }
 

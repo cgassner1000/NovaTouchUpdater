@@ -15,12 +15,20 @@ public sealed class WorkerRequest
     public bool UseSsl { get; set; }
     public bool ForceUpdate { get; set; }
     public string RemoteInstallPath { get; set; } = "C:\\install\\Novacom";
+    public bool SkipZipTransfer { get; set; }
     public string PaymentZip { get; set; } = "";
     public string FiscalZip { get; set; } = "";
     public string PaymentVersion { get; set; } = "";
     public string FiscalVersion { get; set; } = "";
     public string PaymentSha256 { get; set; } = "";
     public string FiscalSha256 { get; set; } = "";
+    public TransferFileRequest[] TransferFiles { get; set; } = [];
+}
+
+public sealed class TransferFileRequest
+{
+    public string LocalPath { get; set; } = "";
+    public string Sha256 { get; set; } = "";
 }
 
 public sealed class ServiceInfo

@@ -79,6 +79,64 @@ try {
             Emit @{ Event='result'; Success=$true; Message='WinRM erreichbar und Anmeldung erfolgreich'; Services=@() }
             exit 0
         }
+        if ($req.Action -eq 'transfer') {
+            $remotePath = [string]$req.RemoteInstallPath
+            if ([string]::IsNullOrWhiteSpace($remotePath)) { throw 'RemoteInstallPath wurde nicht übergeben.' }
+            $remoteInfo = Invoke-Command -Session $session -ArgumentList $remotePath -ErrorAction Stop -ScriptBlock {
+                param([string]$dir)
+                $computer = [Environment]::MachineName
+                $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+                try {
+                    if ($dir -notmatch '^[A-Za-z]:\\') { throw "Ungueltiger absoluter Windows-Zielpfad: $dir" }
+                    $fullPath = [IO.Path]::GetFullPath($dir)
+                    $driveRoot = [IO.Path]::GetPathRoot($fullPath)
+                    if (-not [IO.Directory]::Exists($driveRoot)) { throw "Laufwerk nicht verfuegbar: $driveRoot" }
+                    [void][IO.Directory]::CreateDirectory($fullPath)
+                    if (-not [IO.Directory]::Exists($fullPath)) { throw "Zielordner konnte nicht erstellt werden: $fullPath" }
+                    [pscustomobject]@{ ComputerName = $computer; Account = $account; Directory = $fullPath }
+                }
+                catch {
+                    throw "Remote-Zielordner konnte nicht erstellt/verifiziert werden auf ${computer} (${account}), Pfad '${dir}': $($_.Exception.Message)"
+                }
+            }
+            $remoteHost = [string]$remoteInfo.ComputerName
+            $remotePath = [string]$remoteInfo.Directory
+            $files = @($req.TransferFiles)
+            if ($files.Count -eq 0) { throw 'Keine Dateien zur Übertragung angegeben.' }
+            $copied = 0
+            foreach ($file in $files) {
+                $localFile = [string]$file.LocalPath
+                $expectedHash = [string]$file.Sha256
+                if (-not (Test-Path -LiteralPath $localFile -PathType Leaf)) { throw "Lokale Datei fehlt auf dem Updater-PC: $localFile" }
+                if ([string]::IsNullOrWhiteSpace($expectedHash)) { throw "SHA256-Pruefsumme fehlt fuer $localFile" }
+                $remoteFile = Join-Path $remotePath (Split-Path -Path $localFile -Leaf)
+                $remoteHash = Invoke-Command -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
+                    param([string]$path)
+                    if (Test-Path -LiteralPath $path -PathType Leaf) {
+                        (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
+                    } else { '' }
+                }
+                if ($remoteHash -ne $expectedHash) {
+                    Progress 'Übertragung' ("Kopiere $(Split-Path -Path $localFile -Leaf) nach $remoteHost : $remoteFile")
+                    try {
+                        Copy-Item -LiteralPath $localFile -Destination $remoteFile -ToSession $session -Force -ErrorAction Stop
+                    }
+                    catch {
+                        throw "Dateiübertragung fehlgeschlagen ($remoteHost; $remoteFile): $($_.Exception.Message)"
+                    }
+                    $remoteHash = Invoke-Command -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
+                        param([string]$path)
+                        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Datei fehlt nach der Übertragung: $path" }
+                        (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
+                    }
+                    if ($remoteHash -ne $expectedHash) { throw "SHA256-Pruefung nach der Übertragung fehlgeschlagen ($remoteHost; $remoteFile)" }
+                    $copied++
+                }
+                Progress 'Übertragung' ("Datei verifiziert: $remoteHost : $remoteFile")
+            }
+            Emit @{ Event='result'; Success=$true; Message="$($files.Count) Datei(en) geprüft; $copied übertragen; keine Installation ausgeführt."; Changed=($copied -gt 0); Services=@() }
+            exit 0
+        }
 
         Progress 'Versionen' 'Dienste und installierte Versionen werden ausgelesen'
         $services = @(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory})
@@ -123,7 +181,12 @@ try {
             exit 0
         }
 
-        Progress 'Übertragung' 'ZIP-Dateien werden auf den Host übertragen und geprüft'
+        $skipZipTransfer = [bool]$req.SkipZipTransfer
+        if ($skipZipTransfer) {
+            Progress 'ZIP-Prüfung' 'Vorhandene ZIP-Dateien auf dem Host werden geprüft; Übertragung ist deaktiviert'
+        } else {
+            Progress 'Übertragung' 'ZIP-Dateien werden auf den Host übertragen und geprüft'
+        }
         $remotePath = [string]$req.RemoteInstallPath
         if ([string]::IsNullOrWhiteSpace($remotePath)) { throw 'RemoteInstallPath wurde nicht übergeben.' }
 
@@ -170,6 +233,9 @@ try {
                 } else { '' }
             }
             if ($remoteHash -ne $expectedHash) {
+                if ($skipZipTransfer) {
+                    throw "ZIP-Übertragung deaktiviert: '$remoteFile' fehlt auf $remoteHost oder stimmt nicht mit der ausgewählten lokalen ZIP überein (SHA256)."
+                }
                 Progress 'Übertragung' ("Kopiere $kind : $zip => $remoteHost : $remoteFile")
                 try {
                     Copy-Item -LiteralPath $zip -Destination $remoteFile -ToSession $session -Force -ErrorAction Stop
@@ -186,7 +252,8 @@ try {
             }
             if ($remoteHash -ne $expectedHash) { throw "SHA256-Pruefung fehlgeschlagen ($remoteHost; $remoteFile)" }
             $remoteZipFiles[$kind] = [string]$remoteFile
-            Progress 'Übertragung' ("ZIP verifiziert: $remoteHost : $remoteFile")
+            $verifiedMessage = if ($skipZipTransfer) { "Vorhandene ZIP verifiziert: $remoteHost : $remoteFile" } else { "ZIP verifiziert: $remoteHost : $remoteFile" }
+            Progress 'ZIP-Prüfung' $verifiedMessage
         }
 
         # Prepare and expand away from running services; only stop after successful extraction.
