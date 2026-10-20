@@ -223,7 +223,7 @@ public sealed class MainForm : Form
         optionBar.Controls.Add(nUpdate);
         chkSsl.Text = "HTTPS"; chkSsl.AutoSize = true; chkSsl.Margin = new Padding(5, 8, 0, 0);
         optionBar.Controls.Add(chkSsl);
-        chkForceUpdate.Text = "Force Update";
+        chkForceUpdate.Text = "Force Up-Downgrade";
         chkForceUpdate.AutoSize = true;
         chkForceUpdate.Margin = new Padding(5, 8, 0, 0);
         chkForceUpdate.Checked = false;
