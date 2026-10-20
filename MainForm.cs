@@ -549,28 +549,19 @@ public sealed class MainForm : Form
             return;
         }
 
-        var files = new List<string>();
-        if (!string.IsNullOrWhiteSpace(paymentZip)) files.Add(paymentZip);
-        if (!string.IsNullOrWhiteSpace(fiscalZip)) files.Add(fiscalZip);
-        DialogResult chooseExtras = MessageBox.Show(this,
-            "Sollen zusätzlich EXE- oder MSI-Dateien ausgewählt werden?\n\nNein überträgt nur die ausgewählten ZIPs.",
-            "Zusatzdateien auswählen", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-        if (chooseExtras == DialogResult.Cancel) return;
-        if (chooseExtras == DialogResult.Yes)
+        using OpenFileDialog dialog = new()
         {
-            using OpenFileDialog dialog = new()
-            {
-                Filter = "Programme und Installer (*.exe;*.msi)|*.exe;*.msi|Alle Dateien (*.*)|*.*",
-                Multiselect = true, Title = "EXE-/MSI-Dateien auswählen"
-            };
-            if (dialog.ShowDialog(this) != DialogResult.OK) return;
-            files.AddRange(dialog.FileNames);
-        }
+            Filter = "Alle Dateien (*.*)|*.*",
+            Multiselect = true,
+            Title = "Dateien für den Upload auswählen"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        var files = dialog.FileNames.ToList();
 
         files = files.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (files.Count == 0)
         {
-            MessageBox.Show(this, "Bitte zuerst mindestens eine ZIP auswählen oder EXE-/MSI-Dateien angeben.",
+            MessageBox.Show(this, "Bitte mindestens eine Datei für den Upload auswählen.",
                 "Dateiübertragung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
