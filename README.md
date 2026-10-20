@@ -12,6 +12,20 @@ Quellcode für eine eigenständige Windows-GUI zur parallelen Verwaltung von Upd
 
 Der GUI-Updater selbst nutzt **.NET 8** und startet Windows PowerShell 5.1 als Hintergrundprozess. Der darin eingebettete Worker verwendet `New-PSSession`, `Invoke-Command` und `Copy-Item -ToSession`, analog zur ursprünglichen Lösung. Es wird **kein zusätzlicher Agent** auf den Zielrechnern installiert.
 
+Optional kann neben der EXE eine lokale `config.json` liegen. Sie füllt beim Start Hosts, Zielpfad, WinRM-Benutzer, HTTPS-Option und Passwort vor. Die Datei wird nicht automatisch erstellt und ist in Git ignoriert. Das Passwort wird direkt als Klartext in `Password` eingetragen:
+
+```json
+{
+  "Hosts": ["POS01", "POS02"],
+  "RemotePath": "C:\\install\\Novacom",
+  "Username": "DOMAIN\\support",
+	"Password": "mein-passwort",
+  "UseSsl": false
+}
+```
+
+`config.json` enthält das Passwort unverschlüsselt. Schütze die Datei entsprechend (z. B. Zugriff nur für den Support-Benutzer gewähren) und teile sie nicht über unsichere Kanäle. Fehlt `config.json`, startet die Anwendung wie bisher mit leerer Hostliste und ohne vorausgefüllte Zugangsdaten.
+
 Windows 10 Enterprise LTSC 2019 (1809) und Windows Server 2019 unterstützen .NET 8. Der .NET-8-Support endet am 10. November 2026. Die Windows-Desktopanwendung kann self-contained veröffentlicht werden.
 
 ## Projekt öffnen

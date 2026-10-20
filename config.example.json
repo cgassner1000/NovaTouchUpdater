@@ -1,0 +1,10 @@
+{
+  "Hosts": [
+    "POS01",
+    "POS02"
+  ],
+  "RemotePath": "C:\\install\\Novacom",
+  "Username": "DOMAIN\\support",
+  "Password": "mein-passwort",
+  "UseSsl": false
+}

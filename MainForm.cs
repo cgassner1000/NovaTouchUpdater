@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace NovaTouchUpdater;
@@ -91,6 +92,7 @@ public sealed class MainForm : Form
         Directory.CreateDirectory(logDir);
         logFile = Path.Combine(logDir, "Update-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
         ConstructUi();
+        LoadStartupConfig();
         // Erst nach dem ersten Layout die endgültigen Fill-Spalten aktivieren.
         Shown += (_, _) => ApplyColumnWeights();
         UpdateButtons();
@@ -104,6 +106,53 @@ public sealed class MainForm : Form
             }
         };
         FormClosed += (_, _) => runner.Dispose();
+    }
+
+    private void LoadStartupConfig()
+    {
+        string configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
+        if (!File.Exists(configPath)) return;
+
+        try
+        {
+            var config = JsonSerializer.Deserialize<UpdaterConfig>(File.ReadAllText(configPath));
+            if (config is null) return;
+
+            txtRemotePath.Text = string.IsNullOrWhiteSpace(config.RemotePath) ? activeRemoteInstallPath : config.RemotePath;
+            txtUser.Text = config.Username ?? "";
+            chkSsl.Checked = config.UseSsl;
+
+            txtPassword.Text = config.Password ?? "";
+
+            string[] configuredHosts = (config.Hosts ?? [])
+                .Select(host => host.Trim())
+                .Where(host => host.Length > 0 && !host.StartsWith('#') && !host.StartsWith(';') && !host.Any(char.IsWhiteSpace))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (configuredHosts.Length > 0)
+            {
+                hosts.Clear();
+                foreach (string host in configuredHosts) hosts.Add(new HostState { Host = host });
+                lblFile.Text = $"config.json ({hosts.Count})";
+                RebuildRows();
+                UpdateSummary();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            MessageBox.Show(this,
+                $"Die Einstellungen aus config.json konnten nicht vollständig geladen werden.\n{ex.Message}",
+                "Konfiguration", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private sealed class UpdaterConfig
+    {
+        public string[]? Hosts { get; set; }
+        public string? RemotePath { get; set; }
+        public string? Username { get; set; }
+        public string? Password { get; set; }
+        public bool UseSsl { get; set; }
     }
 
     private static Button Button(string text) => new()
@@ -672,9 +721,9 @@ public sealed class MainForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var payment = new CheckBox { Text = "nt.payment neu starten (beendete starten)", AutoSize = true };
-        var fiscal = new CheckBox { Text = "nt.fiscal neu starten (beendete starten)", AutoSize = true };
-        var serverSuite = new CheckBox { Text = "nt3_server_suite starten (alle Namensvarianten)", AutoSize = true };
+        var payment = new CheckBox { Text = "nt.payment neu starten", AutoSize = true };
+        var fiscal = new CheckBox { Text = "nt.fiscal neu starten", AutoSize = true };
+        var serverSuite = new CheckBox { Text = "nt3_server_suite starten", AutoSize = true };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
         var run = new Button { Text = "Ausführen", AutoSize = true, DialogResult = DialogResult.OK };
         var cancel = new Button { Text = "Abbrechen", AutoSize = true, DialogResult = DialogResult.Cancel };
