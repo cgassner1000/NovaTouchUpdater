@@ -82,7 +82,7 @@ public sealed class MainForm : Form
     {
         Text = $"NovaTouch Updater v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
         Font = new Font("Segoe UI", 9F);
-        BackColor = Color.FromArgb(247, 249, 252);
+        BackColor = Color.White;
         ClientSize = new Size(1230, 790);
         MinimumSize = new Size(980, 630);
         StartPosition = FormStartPosition.CenterScreen;
@@ -151,7 +151,12 @@ public sealed class MainForm : Form
         configuration.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
         main.Controls.Add(configuration, 0, 1);
 
-        var hostList = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoSize = false };
+        int zipButtonWidth = Math.Max(btnPayment.PreferredSize.Width, btnFiscal.PreferredSize.Width);
+        btnPayment.AutoSize = false;
+        btnFiscal.AutoSize = false;
+        btnPayment.Width = zipButtonWidth;
+        btnFiscal.Width = zipButtonWidth;
+        var hostList = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoSize = false, Margin = Padding.Empty };
         foreach (Button btn in new[] { btnImport, btnAddHost, btnRemoveHost })
         {
             btn.Margin = new Padding(0, 0, 5, 0);
@@ -163,7 +168,7 @@ public sealed class MainForm : Form
         hostList.Controls.Add(lblFile);
         configuration.Controls.Add(hostList, 0, 0);
         configuration.Controls.Add(PanelRow(btnPayment, lblPayment), 0, 1);
-        var fiscalAndPath = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+        var fiscalAndPath = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
         fiscalAndPath.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         fiscalAndPath.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         fiscalAndPath.Controls.Add(PanelRow(btnFiscal, lblFiscal), 0, 0);
@@ -371,7 +376,7 @@ public sealed class MainForm : Form
 
     private static Control PanelRow(Button btn, Label lbl)
     {
-        var pnl = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoSize = false };
+        var pnl = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoSize = false, Margin = Padding.Empty };
         btn.Margin = Padding.Empty;
         lbl.AutoEllipsis = true; lbl.AutoSize = false; lbl.Width = 280; lbl.Height = 34;
         lbl.Margin = Padding.Empty;
