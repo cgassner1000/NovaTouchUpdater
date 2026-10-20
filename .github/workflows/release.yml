@@ -1,3 +1,4 @@
+
 name: NovaTouchUpdater Release
 
 on:
@@ -26,7 +27,7 @@ jobs:
         shell: cmd
         run: call Build-win64.cmd
 
-      - name: EXE pruefen
+      - name: EXE pruefen und mit Versionsnummer benennen
         shell: pwsh
         run: |
           $publishDir = 'bin/Release/net8.0-windows/win-x64/publish'
@@ -39,11 +40,15 @@ jobs:
             throw "Build fehlgeschlagen: $exe nicht gefunden."
           }
 
+          $versionedName = "NovaTouchUpdater-v1.0.$env:GITHUB_RUN_NUMBER.exe"
+          Rename-Item -LiteralPath $exe -NewName $versionedName
+          $versionedExe = Join-Path $publishDir $versionedName
+
           Get-ChildItem -Path $publishDir -File |
             Select-Object Name, Length | Format-Table -AutoSize
 
-          $sizeMB = [math]::Round((Get-Item -LiteralPath $exe).Length / 1MB, 2)
-          Write-Host "EXE erfolgreich erstellt: $sizeMB MB"
+          $sizeMB = [math]::Round((Get-Item -LiteralPath $versionedExe).Length / 1MB, 2)
+          Write-Host "EXE erfolgreich erstellt: $versionedName ($sizeMB MB)"
 
       - name: GitHub Release erstellen
         shell: pwsh
@@ -51,13 +56,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: v1.0.${{ github.run_number }}
         run: |
-          gh release create "$env:RELEASE_TAG" "bin/Release/net8.0-windows/win-x64/publish/NovaTouchUpdater.exe" `
+          $releaseExe = "bin/Release/net8.0-windows/win-x64/publish/NovaTouchUpdater-$env:RELEASE_TAG.exe"
+          gh release create "$env:RELEASE_TAG" "$releaseExe" `
             --target "$env:GITHUB_SHA" `
             --title "NovaTouchUpdater $env:RELEASE_TAG" `
             --generate-notes `
             --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release konnte nicht erstellt werden: $env:RELEASE_TAG"
+          }
 
-        
       - name: Nur die 3 neuesten Releases behalten
         shell: pwsh
         env:
@@ -83,4 +91,3 @@ jobs:
               throw "Loeschen fehlgeschlagen: $($release.tag_name)"
             }
           }
-
