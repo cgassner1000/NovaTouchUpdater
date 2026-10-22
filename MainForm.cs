@@ -82,16 +82,20 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
+        SuspendLayout();
         Text = $"NovaTouch Updater v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
         Font = new Font("Segoe UI", 9F);
         BackColor = Color.White;
         ClientSize = new Size(1230, 790);
-        MinimumSize = new Size(980, 630);
+        MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterScreen;
         string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovaTouchUpdater", "Logs");
         Directory.CreateDirectory(logDir);
         logFile = Path.Combine(logDir, "Update-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
         ConstructUi();
+        AutoScaleDimensions = new SizeF(96F, 96F);
+        AutoScaleMode = AutoScaleMode.Dpi;
+        ResumeLayout(true);
         LoadStartupConfig();
         // Erst nach dem ersten Layout die endgültigen Fill-Spalten aktivieren.
         Shown += (_, _) => ApplyColumnWeights();
@@ -157,34 +161,81 @@ public sealed class MainForm : Form
 
     private static Button Button(string text) => new()
     {
-        Text = text, AutoSize = true, Height = 34,
+        Text = text, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
         Padding = new Padding(8, 4, 8, 4), FlatStyle = FlatStyle.System
     };
 
+    private static FlowLayoutPanel FlowRow(params Control[] controls)
+    {
+        var row = new WrappingFlowLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = true, Margin = Padding.Empty
+        };
+        row.Controls.AddRange(controls);
+        return row;
+    }
+
+    private static TableLayoutPanel Stack(params Control[] controls)
+    {
+        var stack = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1, RowCount = controls.Length, Margin = Padding.Empty
+        };
+        stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int i = 0; i < controls.Length; i++)
+        {
+            stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            stack.Controls.Add(controls[i], 0, i);
+        }
+        return stack;
+    }
+
+    private static Control LabeledInput(string text, Control input)
+    {
+        var label = new Label
+        {
+            Text = text, AutoSize = true, Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 3, 4, 3)
+        };
+        var row = FlowRow(label, input);
+        row.WrapContents = false;
+        row.Anchor = AnchorStyles.Left;
+        row.Dock = DockStyle.None;
+        row.Margin = new Padding(3, 0, 8, 0);
+        return row;
+    }
+
     private void ConstructUi()
     {
+        var viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         var main = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(16),
-            BackColor = BackColor
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1, RowCount = 5, Padding = new Padding(16), BackColor = BackColor
         };
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 162));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 122));
+        main.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        main.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
-        Controls.Add(main);
+        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        viewport.Controls.Add(main);
+        viewport.ClientSizeChanged += (_, _) => main.MinimumSize = new Size(0, viewport.ClientSize.Height);
+        Controls.Add(viewport);
 
-        var header = new Panel { Dock = DockStyle.Fill };
+        var header = FlowRow();
+        header.Margin = new Padding(3, 0, 3, 12);
         header.Controls.Add(new Label
         {
             Text = "NovaTouch 2.5 Updater", Font = new Font(Font.FontFamily, 19F, FontStyle.Bold),
-            Dock = DockStyle.Left, AutoSize = true
+            AutoSize = true, Anchor = AnchorStyles.Left
         });
         header.Controls.Add(new Label
         {
             Text = "nt.payment / nt.fiscal    ·    parallele Remote-Updates",
-            AutoSize = true, Dock = DockStyle.Right, TextAlign = ContentAlignment.MiddleRight,
+            AutoSize = true, Anchor = AnchorStyles.Left, TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.FromArgb(95, 110, 130)
         });
         main.Controls.Add(header, 0, 0);
@@ -192,65 +243,60 @@ public sealed class MainForm : Form
         // Hostliste, Payment-ZIP und Fiscal-ZIP immer untereinander anzeigen.
         var configuration = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3, Padding = new Padding(2)
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2, RowCount = 1, Padding = new Padding(2)
         };
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
-        configuration.RowStyles.Add(new RowStyle(SizeType.Absolute, 39));
-        configuration.RowStyles.Add(new RowStyle(SizeType.Absolute, 39));
-        configuration.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
+        configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.Controls.Add(configuration, 0, 1);
 
-        int zipButtonWidth = Math.Max(btnPayment.PreferredSize.Width, btnFiscal.PreferredSize.Width);
-        btnPayment.AutoSize = false;
-        btnFiscal.AutoSize = false;
-        btnPayment.Width = zipButtonWidth;
-        btnFiscal.Width = zipButtonWidth;
-        var hostList = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoSize = false, Margin = Padding.Empty };
+        var hostList = FlowRow();
         foreach (Button btn in new[] { btnImport, btnAddHost, btnRemoveHost })
         {
             btn.Margin = new Padding(0, 0, 5, 0);
             hostList.Controls.Add(btn);
         }
-        lblFile.AutoEllipsis = true; lblFile.AutoSize = false; lblFile.Width = 180; lblFile.Height = 34;
+        lblFile.AutoSize = true;
+        lblFile.Dock = DockStyle.Fill;
         lblFile.TextAlign = ContentAlignment.MiddleLeft;
         lblFile.ForeColor = Color.FromArgb(85, 98, 115);
-        hostList.Controls.Add(lblFile);
-        configuration.Controls.Add(hostList, 0, 0);
-        configuration.Controls.Add(PanelRow(btnPayment, lblPayment), 0, 1);
-        var fiscalAndPath = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = Padding.Empty };
-        fiscalAndPath.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-        fiscalAndPath.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        fiscalAndPath.Controls.Add(PanelRow(btnFiscal, lblFiscal), 0, 0);
         var targetPath = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 2, 0, 0)
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 2, 0, 0)
         };
-        targetPath.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
+        targetPath.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         targetPath.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        targetPath.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         targetPath.Controls.Add(new Label
         {
-            Text = "Zielpfad auf den Clients:", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft
+            Text = "Zielpfad auf den Clients:", AutoSize = true, Anchor = AnchorStyles.Left, TextAlign = ContentAlignment.MiddleLeft
         }, 0, 0);
         txtRemotePath.Text = activeRemoteInstallPath;
         txtRemotePath.Dock = DockStyle.Fill;
         txtRemotePath.TextAlign = HorizontalAlignment.Left;
         txtRemotePath.Margin = new Padding(3, 2, 8, 2);
         targetPath.Controls.Add(txtRemotePath, 1, 0);
-        fiscalAndPath.Controls.Add(targetPath, 0, 1);
-        configuration.Controls.Add(fiscalAndPath, 0, 2);
+        var files = Stack(Stack(hostList, lblFile), PanelRow(btnPayment, lblPayment),
+            PanelRow(btnFiscal, lblFiscal), targetPath);
+        configuration.Controls.Add(files, 0, 0);
         lblFile.Text = "Keine Hostliste";
         lblPayment.Text = "Payment Target: –";
         lblFiscal.Text = "Fiscal Target: –";
 
         // Login-Daten rechts in zwei eigenen Zeilen, damit nichts abgeschnitten wird.
-        var login = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2 };
-        login.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        var login = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2, RowCount = 2
+        };
+        login.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         login.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        login.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        login.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        login.Controls.Add(new Label { Text = "Benutzer:", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 0);
-        login.Controls.Add(new Label { Text = "Passwort:", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, 1);
+        login.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        login.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        login.Controls.Add(new Label { Text = "Benutzer:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        login.Controls.Add(new Label { Text = "Passwort:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
         txtUser.Dock = DockStyle.Fill;
         txtUser.Margin = new Padding(3, 5, 3, 5);
         txtPassword.Dock = DockStyle.Fill;
@@ -258,33 +304,22 @@ public sealed class MainForm : Form
         txtPassword.UseSystemPasswordChar = true;
         login.Controls.Add(txtUser, 1, 0);
         login.Controls.Add(txtPassword, 1, 1);
-        configuration.Controls.Add(login, 1, 0);
-        configuration.SetRowSpan(login, 2);
-
-        var options = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
-        options.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        options.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var optionBar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = false, WrapContents = false };
-        optionBar.Controls.Add(new Label { Text = "Prüfen parallel:", AutoSize = true, Margin = new Padding(4, 10, 0, 0) });
+        var optionBar = FlowRow();
         nScan.Minimum = 1; nScan.Maximum = 150; nScan.Value = 40; nScan.Width = 55;
-        optionBar.Controls.Add(nScan);
-        optionBar.Controls.Add(new Label { Text = "Update parallel:", AutoSize = true, Margin = new Padding(6, 10, 0, 0) });
+        optionBar.Controls.Add(LabeledInput("Prüfen parallel:", nScan));
         nUpdate.Minimum = 1; nUpdate.Maximum = 100; nUpdate.Value = 8; nUpdate.Width = 55;
-        optionBar.Controls.Add(nUpdate);
-        chkSsl.Text = "HTTPS"; chkSsl.AutoSize = true; chkSsl.Margin = new Padding(5, 8, 0, 0);
+        optionBar.Controls.Add(LabeledInput("Update parallel:", nUpdate));
+        chkSsl.Text = "HTTPS"; chkSsl.AutoSize = true; chkSsl.Margin = new Padding(5, 3, 8, 3);
         optionBar.Controls.Add(chkSsl);
         chkForceUpdate.Text = "Force Up-Downgrade";
         chkForceUpdate.AutoSize = true;
-        chkForceUpdate.Margin = new Padding(5, 8, 0, 0);
+        chkForceUpdate.Margin = new Padding(5, 3, 8, 3);
         chkForceUpdate.Checked = false;
         optionBar.Controls.Add(chkForceUpdate);
-        options.Controls.Add(optionBar, 0, 0);
         chkSkipZipTransfer.Text = "Installationsdatei nicht übertragen" + Environment.NewLine + "Lokale Datei verwenden";
-        chkSkipZipTransfer.AutoSize = false;
-        chkSkipZipTransfer.Size = new Size(280, 46);
+        chkSkipZipTransfer.AutoSize = true;
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
         chkSkipZipTransfer.Anchor = AnchorStyles.Left;
-        options.Controls.Add(chkSkipZipTransfer, 0, 1);
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts (WinRM und Versionsprüfung).");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
@@ -292,20 +327,36 @@ public sealed class MainForm : Form
         tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
         tips.SetToolTip(chkSkipZipTransfer, "Lokale ZIPs bestimmen weiterhin die Zielversion. ZIPs auf den Clients werden bei Updates nicht übertragen.");
         tips.SetToolTip(btnRetry, "Nur Hosts mit Ergebnis 'Fehler' erneut prüfen/aktualisieren; erfolgreiche Hosts bleiben unberührt.");
-        configuration.Controls.Add(options, 1, 2);
+        var settings = Stack(login, optionBar, chkSkipZipTransfer);
+        configuration.Controls.Add(settings, 1, 0);
+        bool stacked = false;
+        configuration.Layout += (_, _) =>
+        {
+            // Bei großen Schriften oder schmalen Fenstern beide Bereiche untereinander anordnen.
+            bool needsStack = configuration.ClientSize.Width * .45F < chkSkipZipTransfer.PreferredSize.Width + settings.Margin.Horizontal + 16;
+            if (needsStack == stacked) return;
+            stacked = needsStack;
+            configuration.SuspendLayout();
+            configuration.ColumnCount = stacked ? 1 : 2;
+            configuration.RowCount = stacked ? 2 : 1;
+            configuration.ColumnStyles.Clear();
+            configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, stacked ? 100 : 55));
+            if (!stacked) configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+            configuration.RowStyles.Clear();
+            configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            if (stacked) configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            configuration.SetCellPosition(settings, stacked ? new TableLayoutPanelCellPosition(0, 1) : new TableLayoutPanelCellPosition(1, 0));
+            configuration.ResumeLayout(true);
+        };
 
-        var actionPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        actionPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
-        actionPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = true };
+        var bar = FlowRow();
         foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
         {
-            btn.Margin = new Padding(0, 3, 9, 0);
+            btn.Margin = new Padding(0, 3, 9, 3);
             bar.Controls.Add(btn);
         }
-        actionPanel.Controls.Add(bar, 0, 0);
-        var filterBar = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
-        filterBar.Controls.Add(new Label { Text = "Anzeige:", AutoSize = true, Margin = new Padding(13, 8, 5, 0) });
+        var filterBar = FlowRow();
+        filterBar.Controls.Add(new Label { Text = "Anzeige:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 5, 3) });
         statusFilter.DropDownStyle = ComboBoxStyle.DropDownList;
         statusFilter.Width = 146;
         statusFilter.Margin = new Padding(0, 2, 0, 0);
@@ -313,10 +364,10 @@ public sealed class MainForm : Form
         statusFilter.SelectedIndex = 0;
         statusFilter.SelectedIndexChanged += (_, _) => { if (!busy) RebuildRows(); };
         filterBar.Controls.Add(statusFilter);
-        actionPanel.Controls.Add(filterBar, 0, 1);
-        main.Controls.Add(actionPanel, 0, 2);
+        main.Controls.Add(Stack(bar, filterBar), 0, 2);
 
         table.Dock = DockStyle.Fill;
+        table.MinimumSize = new Size(0, 160);
         table.AllowUserToAddRows = false;
         table.AllowUserToDeleteRows = false;
         table.ReadOnly = true;
@@ -329,8 +380,9 @@ public sealed class MainForm : Form
         table.BorderStyle = BorderStyle.FixedSingle;
         table.EnableHeadersVisualStyles = false;
         table.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(232, 239, 248);
-        table.ColumnHeadersHeight = 36;
-        table.RowTemplate.Height = 29;
+        table.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+        table.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders;
+        table.DefaultCellStyle.Padding = new Padding(0, 4, 0, 4);
         table.Columns.Add("hostname", "Hostname");
         table.Columns.Add("connection", "Verbindung");
         table.Columns.Add("payment", "Payment Ist");
@@ -364,16 +416,13 @@ public sealed class MainForm : Form
         table.SelectionChanged += (_, _) => UpdateButtons();
         main.Controls.Add(table, 0, 3);
 
-        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
-        footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-        footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
         lblSummary.Text = "0 Hosts";
+        lblSummary.AutoSize = true;
         lblSummary.Dock = DockStyle.Fill;
         lblSummary.Font = new Font(Font, FontStyle.Bold);
-        footer.Controls.Add(lblSummary, 0, 0);
         progress.Dock = DockStyle.Fill;
-        footer.Controls.Add(progress, 0, 1);
-        main.Controls.Add(footer, 0, 4);
+        progress.Height = 22;
+        main.Controls.Add(Stack(lblSummary, progress), 0, 4);
 
         btnImport.Click += (_, _) => LoadHosts();
         btnAddHost.Click += (_, _) => AddHost();
@@ -427,13 +476,21 @@ public sealed class MainForm : Form
 
     private static Control PanelRow(Button btn, Label lbl)
     {
-        var pnl = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, AutoSize = false, Margin = Padding.Empty };
-        btn.Margin = Padding.Empty;
-        lbl.AutoEllipsis = true; lbl.AutoSize = false; lbl.Width = 280; lbl.Height = 34;
-        lbl.Margin = Padding.Empty;
+        var pnl = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2, RowCount = 1, Margin = Padding.Empty
+        };
+        pnl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        pnl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pnl.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        btn.Margin = new Padding(0, 3, 0, 3);
+        lbl.AutoEllipsis = true; lbl.AutoSize = false; lbl.Size = Size.Empty;
+        lbl.Dock = DockStyle.Fill;
+        lbl.Margin = new Padding(8, 0, 0, 0);
         lbl.TextAlign = ContentAlignment.MiddleLeft;
         lbl.ForeColor = Color.FromArgb(85, 98, 115);
-        pnl.Controls.Add(btn); pnl.Controls.Add(lbl);
+        pnl.Controls.Add(btn, 0, 0); pnl.Controls.Add(lbl, 1, 0);
         return pnl;
     }
 
