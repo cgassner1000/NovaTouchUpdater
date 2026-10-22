@@ -37,6 +37,47 @@ function ReadInventory {
     return $inventory
 }
 
+function ReadSoftwareInventory {
+    $release = 0L
+    foreach ($path in @(
+        'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\NET Framework Setup\NDP\v4\Full'
+    )) {
+        if (-not (Test-Path -LiteralPath $path -ErrorAction Stop)) { continue }
+        $framework = Get-ItemProperty -LiteralPath $path -ErrorAction Stop
+        if ($null -ne $framework.PSObject.Properties['Release']) {
+            $release = [Math]::Max($release, [long]$framework.Release)
+        }
+    }
+
+    $posFound = $false
+    $posVersions = @()
+    foreach ($path in @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )) {
+        if (-not (Test-Path -LiteralPath $path -ErrorAction Stop)) { continue }
+        foreach ($key in Get-ChildItem -LiteralPath $path -ErrorAction Stop) {
+            $program = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction Stop
+            if ($null -eq $program.PSObject.Properties['DisplayName'] -or
+                [string]$program.DisplayName -notmatch '^\s*NovaTouch\s+POS\s*$') { continue }
+            $posFound = $true
+            if ($null -ne $program.PSObject.Properties['DisplayVersion'] -and
+                -not [string]::IsNullOrWhiteSpace([string]$program.DisplayVersion)) {
+                $posVersions += ([string]$program.DisplayVersion).Trim()
+            }
+        }
+    }
+
+    # Release >= 528040 means .NET Framework 4.8 or later, including 4.8.1.
+    # Reading uninstall entries avoids Win32_Product and its MSI repair side effects.
+    [pscustomobject]@{
+        DotNet48Installed = ($release -ge 528040)
+        PosVersion = if ($posVersions.Count -gt 0) { ($posVersions | Sort-Object -Unique) -join ', ' }
+            elseif ($posFound) { 'Version unbekannt' } else { 'Nicht installiert' }
+    }
+}
+
 function Normalize-Version([string]$version) {
     if ([string]::IsNullOrWhiteSpace($version)) { return '' }
     $m = [regex]::Match($version, '\d+(?:\.\d+){1,3}')
@@ -55,6 +96,7 @@ function IsTargetVersion($svc, [string]$expected) {
     return ($target -eq (Normalize-Version $installed))
 }
 
+$software = $null
 try {
     $requestLine = [Console]::In.ReadLine()
     if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
@@ -138,11 +180,16 @@ try {
             exit 0
         }
 
+        if ($req.Action -eq 'scan') {
+            Progress 'Softwareprüfung' '.NET Framework 4.8 und NovaTouch POS werden geprüft'
+            $software = Invoke-Command -Session $session -ScriptBlock ${function:ReadSoftwareInventory} -ErrorAction Stop
+        }
         Progress 'Versionen' 'Dienste und installierte Versionen werden ausgelesen'
         $services = @(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory})
         if ($services.Count -eq 0) { throw 'Keine nt.payment-/nt.fiscal-Dienste gefunden.' }
         if ($req.Action -eq 'scan') {
-            Emit @{ Event='result'; Success=$true; Message='Versionen gelesen'; Services=$services }
+            Emit @{ Event='result'; Success=$true; Message='Versionen und Software geprüft'; Services=$services;
+                DotNet48Installed=$software.DotNet48Installed; PosVersion=$software.PosVersion }
             exit 0
         }
         if ($req.Action -ne 'update') { throw ('Unbekannte Aktion: ' + $req.Action) }
@@ -410,6 +457,11 @@ catch {
         $position = ([string]$_.InvocationInfo.PositionMessage -replace '[\r\n]+', ' ').Trim()
         $errorText += " | Position: $position"
     }
-    Emit @{ Event='result'; Success=$false; Message='Fehler'; Error=$errorText; Services=@() }
+    $result = @{ Event='result'; Success=$false; Message='Fehler'; Error=$errorText; Services=@() }
+    if ($null -ne $software) {
+        $result.DotNet48Installed = $software.DotNet48Installed
+        $result.PosVersion = $software.PosVersion
+    }
+    Emit $result
     exit 1
 }

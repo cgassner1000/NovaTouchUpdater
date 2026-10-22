@@ -50,7 +50,7 @@ Zur Prüfung der Darstellung die Anwendung bei 100 %, 125 %, 150 % und 200 % Win
 2. `nt.payment_VERSION*.zip` und/oder `nt.fiscal_VERSION*.zip` wählen (die Auswahlfelder stehen direkt untereinander). Beispiel: `nt.payment_2026.2.9546.5587.zip`.
 3. Den `Zielpfad auf den Clients` bei Bedarf anpassen (Standard: `C:\install\Novacom`). Dort liegen die Update-ZIPs und temporären Update-Dateien. Wenn andere Windows-Anmeldedaten benötigt werden, Benutzername und Passwort eingeben. Sonst wird das aktuelle Windows-Konto genutzt. Option `HTTPS` aktiviert WinRM/TLS.
 4. `Installationsdateien nicht übertragen` überspringt den ZIP-Transfer. Die lokal ausgewählten ZIPs werden weiterhin für Zielversion und SHA256 verwendet. Die passenden ZIP-Dateien müssen im eingestellten Zielpfad auf jedem Client unter demselben Dateinamen liegen; der Updater prüft sie vor dem Entpacken auf identische SHA256-Prüfsumme. Installierte Dienstversionen werden weiterhin mit den Zielversionen aus den lokalen ZIP-Dateinamen verglichen.
-5. `1. Prüfen + Versionen`: alle Hosts zuerst per WinRM prüfen (Standard: bis zu 40 parallel), dann vorhandene Dienste und deren ProductVersion/FileVersion lesen.
+5. `1. Prüfen + Versionen`: alle Hosts zuerst per WinRM prüfen (Standard: bis zu 40 parallel), dann .NET Framework 4.8, die installierte NovaTouch-POS-Version sowie vorhandene Dienste und deren ProductVersion/FileVersion lesen.
    Der RemoteWorker schließt jede PowerShell-Remotesitzung am Ende der Aktion automatisch (auch bei Fehlern); ein zusätzlicher Schließen-Button ist daher nicht erforderlich.
 6. Optional `Force Update` aktivieren: Normalmodus überspringt Dienste mit IST-Version = Zielversion; Force installiert die **ausgewählten** Komponenten trotzdem erneut. Nicht ausgewählte Payment-/Fiscal-Dienste bleiben immer unangetastet. Die Zielversion wird auch bei Force nach Installation verifiziert.
 7. `2. Updates starten`: Updates auf den erfolgreichen Scan-Hosts (Standard: 8 gleichzeitig) mit **maximal drei vollständigen Versuchen pro Host**. Die beiden Optionen `Prüfen parallel` und `Update parallel` begrenzen unabhängig voneinander die Zahl gleichzeitig bearbeiteter Rechner (Vorgaben: 40 bzw. 8). Bestätigungsdialog vor dem Start.
@@ -60,7 +60,15 @@ Zur Prüfung der Darstellung die Anwendung bei 100 %, 125 %, 150 % und 200 % Win
 
 Die Hostübersicht zeigt nur die **IST-Versionen** von Payment und Fiscal. Die für alle Hosts identischen Zielversionen stehen als **Payment Target** und **Fiscal Target** bei der ZIP-Auswahl und werden weiterhin automatisch aus dem ZIP-Dateinamen gelesen.
 
-Die Spaltenreihenfolge lautet: **Hostname | Verbindung | Payment Ist | Fiscal Ist | Information | Versuch | Ergebnis**. Die breite Spalte „Information“ zeigt den aktuellen Bearbeitungsschritt **zusätzlich** zu vorhandenen Fehler- und Informationstexten an. „Versuch“ und „Ergebnis“ sind kompakt; „Ergebnis“ steht ganz rechts. Im HTML-Bericht bleibt der aufklappbare Protokollbereich als zusätzliche Spalte **vor** „Versuch“ und „Ergebnis“ erhalten.
+Die Spaltenreihenfolge lautet: **Hostname | Verbindung | .NET 4.8 | Payment Ist | Fiscal Ist | NovaTouch POS | Information | Versuch | Ergebnis**. Die schmale .NET-Spalte zeigt **✓** bei installiertem .NET Framework 4.8 oder neuer (auch 4.8.1), **✗** bei fehlendem/älterem Framework und **–** vor einer Prüfung bzw. bei nicht ermitteltem Status. Grundlage ist der Registry-Wert `Release >= 528040` unter `NET Framework Setup\NDP\v4\Full` ([Microsoft-Dokumentation](https://learn.microsoft.com/en-us/dotnet/framework/install/how-to-determine-which-versions-are-installed)). Die POS-Version stammt aus `DisplayVersion` der Programmeinträge mit Namen `NovaTouch POS` unter den 32- und 64-Bit-Uninstall-Schlüsseln in `HKLM`. Fehlt POS, steht dort **Nicht installiert**; das allein verursacht keinen Fehler und verhindert kein Payment-/Fiscal-Update. Bei registrierter Installation ohne Versionsangabe steht **Version unbekannt**. Beim erneuten Prüfen werden alte Ergebnisse zurückgesetzt. Beide Angaben stehen auch im HTML-Bericht.
+
+Die breite Spalte „Information“ zeigt den aktuellen Bearbeitungsschritt **zusätzlich** zu vorhandenen Fehler- und Informationstexten an. „Versuch“ und „Ergebnis“ sind kompakt; „Ergebnis“ steht ganz rechts. Im HTML-Bericht bleibt der aufklappbare Protokollbereich als zusätzliche Spalte **vor** „Versuch“ und „Ergebnis“ erhalten.
+
+Die zusätzlichen Scan-Prüfungen lassen sich ohne Netzwerkzugriff mit simulierten Registry- und WinRM-Antworten testen:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\SoftwareInventory.Tests.ps1
+```
 
 ## HTML-Bericht
 
@@ -108,10 +116,10 @@ Die **aktuelle Implementierung benötigt WinRM** auf den Zielhosts. Eine .NET-GU
 ## Spaltenbreiten selbst ändern
 
 **Datei:** `MainForm.cs`, Methode **`ApplyColumnWeights()`** (unterhalb von `ConstructUi()`).
-Hier stehen die sieben Werte von `FillWeight` (Summe = 100):
+Hier stehen die neun Werte von `FillWeight` (Summe = 100):
 
-`hostname=11`, `connection=9`, `payment=6`, `fiscal=6`,
-`information=55`, `attempt=5`, `result=8`.
+`hostname=11`, `connection=9`, `dotnet48=3`, `payment=6`, `fiscal=6`, `pos=9`,
+`information=43`, `attempt=5`, `result=8`.
 
 Die Spalten werden erst im `Shown`-Ereignis, nach dem initialen Fensterlayout,
 auf `Fill` umgestellt. Dadurch sind Payment Ist und Fiscal Ist bei gleichem

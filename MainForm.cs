@@ -11,8 +11,10 @@ internal sealed class HostState
 {
     public string Host { get; init; } = "";
     public string Connection { get; set; } = "Nicht geprüft";
+    public bool? DotNet48Installed { get; set; }
     public string Payment { get; set; } = "–";
     public string Fiscal { get; set; } = "–";
+    public string PosVersion { get; set; } = "–";
     public string PaymentBefore { get; set; } = "–";
     public string FiscalBefore { get; set; } = "–";
     public string Phase { get; set; } = "Bereit";
@@ -379,8 +381,10 @@ public sealed class MainForm : Form
         table.DefaultCellStyle.Padding = new Padding(0, 4, 0, 4);
         table.Columns.Add("hostname", "Hostname");
         table.Columns.Add("connection", "Verbindung");
+        table.Columns.Add("dotnet48", ".NET 4.8");
         table.Columns.Add("payment", "Payment Ist");
         table.Columns.Add("fiscal", "Fiscal Ist");
+        table.Columns.Add("pos", "NovaTouch POS");
         table.Columns.Add("information", "Information");
         table.Columns.Add("attempt", "Versuch");
         table.Columns.Add("result", "Ergebnis");
@@ -391,12 +395,17 @@ public sealed class MainForm : Form
         // Bei sehr schmalen Fenstern haben Mindestbreiten Vorrang vor Prozentwerten.
         table.Columns["hostname"].MinimumWidth = 80;
         table.Columns["connection"].MinimumWidth = 75;
+        table.Columns["dotnet48"].MinimumWidth = 52;
         table.Columns["payment"].MinimumWidth = 110;
         table.Columns["fiscal"].MinimumWidth = 110;
+        table.Columns["pos"].MinimumWidth = 110;
         table.Columns["information"].MinimumWidth = 200;
         table.Columns["attempt"].MinimumWidth = 62;
         table.Columns["result"].MinimumWidth = 75;
 
+        table.Columns["dotnet48"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        table.Columns["dotnet48"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        table.Columns["dotnet48"].ToolTipText = ".NET Framework 4.8 oder neuer: ✓ installiert, ✗ nicht installiert, – nicht geprüft";
         table.Columns["attempt"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["attempt"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["result"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
@@ -463,9 +472,11 @@ public sealed class MainForm : Form
 
             table.Columns["hostname"].FillWeight = 11;
             table.Columns["connection"].FillWeight = 9;
+            table.Columns["dotnet48"].FillWeight = 3;
             table.Columns["payment"].FillWeight = 6;
             table.Columns["fiscal"].FillWeight = 6;
-            table.Columns["information"].FillWeight = 55;
+            table.Columns["pos"].FillWeight = 9;
+            table.Columns["information"].FillWeight = 43;
             table.Columns["attempt"].FillWeight = 5;
             table.Columns["result"].FillWeight = 8;
 
@@ -904,7 +915,11 @@ public sealed class MainForm : Form
         {
             await ParallelPhaseAsync(hosts, (int)nScan.Value, async (host, token) =>
             {
-                Mark(host, h => { h.Connection = "Prüfung läuft"; h.Phase = "Verbindung"; h.Result = "Offen"; h.Error = ""; h.Scanned = false; });
+                Mark(host, h =>
+                {
+                    h.Connection = "Prüfung läuft"; h.Phase = "Verbindung"; h.Result = "Offen"; h.Error = ""; h.Scanned = false;
+                    h.DotNet48Installed = null; h.PosVersion = "–";
+                });
                 var result = await DoWorkerAsync(host, "probe", token);
                 Mark(host, h =>
                 {
@@ -924,8 +939,7 @@ public sealed class MainForm : Form
                 Mark(host, h =>
                 {
                     h.Scanned = result.Success;
-                    h.Services = result.Services.ToList();
-                    ReadVersions(h);
+                    ReadScanInventory(h, result);
                     if (result.Success) { h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; }
                     h.Phase = result.Success ? "Scan abgeschlossen" : "Scan fehlgeschlagen";
                     h.Result = result.Success ? "Bereit" : "Fehler";
@@ -972,6 +986,7 @@ public sealed class MainForm : Form
                     Mark(host, h => { h.Attempt = attempt; h.Phase = "Update"; h.Error = ""; h.Result = "Läuft"; });
                     if (!host.Scanned)
                     {
+                        Mark(host, h => { h.DotNet48Installed = null; h.PosVersion = "–"; });
                         var probe = await DoWorkerAsync(host, "probe", token);
                         if (!probe.Success)
                         {
@@ -981,13 +996,14 @@ public sealed class MainForm : Form
                         }
                         Mark(host, h => h.Connection = "Verbunden");
                         var scan = await DoWorkerAsync(host, "scan", token);
+                        Mark(host, h => ReadScanInventory(h, scan));
                         if (!scan.Success)
                         {
                             Mark(host, h => h.Error = FriendlyError(scan));
                             if (attempt < 3) await Task.Delay(TimeSpan.FromSeconds(attempt * 3), token);
                             continue;
                         }
-                        Mark(host, h => { h.Scanned = true; h.Services = scan.Services.ToList(); ReadVersions(h); h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; });
+                        Mark(host, h => { h.Scanned = true; h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; });
                     }
                     var result = await DoWorkerAsync(host, "update", token);
                     Mark(host, h =>
@@ -1029,6 +1045,11 @@ public sealed class MainForm : Form
             Log(host.Host, ev.Phase + ": " + ev.Message);
             Mark(host, h => h.Phase = ev.Phase + " – " + ev.Message);
         }, action == "update" ? CancellationToken.None : ct);
+        if (action == "scan")
+        {
+            Log(host.Host, DisplayText.DotNet48Description(result.DotNet48Installed));
+            Log(host.Host, "NovaTouch POS: " + (string.IsNullOrWhiteSpace(result.PosVersion) ? "Nicht geprüft" : result.PosVersion));
+        }
         if (result.Services.Length > 0 && action != "probe")
             foreach (var svc in result.Services)
                 Log(host.Host, $"{svc.Name}: Product={svc.ProductVersion}, File={svc.FileVersion}, Status={svc.State}");
@@ -1075,6 +1096,14 @@ public sealed class MainForm : Form
         });
     }
 
+    private void ReadScanInventory(HostState h, WorkerResult result)
+    {
+        h.DotNet48Installed = result.DotNet48Installed;
+        h.PosVersion = string.IsNullOrWhiteSpace(result.PosVersion) ? "–" : DisplayText.Clean(result.PosVersion);
+        h.Services = result.Services.ToList();
+        ReadVersions(h);
+    }
+
     private void ReadVersions(HostState h)
     {
         static string Display(IEnumerable<ServiceInfo> svc)
@@ -1098,20 +1127,24 @@ public sealed class MainForm : Form
     {
         if (h.Row is null) return;
         var cells = h.Row.Cells;
-        cells[0].Value = h.Host;
-        cells[1].Value = h.Connection;
-        cells[2].Value = h.Payment;
-        cells[3].Value = h.Fiscal;
+        cells["hostname"].Value = h.Host;
+        cells["connection"].Value = h.Connection;
+        cells["dotnet48"].Value = DisplayText.DotNet48(h.DotNet48Installed);
+        cells["dotnet48"].ToolTipText = DisplayText.DotNet48Description(h.DotNet48Installed);
+        cells["payment"].Value = h.Payment;
+        cells["fiscal"].Value = h.Fiscal;
+        cells["pos"].Value = h.PosVersion;
         // Bei mehreren abweichenden Versionsständen bleibt der volle Inhalt per Tooltip lesbar.
-        cells[2].ToolTipText = h.Payment;
-        cells[3].ToolTipText = h.Fiscal;
+        cells["payment"].ToolTipText = h.Payment;
+        cells["fiscal"].ToolTipText = h.Fiscal;
+        cells["pos"].ToolTipText = h.PosVersion;
         // Aktuellen Schritt und bisherige Fehler-/Informationstexte gemeinsam anzeigen.
         string info = DisplayText.Information(h.Phase, h.Error);
-        cells[4].Value = info;
-        cells[4].ToolTipText = info;
-        cells[5].Value = h.Attempt == 0 ? "–" : h.Attempt + "/3";
-        cells[6].Value = h.Result == "Bereits aktuell / übersprungen" ? "Aktuell" : h.Result;
-        cells[6].ToolTipText = h.Result;
+        cells["information"].Value = info;
+        cells["information"].ToolTipText = info;
+        cells["attempt"].Value = h.Attempt == 0 ? "–" : h.Attempt + "/3";
+        cells["result"].Value = h.Result == "Bereits aktuell / übersprungen" ? "Aktuell" : h.Result;
+        cells["result"].ToolTipText = h.Result;
         Color color = h.Result switch
         {
             "Erfolgreich" => Color.FromArgb(223, 245, 230),

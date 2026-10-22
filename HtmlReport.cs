@@ -41,7 +41,8 @@ main{max-width:1460px;margin:0 auto;padding:25px 28px 40px}.meta{display:flex;ga
 .panel{background:#fff;border:1px solid var(--line);border-radius:15px;box-shadow:0 5px 22px #203b5910;overflow:hidden}
 .toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}.toolbar h2{margin:0;font-size:18px}.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border-radius:9px;padding:9px 11px;color:var(--ink)}input{width:255px;max-width:100%}button{cursor:pointer}button:hover{background:#eef4fa}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:1280px;font-size:12.5px}thead th{position:sticky;top:0;background:#eef3fa;text-align:left;color:#52677f;font-weight:700;padding:12px 11px;white-space:nowrap;border-bottom:1px solid var(--line)}tbody td{padding:11px;border-bottom:1px solid #e9eef4;vertical-align:top}tbody tr:hover{background:#f9fbfe}tbody tr:last-child td{border-bottom:none}
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:1440px;font-size:12.5px}thead th{position:sticky;top:0;background:#eef3fa;text-align:left;color:#52677f;font-weight:700;padding:12px 11px;white-space:nowrap;border-bottom:1px solid var(--line)}tbody td{padding:11px;border-bottom:1px solid #e9eef4;vertical-align:top}tbody tr:hover{background:#f9fbfe}tbody tr:last-child td{border-bottom:none}
+.framework{width:1%;text-align:center;white-space:nowrap}.framework span{font-size:17px;font-weight:700}.framework .yes{color:var(--ok)}.framework .no{color:var(--err)}.pos-ver{min-width:110px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .attempt{width:1%;white-space:nowrap;text-align:center}.host{font-weight:700;white-space:nowrap}.ver{font-variant-numeric:tabular-nums;white-space:nowrap;width:145px}.ver-head{white-space:normal;min-width:145px;width:145px}.ver .before,.ver .after{display:block}.dim{color:var(--muted)}.before{color:#74859a;font-size:12px}.after{font-weight:700}.arrow{display:none}.ver .after::before{content:"→ ";color:#94a2b2;font-weight:normal}
 .status{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11.5px;font-weight:750;white-space:nowrap}.status.ok{background:var(--okbg);color:var(--ok)}.status.bad{background:var(--errbg);color:var(--err)}.status.current{background:var(--bluebg);color:var(--blue)}.status.other{background:var(--warnbg);color:var(--warn)}
 .info-cell{min-width:430px;width:45%;overflow-wrap:anywhere}.info-phase{color:var(--ink)}.info-error{color:var(--err);margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere}.result-cell{white-space:nowrap;text-align:center}.log details{min-width:100px}.log summary{color:#245f9d;cursor:pointer;font-weight:650}.log pre{max-width:470px;max-height:320px;overflow:auto;font-size:11px;background:#13233a;color:#dce6f2;border-radius:8px;padding:11px;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}
@@ -88,7 +89,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 </div>
 <div class="scroll"><table id="hostTable">
 <thead><tr>
-  <th>Hostname</th><th>Verbindung</th><th class="ver-head">Payment (vorher → nachher)</th><th class="ver-head">Fiscal (vorher → nachher)</th>
+  <th>Hostname</th><th>Verbindung</th><th class="framework">.NET 4.8</th><th class="ver-head">Payment (vorher → nachher)</th><th class="ver-head">Fiscal (vorher → nachher)</th><th>NovaTouch POS</th>
   <th>Information</th><th>Details</th><th class="attempt">Versuch</th><th>Ergebnis</th>
 </tr></thead><tbody>
 """);
@@ -102,13 +103,20 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
                 _ => "other"
             };
             string search = string.Join(' ', new[] { host.Host, host.Connection, DisplayText.Clean(host.PaymentBefore), DisplayText.Clean(host.Payment),
-                DisplayText.Clean(host.FiscalBefore), DisplayText.Clean(host.Fiscal), DisplayText.Clean(host.Phase),
+                DisplayText.Clean(host.FiscalBefore), DisplayText.Clean(host.Fiscal), DisplayText.DotNet48Description(host.DotNet48Installed),
+                DisplayText.Clean(host.PosVersion), DisplayText.Clean(host.Phase),
                 host.Result, DisplayText.Clean(host.Error) }).ToLowerInvariant();
             sb.Append("<tr data-kind=\"").Append(kind).Append("\" data-search=\"").Append(E(search)).AppendLine("\">");
             sb.Append("<td class=\"host\">").Append(E(host.Host)).AppendLine("</td>");
             sb.Append("<td>").Append(E(host.Connection)).AppendLine("</td>");
+            sb.Append("<td class=\"framework\"><span class=\"")
+                .Append(host.DotNet48Installed switch { true => "yes", false => "no", null => "dim" })
+                .Append("\" title=\"").Append(E(DisplayText.DotNet48Description(host.DotNet48Installed)))
+                .Append("\" aria-label=\"").Append(E(DisplayText.DotNet48Description(host.DotNet48Installed)))
+                .Append("\">").Append(DisplayText.DotNet48(host.DotNet48Installed)).AppendLine("</span></td>");
             VersionCell(sb, host.PaymentBefore, host.Payment);
             VersionCell(sb, host.FiscalBefore, host.Fiscal);
+            sb.Append("<td class=\"pos-ver\">").Append(E(DisplayText.Clean(host.PosVersion))).AppendLine("</td>");
             // Der aktuelle Schritt und die bisherigen Fehler-/Informationstexte teilen sich eine Spalte.
             sb.Append("<td class=\"info-cell\">");
             if (!string.IsNullOrWhiteSpace(host.Phase))
@@ -129,6 +137,8 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 """);
         sb.Append("<p class=\"footer\">Hosts mit WinRM-Verbindungsfehlern: ").Append(offline)
             .Append(" · Hinweis: Der Bericht bildet den Zustand zum Exportzeitpunkt ab. ")
+            .Append(".NET 4.8: ✓ = 4.8 oder neuer installiert, ✗ = nicht installiert, – = nicht geprüft. ")
+            .Append("Eine fehlende NovaTouch-POS-Installation wird nicht als Fehler gewertet. ")
             .AppendLine("Die Anzeige „Erfolgreich“ beruht auf der Versions- und Dienststatusprüfung durch den Updater.</p>");
         sb.AppendLine("""
 </main>

@@ -5,6 +5,15 @@ namespace NovaTouchUpdater;
 /// <summary>Verbirgt technische Prüfsummenwerte in GUI, Hostprotokoll und HTML-Bericht.</summary>
 internal static class DisplayText
 {
+    public static string DotNet48(bool? installed) => installed switch { true => "✓", false => "✗", null => "–" };
+
+    public static string DotNet48Description(bool? installed) => installed switch
+    {
+        true => ".NET Framework 4.8 oder neuer installiert",
+        false => ".NET Framework 4.8 oder neuer nicht installiert",
+        null => ".NET Framework 4.8 noch nicht geprüft oder Prüfung fehlgeschlagen"
+    };
+
     private static readonly Regex NamedHashes = new(
         @"\b(?:PaymentSha256|FiscalSha256)\s*[:=]\s*[^\s;,|]*",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
