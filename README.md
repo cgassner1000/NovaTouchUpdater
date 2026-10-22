@@ -57,6 +57,17 @@ Zur Prüfung der Darstellung die Anwendung bei 100 %, 125 %, 150 % und 200 % Win
 8. `Fehler erneut versuchen` berücksichtigt **ausschließlich Hosts mit Ergebnis `Fehler`** (auch Verbindungs- und Scanfehler) und prüft bei Bedarf erst ihre Erreichbarkeit. Erfolgreiche Hosts und bereits aktuelle Hosts werden nicht neu aktualisiert. Der erneute Durchlauf hat wieder bis zu drei Versuche pro Host.
 9. Doppelklick auf eine Zeile öffnet das Hostprotokoll; `HTML-Bericht erstellen` öffnet sofort einen eigenständigen, offline nutzbaren Bericht im Standardbrowser – ohne vorherigen Speicherdialog. Über „HTML speichern“ im Bericht oder Strg+S im Browser kann er dauerhaft gespeichert werden; PDF-Export per Drucken ist ebenfalls möglich. SHA256-Werte werden in GUI und Bericht ausgeblendet, die Integritätsprüfung bleibt aktiv.
 10. `Dateien übertragen` überträgt die ausgewählten Payment-/Fiscal-ZIPs und optional zusätzlich gewählte EXE-/MSI-Dateien an **alle Hosts der Liste** in den eingestellten Zielpfad. Vorhandene Dateien werden nur bei abweichender SHA256-Prüfsumme ersetzt. Diese Aktion installiert nichts und funktioniert unabhängig von `Installationsdateien nicht übertragen`.
+11. `Befehl senden` öffnet einen breiten, vergrößerbaren Dialog mit erklärten Aktionsbereichen. **nt.payment – Zahlungsdienst neu starten** und **nt.fiscal – Fiskaldienst neu starten** stoppen und starten die jeweiligen Dienste. **nt3 Server Suite – starten / neu starten** startet die `nt3_server_suite`-Dienste; laufende Dienste werden vorher gestoppt. Mehrere Dienstaktionen können gemeinsam ausgewählt werden. **Terminal NEUSTART – Windows neu starten** ist als eigener Bereich hervorgehoben und startet den gesamten Rechner neu. Die aktuelle Auswahl steht oberhalb der Schaltflächen; ohne Auswahl ist das Ausführen deaktiviert.
+
+Die Windows-Aktion gilt für **alle eingetragenen Hosts**, unabhängig von Tabellenfilter, vorherigem Scan oder ausgewählten ZIP-Dateien, und kann nicht mit Dienstaktionen kombiniert werden. Nach einer zusätzlichen Bestätigung wird pro Host über WinRM ein Windows-Neustart mit 30 Sekunden Vorlauf angefordert; die eingestellten Anmeldedaten, HTTPS und `Update parallel` gelten auch hier. Windows schließt dabei geöffnete Anwendungen; nicht gespeicherte Daten können verloren gehen. Die Umsetzung nutzt [`shutdown /r /t 30`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown).
+
+Nach bestätigtem Neustartauftrag steht beim Host **Windows-Neustart angefordert (30 Sekunden)**. Die Rückkehr des Hosts wird nicht automatisch geprüft; vor weiteren Updates erneut `Prüfen + Versionen` ausführen. `Abbrechen` stoppt die Vergabe weiterer Aufträge und wartet auf die Rückmeldungen bereits gestarteter Neustartanforderungen. Bereits an Windows übermittelte Neustartaufträge werden dadurch nicht zurückgenommen. Hostprotokoll und HTML-Bericht enthalten die Anforderung bzw. den Fehler.
+
+Test der Befehlsaktionen mit simulierten WinRM-, Dienst- und Shutdown-Aufrufen; dabei werden keine Rechner neu gestartet:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\RemoteCommand.Tests.ps1
+```
 
 Die Hostübersicht zeigt nur die **IST-Versionen** von Payment und Fiscal. Die für alle Hosts identischen Zielversionen stehen als **Payment Target** und **Fiscal Target** bei der ZIP-Auswahl und werden weiterhin automatisch aus dem ZIP-Dateinamen gelesen.
 

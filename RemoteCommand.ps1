@@ -12,17 +12,32 @@ function Progress([string]$phase, [string]$message) {
 	Emit @{ Event='progress'; Phase=$phase; Message=$message }
 }
 
+function RequestTerminalRestart {
+	$shutdown = Join-Path $env:SystemRoot 'System32\shutdown.exe'
+	$output = @(& $shutdown /r /t 30 /d 'p:4:1' /c 'Terminal-Neustart durch NovaTouch Updater' 2>&1)
+	$exitCode = $LASTEXITCODE
+	if ($exitCode -ne 0) {
+		throw "Windows-Neustart konnte nicht angefordert werden (Exitcode ${exitCode}): $($output -join ' ')"
+	}
+	[pscustomobject]@{ Results=@('Windows-Neustart in 30 Sekunden angefordert'); Failures=@() }
+}
+
 try {
 	$requestLine = [Console]::In.ReadLine()
 	if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
 	$req = $requestLine | ConvertFrom-Json
-	if ($req.Action -ne 'restart-services') { throw "Unbekannte Aktion: $($req.Action)" }
+	if ($req.Action -notin @('restart-services', 'restart-terminal')) { throw "Unbekannte Aktion: $($req.Action)" }
 
-	$restartPayment = [bool]$req.RestartPayment
-	$restartFiscal = [bool]$req.RestartFiscal
-	$startServerSuite = [bool]$req.StartServerSuite
-	if (-not $restartPayment -and -not $restartFiscal -and -not $startServerSuite) {
-		throw 'Kein Dienst ausgewählt.'
+	$restartPayment = $false
+	$restartFiscal = $false
+	$startServerSuite = $false
+	if ($req.Action -eq 'restart-services') {
+		$restartPayment = [bool]$req.RestartPayment
+		$restartFiscal = [bool]$req.RestartFiscal
+		$startServerSuite = [bool]$req.StartServerSuite
+		if (-not $restartPayment -and -not $restartFiscal -and -not $startServerSuite) {
+			throw 'Kein Dienst ausgewählt.'
+		}
 	}
 
 	$sessionOptions = New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 180000
@@ -40,7 +55,12 @@ try {
 	Progress 'Verbindung' 'WinRM-Verbindung wird aufgebaut'
 	$session = New-PSSession @sessionArgs
 	try {
-		$restartResult = Invoke-Command -Session $session -ArgumentList $restartPayment, $restartFiscal, $startServerSuite -ErrorAction Stop -ScriptBlock {
+		if ($req.Action -eq 'restart-terminal') {
+			Progress 'Windows-Neustart' 'Windows-Neustart in 30 Sekunden wird angefordert'
+			$restartResult = Invoke-Command -Session $session -ScriptBlock ${function:RequestTerminalRestart} -ErrorAction Stop
+		}
+		else {
+			$restartResult = Invoke-Command -Session $session -ArgumentList $restartPayment, $restartFiscal, $startServerSuite -ErrorAction Stop -ScriptBlock {
 			param([bool]$restartPayment, [bool]$restartFiscal, [bool]$startServerSuite)
 			$selectedServices = @(Get-Service -ErrorAction Stop | Where-Object {
 				($restartPayment -and $_.Name -match '^nt\.payment(?:\.|$)') -or
@@ -79,6 +99,7 @@ try {
 				}
 			}
 			[pscustomobject]@{ Results = @($results); Failures = @($failures) }
+			}
 		}
 	}
 	finally {

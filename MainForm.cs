@@ -442,7 +442,7 @@ public sealed class MainForm : Form
         btnScan.Click += async (_, _) => await RunScansAsync();
         btnUpdate.Click += async (_, _) => await RunUpdatesAsync(false);
         btnTransfer.Click += async (_, _) => await TransferFilesAsync();
-        btnSendCommand.Click += async (_, _) => await RestartServicesAsync();
+        btnSendCommand.Click += async (_, _) => await SendCommandAsync();
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
         btnExport.Click += (_, _) => ExportHtml();
         btnCancel.Click += (_, _) => cancellation?.Cancel();
@@ -783,97 +783,97 @@ public sealed class MainForm : Form
             failures.IsEmpty && succeeded == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
-    private async Task RestartServicesAsync()
+    private async Task SendCommandAsync()
     {
         if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
 
-        using var dialog = new Form
-        {
-            Text = "Dienste starten / neu starten", Width = 460, Height = 270,
-            FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
-            MinimizeBox = false, MaximizeBox = false, BackColor = Color.White, Font = new Font("Segoe UI", 9F),
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink
-        };
-        dialog.SuspendLayout();
-        var payment = new CheckBox { Text = "nt.payment neu starten", AutoSize = true };
-        var fiscal = new CheckBox { Text = "nt.fiscal neu starten", AutoSize = true };
-        var serverSuite = new CheckBox { Text = "nt3_server_suite starten", AutoSize = true };
-        var buttons = FlowRow();
-        buttons.FlowDirection = FlowDirection.RightToLeft;
-        var run = new Button { Text = "Ausführen", AutoSize = true, DialogResult = DialogResult.OK };
-        var cancel = new Button { Text = "Abbrechen", AutoSize = true, DialogResult = DialogResult.Cancel };
-        buttons.Controls.Add(run);
-        buttons.Controls.Add(cancel);
-        var layout = Stack(new Label { Text = $"Aktion auf allen {hosts.Count} Hosts ausführen:", AutoSize = true },
-            payment, fiscal, serverSuite, buttons);
-        layout.Padding = new Padding(14);
-        dialog.Controls.Add(layout);
-        dialog.AcceptButton = run;
-        dialog.CancelButton = cancel;
-        WindowLayout.CompleteInitialization(dialog);
+        using var dialog = new CommandDialog(hosts.Count);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        if (!payment.Checked && !fiscal.Checked && !serverSuite.Checked)
+        bool restartTerminals = dialog.RestartTerminals;
+        bool restartPayment = dialog.RestartPayment;
+        bool restartFiscal = dialog.RestartFiscal;
+        bool startServerSuite = dialog.StartServerSuite;
+        if (!restartTerminals && !restartPayment && !restartFiscal && !startServerSuite)
         {
-            MessageBox.Show(this, "Bitte mindestens einen Dienst auswählen.", "Dienste neu starten", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "Bitte eine Aktion auswählen.", "Befehl senden", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        CaptureCredentials();
         HostState[] targets = hosts.ToArray();
+        if (restartTerminals && MessageBox.Show(this,
+            $"Windows auf allen {targets.Length} eingetragenen Hosts neu starten?\n\n" +
+            "Der Neustart wird je Host mit 30 Sekunden Vorlauf angefordert. Geöffnete Programme werden geschlossen; nicht gespeicherte Daten können verloren gehen.\n\n" +
+            "Abbrechen im Updater stoppt weitere Aufträge. Bereits übermittelte Neustartaufträge bleiben bestehen.",
+            "Terminal neu starten", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+        CaptureCredentials();
+        int parallelism = (int)nUpdate.Value;
+        string action = restartTerminals ? "restart-terminal" : "restart-services";
+        string logAction = action.ToUpperInvariant();
+        string title = restartTerminals ? "Terminal neu starten" : "Dienste neu starten";
         var failures = new ConcurrentBag<string>();
         int succeeded = 0;
         bool completedRestart = false;
         await InBatchAsync(async ct =>
         {
             await Parallel.ForEachAsync(targets,
-                new ParallelOptions { MaxDegreeOfParallelism = (int)nUpdate.Value, CancellationToken = ct },
+                new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
                 async (host, token) =>
                 {
                     try
                     {
-                        Mark(host, h => { h.Phase = "Dienste werden neu gestartet"; h.Error = ""; });
+                        token.ThrowIfCancellationRequested();
+                        Mark(host, h => { h.Phase = restartTerminals ? "Windows-Neustart wird angefordert" : "Dienste werden neu gestartet"; h.Error = ""; });
                         using var commandRunner = new WorkerRunner("NovaTouchUpdater.RemoteCommand.ps1");
+                        // Once sent, wait for the restart acknowledgement. Cancelling
+                        // scheduling cannot undo a restart accepted by Windows.
                         WorkerResult result = await commandRunner.RunAsync(new WorkerRequest
                         {
-                            Action = "restart-services", Host = host.Host,
+                            Action = action, Host = host.Host,
                             Username = activeUser, Password = activePassword, UseSsl = activeSsl,
-                            RestartPayment = payment.Checked, RestartFiscal = fiscal.Checked,
-                            StartServerSuite = serverSuite.Checked
+                            RestartPayment = restartPayment, RestartFiscal = restartFiscal,
+                            StartServerSuite = startServerSuite
                         }, ev =>
                         {
                             Log(host.Host, ev.Phase + ": " + ev.Message);
                             Mark(host, h => h.Phase = ev.Phase + " – " + ev.Message);
-                        }, token);
+                        }, restartTerminals ? CancellationToken.None : token);
                         if (result.Success)
                         {
                             Interlocked.Increment(ref succeeded);
-                            Mark(host, h => h.Phase = "Dienste neu gestartet");
-                            Log(host.Host, "RESTART-SERVICES => OK " + result.Message);
+                            Mark(host, h =>
+                            {
+                                h.Phase = restartTerminals ? "Windows-Neustart angefordert (30 Sekunden)" : "Dienste neu gestartet";
+                                if (restartTerminals) { h.Connection = "Neustart angefordert"; h.Scanned = false; }
+                            });
+                            Log(host.Host, logAction + " => OK " + result.Message);
                         }
                         else
                         {
                             string error = FriendlyError(result);
                             failures.Add(host.Host + ": " + error);
-                            Mark(host, h => { h.Phase = "Neustart fehlgeschlagen"; h.Error = error; });
-                            Log(host.Host, "RESTART-SERVICES => FEHLER " + error);
+                            Mark(host, h => { h.Phase = restartTerminals ? "Windows-Neustart fehlgeschlagen" : "Neustart fehlgeschlagen"; h.Error = error; });
+                            Log(host.Host, logAction + " => FEHLER " + error);
                         }
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
                         failures.Add(host.Host + ": " + ex.Message);
-                        Mark(host, h => { h.Phase = "Neustart fehlgeschlagen"; h.Error = ex.Message; });
-                        Log(host.Host, "RESTART-SERVICES => FEHLER " + ex);
+                        Mark(host, h => { h.Phase = restartTerminals ? "Windows-Neustart fehlgeschlagen" : "Neustart fehlgeschlagen"; h.Error = ex.Message; });
+                        Log(host.Host, logAction + " => FEHLER " + ex);
                     }
                     finally { CountCompleted(); }
                 });
             completedRestart = true;
         });
 
-        if (!completedRestart) return;
-        string report = $"Neustart: {succeeded} von {targets.Length} Hosts erfolgreich.";
+        if (!completedRestart && succeeded == 0 && failures.IsEmpty) return;
+        string report = restartTerminals
+            ? $"Windows-Neustart für {succeeded} von {targets.Length} Hosts angefordert.\nDas anschließende Hochfahren wurde nicht geprüft."
+            : $"Neustart: {succeeded} von {targets.Length} Hosts erfolgreich.";
         if (!failures.IsEmpty) report += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, failures);
-        else if (succeeded < targets.Length) report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
-        MessageBox.Show(this, report, "Dienste neu starten", MessageBoxButtons.OK,
+        if (succeeded + failures.Count < targets.Length) report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
+        if (restartTerminals && !completedRestart) report += Environment.NewLine + "Bereits bestätigte Neustartaufträge bleiben bestehen.";
+        MessageBox.Show(this, report, title, MessageBoxButtons.OK,
             failures.IsEmpty && succeeded == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
