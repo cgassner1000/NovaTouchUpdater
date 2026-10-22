@@ -42,6 +42,10 @@ Ergebnis im Ordner `bin\Release\net8.0-windows\win-x64\publish\`.
 
 ## Bedienung
 
+Die Oberfläche berücksichtigt die Windows-Anzeigeskalierung pro Monitor (PerMonitorV2). Buttonleisten und Optionen brechen bei wenig Platz um; Zeilenhöhen richten sich nach dem Inhalt. Bei großen Schriften oder schmalen Fenstern stehen Dateiauswahl und Einstellungen untereinander. Reicht die Bildschirmfläche nicht aus, lassen sich die Inhalte im Haupt- und WinRM-Fenster scrollen.
+
+Zur Prüfung der Darstellung die Anwendung bei 100 %, 125 %, 150 % und 200 % Windows-Skalierung öffnen, das Fenster verkleinern und wieder vergrößern sowie bei mehreren Monitoren zwischen den Bildschirmen verschieben.
+
 1. Hostnamen-TXT laden: ein Hostname/IP pro Zeile; Leerzeilen und Zeilen mit `#`/`;` werden ignoriert, Duplikate entfernt.
 2. `nt.payment_VERSION*.zip` und/oder `nt.fiscal_VERSION*.zip` wählen (die Auswahlfelder stehen direkt untereinander). Beispiel: `nt.payment_2026.2.9546.5587.zip`.
 3. Den `Zielpfad auf den Clients` bei Bedarf anpassen (Standard: `C:\install\Novacom`). Dort liegen die Update-ZIPs und temporären Update-Dateien. Wenn andere Windows-Anmeldedaten benötigt werden, Benutzername und Passwort eingeben. Sonst wird das aktuelle Windows-Konto genutzt. Option `HTTPS` aktiviert WinRM/TLS.

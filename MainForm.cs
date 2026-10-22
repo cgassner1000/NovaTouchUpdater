@@ -93,9 +93,7 @@ public sealed class MainForm : Form
         Directory.CreateDirectory(logDir);
         logFile = Path.Combine(logDir, "Update-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
         ConstructUi();
-        AutoScaleDimensions = new SizeF(96F, 96F);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        ResumeLayout(true);
+        WindowLayout.CompleteInitialization(this);
         LoadStartupConfig();
         // Erst nach dem ersten Layout die endgültigen Fill-Spalten aktivieren.
         Shown += (_, _) => ApplyColumnWeights();
@@ -209,10 +207,9 @@ public sealed class MainForm : Form
 
     private void ConstructUi()
     {
-        var viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         var main = new TableLayoutPanel
         {
-            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Top,
             ColumnCount = 1, RowCount = 5, Padding = new Padding(16), BackColor = BackColor
         };
         main.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -221,9 +218,6 @@ public sealed class MainForm : Form
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        viewport.Controls.Add(main);
-        viewport.ClientSizeChanged += (_, _) => main.MinimumSize = new Size(0, viewport.ClientSize.Height);
-        Controls.Add(viewport);
 
         var header = FlowRow();
         header.Margin = new Padding(3, 0, 3, 12);
@@ -443,6 +437,16 @@ public sealed class MainForm : Form
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
         btnExport.Click += (_, _) => ExportHtml();
         btnCancel.Click += (_, _) => cancellation?.Cancel();
+
+        main.Layout += (_, _) =>
+        {
+            // Even the longest option must remain readable if a vertical scrollbar
+            // reduces the available width at very large text sizes.
+            int width = main.Padding.Horizontal + configuration.Margin.Horizontal + configuration.Padding.Horizontal
+                + chkSkipZipTransfer.PreferredSize.Width + chkSkipZipTransfer.Margin.Horizontal;
+            if (main.MinimumSize.Width != width) main.MinimumSize = new Size(width, 0);
+        };
+        Controls.Add(WindowLayout.CreateScrollArea(main, table));
     }
 
     private void ApplyColumnWeights()
@@ -517,20 +521,19 @@ public sealed class MainForm : Form
         {
             Text = "Computer hinzufügen oder bearbeiten", Width = 560, Height = 350,
             FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
-            MinimizeBox = false, MaximizeBox = false
+            MinimizeBox = false, MaximizeBox = false, Font = new Font("Segoe UI", 9F)
         };
-        var label = new Label { Text = "Computernamen (ein Computer pro Zeile):", Dock = DockStyle.Top, Height = 28, TextAlign = ContentAlignment.MiddleLeft };
+        dialog.SuspendLayout();
+        var label = new Label { Text = "Computernamen (ein Computer pro Zeile):", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
         var hostNames = new TextBox
         {
             Dock = DockStyle.Fill, Multiline = true, AcceptsReturn = true,
             ScrollBars = ScrollBars.Vertical, WordWrap = false
         };
         hostNames.Lines = hosts.Select(h => h.Host).ToArray();
-        var buttons = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 48,
-            Padding = new Padding(8), WrapContents = false
-        };
+        var buttons = FlowRow();
+        buttons.FlowDirection = FlowDirection.RightToLeft;
+        buttons.Padding = new Padding(8);
         var add = new Button { Text = "OK", AutoSize = true };
         var cancel = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, AutoSize = true };
         var browse = new Button { Text = "Durchsuchen...", AutoSize = true };
@@ -574,11 +577,18 @@ public sealed class MainForm : Form
         buttons.Controls.Add(browse);
         buttons.Controls.Add(add);
         buttons.Controls.Add(cancel);
-        dialog.Controls.Add(hostNames);
-        dialog.Controls.Add(label);
-        dialog.Controls.Add(buttons);
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.Controls.Add(label, 0, 0);
+        layout.Controls.Add(hostNames, 0, 1);
+        layout.Controls.Add(buttons, 0, 2);
+        dialog.Controls.Add(layout);
         dialog.AcceptButton = add;
         dialog.CancelButton = cancel;
+        WindowLayout.CompleteInitialization(dialog);
         dialog.Shown += (_, _) => hostNames.Focus();
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
@@ -770,30 +780,26 @@ public sealed class MainForm : Form
         {
             Text = "Dienste starten / neu starten", Width = 460, Height = 270,
             FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
-            MinimizeBox = false, MaximizeBox = false, BackColor = Color.White, Font = Font
+            MinimizeBox = false, MaximizeBox = false, BackColor = Color.White, Font = new Font("Segoe UI", 9F),
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink
         };
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(14), RowCount = 5, ColumnCount = 1 };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        dialog.SuspendLayout();
         var payment = new CheckBox { Text = "nt.payment neu starten", AutoSize = true };
         var fiscal = new CheckBox { Text = "nt.fiscal neu starten", AutoSize = true };
         var serverSuite = new CheckBox { Text = "nt3_server_suite starten", AutoSize = true };
-        var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft };
+        var buttons = FlowRow();
+        buttons.FlowDirection = FlowDirection.RightToLeft;
         var run = new Button { Text = "Ausführen", AutoSize = true, DialogResult = DialogResult.OK };
         var cancel = new Button { Text = "Abbrechen", AutoSize = true, DialogResult = DialogResult.Cancel };
         buttons.Controls.Add(run);
         buttons.Controls.Add(cancel);
-        layout.Controls.Add(new Label { Text = $"Aktion auf allen {hosts.Count} Hosts ausführen:", AutoSize = true }, 0, 0);
-        layout.Controls.Add(payment, 0, 1);
-        layout.Controls.Add(fiscal, 0, 2);
-        layout.Controls.Add(serverSuite, 0, 3);
-        layout.Controls.Add(buttons, 0, 4);
+        var layout = Stack(new Label { Text = $"Aktion auf allen {hosts.Count} Hosts ausführen:", AutoSize = true },
+            payment, fiscal, serverSuite, buttons);
+        layout.Padding = new Padding(14);
         dialog.Controls.Add(layout);
         dialog.AcceptButton = run;
         dialog.CancelButton = cancel;
+        WindowLayout.CompleteInitialization(dialog);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         if (!payment.Checked && !fiscal.Checked && !serverSuite.Checked)
         {
@@ -1172,10 +1178,13 @@ public sealed class MainForm : Form
 
     private void ShowHostLog(HostState host)
     {
-        using var window = new Form { Text = "Protokoll – " + host.Host, Width = 920, Height = 520, StartPosition = FormStartPosition.CenterParent };
+        using var window = new Form { Text = "Protokoll – " + host.Host, Width = 920, Height = 520, StartPosition = FormStartPosition.CenterParent, Font = new Font("Segoe UI", 9F) };
+        window.SuspendLayout();
         var text = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, Dock = DockStyle.Fill, Font = new Font("Consolas", 9F), WordWrap = false };
         lock (logLock) text.Text = string.Join(Environment.NewLine, host.Log);
-        window.Controls.Add(text); window.ShowDialog(this);
+        window.Controls.Add(text);
+        WindowLayout.CompleteInitialization(window);
+        window.ShowDialog(this);
     }
 
     private void ExportHtml()

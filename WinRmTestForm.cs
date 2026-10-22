@@ -13,21 +13,25 @@ internal sealed class WinRmTestForm : Form
 
     public WinRmTestForm(string[] hosts, string username, string password, int parallelism, bool useSsl)
     {
+        SuspendLayout();
         string protocol = useSsl ? "HTTPS / 5986" : "HTTP / 5985";
         Text = "Test WinRM – " + (useSsl ? "HTTPS" : "HTTP");
         Size = new Size(1100, 700);
-        MinimumSize = new Size(850, 550);
+        MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterParent;
         Font = new Font("Segoe UI", 9F);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 1, Padding = new Padding(10) };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 60));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         summary.Dock = DockStyle.Fill;
+        summary.AutoSize = true;
         summary.Text = $"{hosts.Length} Hosts; maximal {parallelism} Hosts parallel. Es wird ausschließlich {protocol} geprüft.\nZeile auswählen für vollständige Details. Der Testbefehl gibt ausschließlich einen konstanten Text zurück.";
         layout.Controls.Add(summary, 0, 0);
         grid.Dock = DockStyle.Fill;
+        grid.MinimumSize = new Size(0, 120);
         grid.ReadOnly = true;
         grid.AllowUserToAddRows = false;
         grid.AllowUserToDeleteRows = false;
@@ -35,10 +39,13 @@ internal sealed class WinRmTestForm : Form
         grid.MultiSelect = false;
         grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+        grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+        grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders;
         foreach (string title in new[] { "Host", "Protokoll / Port", "TCP", "New-PSSession", "Invoke-Command", "Ergebnis" })
             grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = title, SortMode = DataGridViewColumnSortMode.NotSortable });
         layout.Controls.Add(grid, 0, 1);
         details.Dock = DockStyle.Fill;
+        details.MinimumSize = new Size(0, 90);
         details.Multiline = true;
         details.ReadOnly = true;
         details.ScrollBars = ScrollBars.Both;
@@ -46,7 +53,8 @@ internal sealed class WinRmTestForm : Form
         layout.Controls.Add(details, 0, 2);
         cancel.Anchor = AnchorStyles.Right;
         layout.Controls.Add(cancel, 0, 3);
-        Controls.Add(layout);
+        Controls.Add(WindowLayout.CreateScrollArea(layout, grid, details));
+        WindowLayout.CompleteInitialization(this);
         var rows = hosts.Select(host =>
             grid.Rows[grid.Rows.Add(host, protocol, "Wartet", "Wartet", "Wartet", "Wartet")]).ToArray();
         grid.SelectionChanged += (_, _) => ShowDetails();
