@@ -10,6 +10,8 @@ public sealed class WorkerRequest
 {
     public string Action { get; set; } = "";
     public string Host { get; set; } = "";
+    public string[] Hosts { get; set; } = [];
+    public int Parallelism { get; set; } = 40;
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
     public bool UseSsl { get; set; }
@@ -51,6 +53,8 @@ public sealed class WorkerEvent
     public string Event { get; set; } = "";
     public string Phase { get; set; } = "";
     public string Message { get; set; } = "";
+    public string Host { get; set; } = "";
+    public bool? Connected { get; set; }
 }
 
 public sealed class WorkerResult

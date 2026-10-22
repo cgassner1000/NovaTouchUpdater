@@ -12,9 +12,11 @@
     <Version>1.0.0</Version>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
     <EmbeddedResource Include="RemoteWorker.ps1" LogicalName="NovaTouchUpdater.RemoteWorker.ps1" />
     <EmbeddedResource Include="RemoteCommand.ps1" LogicalName="NovaTouchUpdater.RemoteCommand.ps1" />
     <EmbeddedResource Include="WinRmWorker.ps1" LogicalName="NovaTouchUpdater.WinRmWorker.ps1" />
+    <EmbeddedResource Include="ConnectionWorker.ps1" LogicalName="NovaTouchUpdater.ConnectionWorker.ps1" />
     <None Update="config.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('config.json')" />
   </ItemGroup>
 </Project>

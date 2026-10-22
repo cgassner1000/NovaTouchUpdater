@@ -61,7 +61,7 @@ Zur Prüfung der Darstellung die Anwendung bei 100 %, 125 %, 150 % und 200 % Win
 
 Die Windows-Aktion gilt für **alle eingetragenen Hosts**, unabhängig von Tabellenfilter, vorherigem Scan oder ausgewählten ZIP-Dateien, und kann nicht mit Dienstaktionen kombiniert werden. Nach einer zusätzlichen Bestätigung wird pro Host über WinRM ein Windows-Neustart mit 30 Sekunden Vorlauf angefordert; die eingestellten Anmeldedaten, HTTPS und `Update parallel` gelten auch hier. Windows schließt dabei geöffnete Anwendungen; nicht gespeicherte Daten können verloren gehen. Die Umsetzung nutzt [`shutdown /r /t 30`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown).
 
-Nach bestätigtem Neustartauftrag steht beim Host **Windows-Neustart angefordert (30 Sekunden)**. Die Rückkehr des Hosts wird nicht automatisch geprüft; vor weiteren Updates erneut `Prüfen + Versionen` ausführen. `Abbrechen` stoppt die Vergabe weiterer Aufträge und wartet auf die Rückmeldungen bereits gestarteter Neustartanforderungen. Bereits an Windows übermittelte Neustartaufträge werden dadurch nicht zurückgenommen. Hostprotokoll und HTML-Bericht enthalten die Anforderung bzw. den Fehler.
+Nach bestätigtem Neustartauftrag steht beim Host **Windows-Neustart angefordert (30 Sekunden)**. Die automatische Verbindungsprüfung zeigt anschließend, ob der Host noch nicht oder wieder über WinRM erreichbar ist; vor weiteren Updates erneut `Prüfen + Versionen` ausführen. `Abbrechen` stoppt die Vergabe weiterer Aufträge und wartet auf die Rückmeldungen bereits gestarteter Neustartanforderungen. Bereits an Windows übermittelte Neustartaufträge werden dadurch nicht zurückgenommen. Hostprotokoll und HTML-Bericht enthalten die Anforderung bzw. den Fehler.
 
 Test der Befehlsaktionen mit simulierten WinRM-, Dienst- und Shutdown-Aufrufen; dabei werden keine Rechner neu gestartet:
 
@@ -70,6 +70,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\RemoteCommand.Test
 ```
 
 Die Hostübersicht zeigt nur die **IST-Versionen** von Payment und Fiscal. Die für alle Hosts identischen Zielversionen stehen als **Payment Target** und **Fiscal Target** bei der ZIP-Auswahl und werden weiterhin automatisch aus dem ZIP-Dateinamen gelesen.
+
+Die Spalte **Verbindung** prüft ab dem Öffnen des Hauptfensters alle eingetragenen Hosts im Hintergrund ungefähr alle **10 Sekunden** mit einer WinRM-Anmeldung. Sie verwendet die eingestellten Anmeldedaten und die HTTPS-Auswahl. **Verbunden** erscheint grün, **Nicht erreichbar** rot und **Neustart angefordert** während des Vorlaufs braun. **Unbekannt** bedeutet, dass die Hintergrundprüfung selbst kein verlässliches Ergebnis liefern konnte. Der Tooltip zeigt die Uhrzeit der letzten Prüfung und Details; der Filter „Nicht erreichbar“ passt sich automatisch an. Statuswechsel werden im Hostprotokoll erfasst, gleichbleibende Ergebnisse erzeugen keine wiederholten Logzeilen. Der HTML-Bericht übernimmt den Zustand und die letzte Prüfzeit zum Exportzeitpunkt.
+
+Während eines manuellen `Prüfen + Versionen` pausiert die Hintergrundprüfung, danach läuft sie wieder weiter. Beim Bearbeiten der Zugangsdaten und bei einem Benutzernamen ohne Passwort wird keine neue automatische Prüfung gestartet. Update-Ergebnisse, Versionsangaben und Informationstexte werden durch die Hintergrundprüfung nicht geändert. Die Prüfungen verwenden `Prüfen parallel` mit höchstens 40 gleichzeitigen Verbindungen und einem Zeitlimit pro Host. Eine noch laufende Runde wird nicht überlappt; bei vielen oder langsam antwortenden Hosts kann das Intervall deshalb länger ausfallen. Beim Schließen der Anwendung wird die Überwachung beendet.
+
+Tests der Verbindungsüberwachung mit simulierten Antworten, ohne Verbindung zu Zielhosts:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\ConnectionWorker.Tests.ps1
+dotnet run --project tests\ConnectionState.Tests\ConnectionState.Tests.csproj -c Release
+```
 
 Die Spaltenreihenfolge lautet: **Hostname | Verbindung | .NET 4.8 | Payment Ist | Fiscal Ist | NovaTouch POS | Information | Versuch | Ergebnis**. Die schmale .NET-Spalte zeigt **✓** bei installiertem .NET Framework 4.8 oder neuer (auch 4.8.1), **✗** bei fehlendem/älterem Framework und **–** vor einer Prüfung bzw. bei nicht ermitteltem Status. Grundlage ist der Registry-Wert `Release >= 528040` unter `NET Framework Setup\NDP\v4\Full` ([Microsoft-Dokumentation](https://learn.microsoft.com/en-us/dotnet/framework/install/how-to-determine-which-versions-are-installed)). Die POS-Version stammt aus `DisplayVersion` der Programmeinträge mit Namen `NovaTouch POS` unter den 32- und 64-Bit-Uninstall-Schlüsseln in `HKLM`. Fehlt POS, steht dort **Nicht installiert**; das allein verursacht keinen Fehler und verhindert kein Payment-/Fiscal-Update. Bei registrierter Installation ohne Versionsangabe steht **Version unbekannt**. Beim erneuten Prüfen werden alte Ergebnisse zurückgesetzt. Beide Angaben stehen auch im HTML-Bericht.
 

@@ -10,7 +10,8 @@ namespace NovaTouchUpdater;
 internal sealed class HostState
 {
     public string Host { get; init; } = "";
-    public string Connection { get; set; } = "Nicht geprüft";
+    public ConnectionState ConnectionState { get; } = new();
+    public string Connection { get => ConnectionState.Status; set => ConnectionState.SetForegroundStatus(value); }
     public bool? DotNet48Installed { get; set; }
     public string Payment { get; set; } = "–";
     public string Fiscal { get; set; } = "–";
@@ -33,6 +34,13 @@ public sealed class MainForm : Form
     private readonly List<HostState> hosts = [];
     private readonly object logLock = new();
     private readonly WorkerRunner runner = new();
+    private readonly WorkerRunner connectionRunner = new("NovaTouchUpdater.ConnectionWorker.ps1");
+    private readonly System.Windows.Forms.Timer connectionTimer = new() { Interval = 10000 };
+    private CancellationTokenSource? connectionCancellation;
+    private bool connectionCheckRunning;
+    private bool connectionScanPaused;
+    private bool connectionClosing;
+    private int connectionGeneration;
     private readonly string logFile;
     private CancellationTokenSource? cancellation;
     private bool busy;
@@ -98,7 +106,16 @@ public sealed class MainForm : Form
         WindowLayout.CompleteInitialization(this);
         LoadStartupConfig();
         // Erst nach dem ersten Layout die endgültigen Fill-Spalten aktivieren.
-        Shown += (_, _) => ApplyColumnWeights();
+        connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
+        txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
+        txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
+        chkSsl.CheckedChanged += (_, _) => InvalidateConnectionChecks();
+        Shown += async (_, _) =>
+        {
+            ApplyColumnWeights();
+            connectionTimer.Start();
+            await RefreshConnectionsAsync();
+        };
         UpdateButtons();
         FormClosing += (_, e) =>
         {
@@ -107,9 +124,20 @@ public sealed class MainForm : Form
                 e.Cancel = true;
                 MessageBox.Show(this, "Ein Update-/Prüfdurchlauf ist noch aktiv. Bitte zuerst 'Abbrechen' klicken und den Abschluss der aktiven Hosts abwarten.",
                     "Aktive Verarbeitung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
             }
+            connectionClosing = true;
+            connectionTimer.Stop();
+            InvalidateConnectionChecks();
         };
-        FormClosed += (_, _) => runner.Dispose();
+        Disposed += (_, _) =>
+        {
+            connectionClosing = true;
+            connectionTimer.Dispose();
+            connectionCancellation?.Cancel();
+            connectionRunner.Dispose();
+            runner.Dispose();
+        };
     }
 
     private void LoadStartupConfig()
@@ -381,6 +409,7 @@ public sealed class MainForm : Form
         table.DefaultCellStyle.Padding = new Padding(0, 4, 0, 4);
         table.Columns.Add("hostname", "Hostname");
         table.Columns.Add("connection", "Verbindung");
+        table.Columns["connection"].ToolTipText = "Automatische WinRM-Prüfung ca. alle 10 Sekunden. Letzte Prüfung und Fehlerdetails stehen im Tooltip des Hosts.";
         table.Columns.Add("dotnet48", ".NET 4.8");
         table.Columns.Add("payment", "Payment Ist");
         table.Columns.Add("fiscal", "Fiscal Ist");
@@ -518,6 +547,7 @@ public sealed class MainForm : Form
             .Where(x => x.Length > 0 && !x.StartsWith('#') && !x.StartsWith(';'))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (values.Length == 0) { MessageBox.Show(this, "Die Datei enthält keine Hostnamen."); return; }
+        InvalidateConnectionChecks();
         hosts.Clear();
         foreach (string value in values) hosts.Add(new HostState { Host = value });
         RebuildRows();
@@ -609,6 +639,7 @@ public sealed class MainForm : Form
         var existing = hosts.ToDictionary(h => h.Host, StringComparer.OrdinalIgnoreCase);
         int removed = hosts.Count(h => !entries.Contains(h.Host, StringComparer.OrdinalIgnoreCase));
         int added = entries.Count(value => !existing.ContainsKey(value));
+        InvalidateConnectionChecks();
         hosts.Clear();
         foreach (string value in entries)
             hosts.Add(existing.TryGetValue(value, out HostState? host) ? host : new HostState { Host = value });
@@ -622,6 +653,7 @@ public sealed class MainForm : Form
     private void RemoveSelectedHost()
     {
         if (busy || table.CurrentRow?.Tag is not HostState host) return;
+        InvalidateConnectionChecks();
         hosts.Remove(host);
         lblFile.Text = $"{hosts.Count} Hosts";
         RebuildRows();
@@ -842,7 +874,7 @@ public sealed class MainForm : Form
                             Mark(host, h =>
                             {
                                 h.Phase = restartTerminals ? "Windows-Neustart angefordert (30 Sekunden)" : "Dienste neu gestartet";
-                                if (restartTerminals) { h.Connection = "Neustart angefordert"; h.Scanned = false; }
+                                if (restartTerminals) { h.ConnectionState.ExpectRestart(DateTimeOffset.Now); h.Scanned = false; }
                             });
                             Log(host.Host, logAction + " => OK " + result.Message);
                         }
@@ -868,7 +900,7 @@ public sealed class MainForm : Form
 
         if (!completedRestart && succeeded == 0 && failures.IsEmpty) return;
         string report = restartTerminals
-            ? $"Windows-Neustart für {succeeded} von {targets.Length} Hosts angefordert.\nDas anschließende Hochfahren wurde nicht geprüft."
+            ? $"Windows-Neustart für {succeeded} von {targets.Length} Hosts angefordert.\nDie Spalte 'Verbindung' prüft die WinRM-Erreichbarkeit automatisch ca. alle 10 Sekunden."
             : $"Neustart: {succeeded} von {targets.Length} Hosts erfolgreich.";
         if (!failures.IsEmpty) report += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, failures);
         if (succeeded + failures.Count < targets.Length) report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
@@ -910,6 +942,18 @@ public sealed class MainForm : Form
     private async Task RunScansAsync()
     {
         if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
+        connectionScanPaused = true;
+        InvalidateConnectionChecks();
+        try { await RunScanPhaseAsync(); }
+        finally
+        {
+            connectionScanPaused = false;
+            _ = RefreshConnectionsAsync();
+        }
+    }
+
+    private async Task RunScanPhaseAsync()
+    {
         CaptureCredentials();
         await InBatchAsync(async ct =>
         {
@@ -1035,6 +1079,79 @@ public sealed class MainForm : Form
         });
     }
 
+    private void InvalidateConnectionChecks()
+    {
+        connectionGeneration++;
+        connectionCancellation?.Cancel();
+    }
+
+    private async Task RefreshConnectionsAsync()
+    {
+        if (connectionClosing || IsDisposed || connectionScanPaused || connectionCheckRunning || hosts.Count == 0) return;
+        // Do not repeatedly authenticate while credentials are being edited.
+        if (txtUser.Focused || txtPassword.Focused || (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)) return;
+
+        var targets = hosts.ToDictionary(h => h.Host, h => (Host: h, Revision: h.ConnectionState.Revision), StringComparer.OrdinalIgnoreCase);
+        var received = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        int generation = connectionGeneration;
+        int parallelism = Math.Clamp((int)nScan.Value, 1, 40);
+        bool useSsl = chkSsl.Checked;
+        string transport = useSsl ? "WinRM HTTPS/5986" : "WinRM HTTP/5985";
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(10, Math.Ceiling(targets.Count / (double)parallelism) * 6 + 5)));
+        connectionCancellation = timeout;
+        connectionCheckRunning = true;
+
+        void MissingResults(string error)
+        {
+            foreach (var target in targets.Values)
+                if (!received.ContainsKey(target.Host.Host))
+                    ApplyConnectionResult(target.Host, target.Revision, generation, null, error, DateTimeOffset.Now);
+        }
+
+        try
+        {
+            WorkerResult result = await connectionRunner.RunAsync(new WorkerRequest
+            {
+                Action = "monitor-connections", Hosts = targets.Keys.ToArray(), Parallelism = parallelism,
+                Username = txtUser.Text.Trim(), Password = txtPassword.Text, UseSsl = useSsl
+            }, ev =>
+            {
+                if (string.IsNullOrEmpty(ev.Host) || !targets.TryGetValue(ev.Host, out var target)) return;
+                received.TryAdd(ev.Host, 0);
+                DateTimeOffset checkedAt = DateTimeOffset.Now;
+                Ui(() => ApplyConnectionResult(target.Host, target.Revision, generation, ev.Connected,
+                    transport + ": " + DisplayText.Clean(ev.Message), checkedAt));
+            }, timeout.Token);
+            if (!result.Success) MissingResults("Automatische Verbindungsprüfung fehlgeschlagen: " + FriendlyError(result));
+            else MissingResults("Keine Rückmeldung der automatischen Verbindungsprüfung.");
+        }
+        catch (OperationCanceledException) { MissingResults("Zeitlimit der automatischen Verbindungsprüfung überschritten."); }
+        catch (Exception ex) { MissingResults("Automatische Verbindungsprüfung fehlgeschlagen: " + DisplayText.Clean(ex.Message)); }
+        finally
+        {
+            connectionCancellation = null;
+            connectionCheckRunning = false;
+        }
+    }
+
+    private void ApplyConnectionResult(HostState host, int revision, int generation, bool? connected, string detail, DateTimeOffset checkedAt)
+    {
+        if (connectionClosing || IsDisposed || connectionScanPaused || generation != connectionGeneration || !hosts.Contains(host)) return;
+        string previous;
+        lock (host)
+        {
+            previous = host.Connection;
+            if (!host.ConnectionState.Apply(revision, connected, detail, checkedAt)) return;
+        }
+        if (previous != host.Connection)
+        {
+            Log(host.Host, "VERBINDUNG => " + host.Connection);
+            if (statusFilter.SelectedIndex == 4) RebuildRows();
+        }
+        PaintRow(host);
+        UpdateSummary();
+    }
+
     private async Task<WorkerResult> DoWorkerAsync(HostState host, string action, CancellationToken ct)
     {
         Log(host.Host, action.ToUpperInvariant() + " gestartet");
@@ -1126,9 +1243,24 @@ public sealed class MainForm : Form
     private void PaintRow(HostState h)
     {
         if (h.Row is null) return;
+        string connection;
+        string connectionToolTip;
+        lock (h)
+        {
+            connection = h.Connection;
+            connectionToolTip = h.ConnectionState.ToolTip;
+        }
         var cells = h.Row.Cells;
         cells["hostname"].Value = h.Host;
-        cells["connection"].Value = h.Connection;
+        cells["connection"].Value = connection;
+        cells["connection"].ToolTipText = connectionToolTip;
+        cells["connection"].Style.ForeColor = connection switch
+        {
+            "Verbunden" => Color.FromArgb(22, 115, 75),
+            "Nicht erreichbar" => Color.FromArgb(170, 45, 54),
+            "Neustart angefordert" => Color.FromArgb(133, 90, 28),
+            _ => Color.FromArgb(95, 110, 130)
+        };
         cells["dotnet48"].Value = DisplayText.DotNet48(h.DotNet48Installed);
         cells["dotnet48"].ToolTipText = DisplayText.DotNet48Description(h.DotNet48Installed);
         cells["payment"].Value = h.Payment;

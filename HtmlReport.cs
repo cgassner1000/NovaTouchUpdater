@@ -108,7 +108,11 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
                 host.Result, DisplayText.Clean(host.Error) }).ToLowerInvariant();
             sb.Append("<tr data-kind=\"").Append(kind).Append("\" data-search=\"").Append(E(search)).AppendLine("\">");
             sb.Append("<td class=\"host\">").Append(E(host.Host)).AppendLine("</td>");
-            sb.Append("<td>").Append(E(host.Connection)).AppendLine("</td>");
+            sb.Append("<td title=\"").Append(E(host.ConnectionState.ToolTip)).Append("\">").Append(E(host.Connection));
+            DateTimeOffset? lastConnectionCheck = host.ConnectionState.LastCheckedAt;
+            if (lastConnectionCheck.HasValue)
+                sb.Append("<div class=\"dim\">").Append(E(lastConnectionCheck.Value.ToString("HH:mm:ss"))).Append("</div>");
+            sb.AppendLine("</td>");
             sb.Append("<td class=\"framework\"><span class=\"")
                 .Append(host.DotNet48Installed switch { true => "yes", false => "no", null => "dim" })
                 .Append("\" title=\"").Append(E(DisplayText.DotNet48Description(host.DotNet48Installed)))
