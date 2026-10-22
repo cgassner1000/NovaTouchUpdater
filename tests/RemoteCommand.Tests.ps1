@@ -9,6 +9,8 @@ Assert ($parseErrors.Count -eq 0) ($parseErrors | Out-String)
 $nativeCall = '& $shutdown '
 Assert ([regex]::Matches($source, [regex]::Escape($nativeCall)).Count -eq 1) 'Expected exactly one replaceable native shutdown call'
 $source = $source.Replace($nativeCall, 'Invoke-TestShutdown ')
+$source = $source.Replace('& $taskkill ', 'Invoke-UnexpectedTaskkill ')
+$source = $source.Replace('${function:RequestPosRestart}', '${function:TestPosRestart}')
 $source = $source.Replace('$requestLine = [Console]::In.ReadLine()', '$requestLine = $script:requestJson').Replace('exit 1', 'return')
 Assert (-not $source.Contains($nativeCall)) 'Native shutdown must be removed before tests run'
 $worker = [scriptblock]::Create($source)
@@ -42,6 +44,13 @@ function Invoke-TestShutdown {
 # Fail closed if a future change introduces a different reboot API.
 function Restart-Computer { throw 'Unexpected real restart API in test' }
 function Stop-Computer { throw 'Unexpected real shutdown API in test' }
+function Invoke-UnexpectedTaskkill { throw 'Unexpected native process action in routing test' }
+function TestPosRestart {
+    $script:posCalls++
+    if ($script:posSkipped) { return [pscustomobject]@{ Results=@('POS absent - skipped'); Failures=@(); Skipped=$true; Changed=$false } }
+    if ($script:posFailure) { return [pscustomobject]@{ Results=@(); Failures=@('POS cleanup failure'); Skipped=$false; Changed=$true } }
+    [pscustomobject]@{ Results=@('POS running as cashier; task deleted'); Failures=@(); Skipped=$false; Changed=$true }
+}
 function Get-Service {
     param($Name, $ErrorAction)
     $script:serviceReads++
@@ -73,13 +82,14 @@ function Service([string]$name, [string]$status='Running') {
 function CommandCase {
     param([string]$Name, [hashtable]$Request=@{}, [scriptblock]$Setup={}, [bool]$Success=$true,
         [int]$Shutdowns=0, [string[]]$Actions=@(), [string]$ErrorPattern='',
-        [int]$Connections=1, [int]$Cleanup=1)
+        [int]$Connections=1, [int]$Cleanup=1, [int]$PosCalls=0, [bool]$Skipped=$false)
     $script:request = @{ Action='restart-services'; Host='example.invalid'; UseSsl=$false; Username=''; Password=''; RestartPayment=$false; RestartFiscal=$false; StartServerSuite=$false }
     foreach ($key in $Request.Keys) { $script:request[$key] = $Request[$key] }
     $script:connections=0; $script:removed=0; $script:shutdownCalls=0; $script:serviceReads=0
     $script:shutdownArgs=@(); $script:shutdownExitCode=0
     $script:services=@{}; $script:serviceActions=[Collections.Generic.List[string]]::new()
     $script:connectionError=$false; $script:remoteError=$false; $script:failedService=''
+    $script:posCalls=0; $script:posSkipped=$false; $script:posFailure=$false
     & $Setup
     $script:requestJson = $script:request | ConvertTo-Json -Compress
     $writer = [IO.StringWriter]::new()
@@ -95,6 +105,7 @@ function CommandCase {
     Assert ((($script:serviceActions | Sort-Object) -join ',') -ceq (($Actions | Sort-Object) -join ',')) "$Name unexpected service changes"
     Assert ($script:connections -eq $Connections) "$Name unexpected session count"
     Assert ($script:removed -eq $Cleanup) "$Name must clean up its session"
+    Assert ($script:posCalls -eq $PosCalls -and [bool]$result.Skipped -eq $Skipped) "$Name unexpected POS routing/skip state"
     if ($Shutdowns) {
         Assert ((($script:shutdownArgs | ForEach-Object { [string]$_ }) -join '|') -ceq '/r|/t|30|/d|p:4:1|/c|Terminal-Neustart durch NovaTouch Updater') "$Name must request a restart with 30 seconds delay"
     }
@@ -103,6 +114,10 @@ function CommandCase {
         if ($Success) {
             Assert ($result.Changed -eq $true -and $result.Message -match '30 Sekunden angefordert') "$Name must acknowledge the request without claiming boot completion"
         }
+    }
+    if ($Request.Action -eq 'restart-pos') {
+        Assert ($script:serviceReads -eq 0 -and $script:shutdownCalls -eq 0) "$Name must not restart services or Windows"
+        Assert ($result.Changed -eq (-not $Skipped)) "$Name must preserve the POS change/skip outcome"
     }
     if ($ErrorPattern) { Assert ($result.Error -match $ErrorPattern) "$Name missing error details" }
     Write-Output "PASS $Name"
@@ -115,6 +130,11 @@ CommandCase 'Windows restart without service fields' -Request @{ Action='restart
 CommandCase 'shutdown rejection' -Request @{ Action='restart-terminal' } -Shutdowns 1 -Success $false -Setup { $script:shutdownExitCode=5 } -ErrorPattern 'Exitcode 5.*Simulated access denied'
 CommandCase 'restart connection failure' -Request @{ Action='restart-terminal' } -Success $false -Setup { $script:connectionError=$true } -ErrorPattern 'Simulated connection failure' -Cleanup 0
 CommandCase 'restart remoting failure' -Request @{ Action='restart-terminal' } -Success $false -Setup { $script:remoteError=$true } -ErrorPattern 'Simulated remoting failure'
+CommandCase 'POS restart with HTTPS credentials' -Request @{ Action='restart-pos'; UseSsl=$true; Username='DOMAIN\test'; Password='test-only' } -PosCalls 1
+CommandCase 'POS restart ignores service flags' -Request @{ Action='restart-pos'; RestartPayment=$true; RestartFiscal=$true; StartServerSuite=$true } -PosCalls 1
+CommandCase 'POS restart without service fields' -Request @{ Action='restart-pos' } -PosCalls 1 -Setup { $script:request.Remove('RestartPayment'); $script:request.Remove('RestartFiscal'); $script:request.Remove('StartServerSuite') }
+CommandCase 'absent POS is skipped without error' -Request @{ Action='restart-pos' } -PosCalls 1 -Skipped $true -Setup { $script:posSkipped=$true }
+CommandCase 'POS cleanup failure stays an error' -Request @{ Action='restart-pos' } -PosCalls 1 -Success $false -Setup { $script:posFailure=$true } -ErrorPattern 'POS cleanup failure'
 CommandCase 'payment restart only' -Request @{ RestartPayment=$true } -Setup { Service 'nt.payment.1'; Service 'nt.payment.2' 'Stopped'; Service 'nt.fiscal'; Service 'other' } -Actions @('stop:nt.payment.1','start:nt.payment.1','start:nt.payment.2')
 CommandCase 'fiscal restart only' -Request @{ RestartFiscal=$true } -Setup { Service 'nt.payment'; Service 'nt.fiscal' } -Actions @('stop:nt.fiscal','start:nt.fiscal')
 CommandCase 'server suite start' -Request @{ StartServerSuite=$true } -Setup { Service 'nt3_server_suite' 'Stopped'; Service 'other' } -Actions @('start:nt3_server_suite')

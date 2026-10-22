@@ -801,10 +801,11 @@ public sealed class MainForm : Form
         using var dialog = new CommandDialog(hosts.Count);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         bool restartTerminals = dialog.RestartTerminals;
+        bool restartPos = dialog.RestartPos;
         bool restartPayment = dialog.RestartPayment;
         bool restartFiscal = dialog.RestartFiscal;
         bool startServerSuite = dialog.StartServerSuite;
-        if (!restartTerminals && !restartPayment && !restartFiscal && !startServerSuite)
+        if (!restartTerminals && !restartPos && !restartPayment && !restartFiscal && !startServerSuite)
         {
             MessageBox.Show(this, "Bitte eine Aktion auswählen.", "Befehl senden", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -815,12 +816,20 @@ public sealed class MainForm : Form
             "Der Neustart wird je Host mit 30 Sekunden Vorlauf angefordert. Geöffnete Programme werden geschlossen; nicht gespeicherte Daten können verloren gehen.\n\n" +
             "Abbrechen im Updater stoppt weitere Aufträge. Bereits übermittelte Neustartaufträge bleiben bestehen.",
             "Terminal neu starten", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+        if (restartPos && MessageBox.Show(this,
+            $"KassaPreh auf allen {targets.Length} eingetragenen Hosts neu starten?\n\n" +
+            "Die laufende KassaPreh.exe wird sofort per taskkill beendet und im selben angemeldeten Benutzerkonto neu gestartet. Nicht gespeicherte Eingaben können verloren gehen. Windows wird dabei nicht neu gestartet.\n\n" +
+            "Pfad: C:\\Program Files (x86)\\novatouch\\bin\\KassaPreh.exe\n" +
+            "Fehlt die Datei oder läuft die Anwendung nicht, wird der Host übersprungen. Die temporäre Windows-Aufgabe wird nach der Startprüfung wieder gelöscht.\n\n" +
+            "Abbrechen stoppt weitere Aufträge. Bereits gestartete POS-Neustarts werden einschließlich Bereinigung abgeschlossen.",
+            "POS neustart", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
         CaptureCredentials();
         int parallelism = (int)nUpdate.Value;
-        string action = restartTerminals ? "restart-terminal" : "restart-services";
+        string action = restartTerminals ? "restart-terminal" : restartPos ? "restart-pos" : "restart-services";
         string logAction = action.ToUpperInvariant();
-        string title = restartTerminals ? "Terminal neu starten" : "Dienste neu starten";
+        string title = restartTerminals ? "Terminal neu starten" : restartPos ? "POS neustart" : "Dienste neu starten";
         var failures = new ConcurrentBag<string>();
+        var skipped = new ConcurrentBag<string>();
         int succeeded = 0;
         bool completedRestart = false;
         await InBatchAsync(async ct =>
@@ -836,12 +845,12 @@ public sealed class MainForm : Form
                         Mark(host, h =>
                         {
                             if (h.Result == "Fehler") Log(h.Host, "Vorheriges Ergebnis: Fehler – " + DisplayText.Information(h.Phase, h.Error));
-                            h.BeginCommand(restartTerminals);
+                            h.BeginCommand(restartTerminals, restartPos);
                         });
                         commandStarted = true;
                         using var commandRunner = new WorkerRunner("NovaTouchUpdater.RemoteCommand.ps1");
-                        // Once sent, wait for the restart acknowledgement. Cancelling
-                        // scheduling cannot undo a restart accepted by Windows.
+                        // Finish an accepted restart and its cleanup. Cancellation
+                        // only stops scheduling more terminal/POS restart requests.
                         WorkerResult result = await commandRunner.RunAsync(new WorkerRequest
                         {
                             Action = action, Host = host.Host,
@@ -852,30 +861,40 @@ public sealed class MainForm : Form
                         {
                             Log(host.Host, ev.Phase + ": " + ev.Message);
                             Mark(host, h => h.Phase = ev.Phase + " – " + ev.Message);
-                        }, restartTerminals ? CancellationToken.None : token);
-                        if (result.Success)
+                        }, restartTerminals || restartPos ? CancellationToken.None : token);
+                        if (result.Success && result.Skipped)
+                        {
+                            skipped.Add(host.Host + ": " + result.Message);
+                            Mark(host, h => h.SkipCommand(result.Message));
+                            Log(host.Host, logAction + " => ÜBERSPRUNGEN " + result.Message);
+                        }
+                        else if (result.Success)
                         {
                             Interlocked.Increment(ref succeeded);
-                            Mark(host, h => h.CompleteCommand(restartTerminals, DateTimeOffset.Now));
+                            Mark(host, h =>
+                            {
+                                h.CompleteCommand(restartTerminals, DateTimeOffset.Now, restartPos);
+                                if (restartPos) h.Phase = result.Message;
+                            });
                             Log(host.Host, logAction + " => OK " + result.Message);
                         }
                         else
                         {
                             string error = FriendlyError(result);
                             failures.Add(host.Host + ": " + error);
-                            Mark(host, h => h.FailCommand(restartTerminals, error));
+                            Mark(host, h => h.FailCommand(restartTerminals, error, restartPos));
                             Log(host.Host, logAction + " => FEHLER " + error);
                         }
                     }
                     catch (OperationCanceledException)
                     {
-                        if (commandStarted && !restartTerminals) Mark(host, h => h.CancelCommand());
+                        if (commandStarted && !restartTerminals && !restartPos) Mark(host, h => h.CancelCommand());
                         throw;
                     }
                     catch (Exception ex)
                     {
                         failures.Add(host.Host + ": " + ex.Message);
-                        Mark(host, h => h.FailCommand(restartTerminals, ex.Message));
+                        Mark(host, h => h.FailCommand(restartTerminals, ex.Message, restartPos));
                         Log(host.Host, logAction + " => FEHLER " + ex);
                     }
                     finally { CountCompleted(); }
@@ -883,15 +902,17 @@ public sealed class MainForm : Form
             completedRestart = true;
         });
 
-        if (!completedRestart && succeeded == 0 && failures.IsEmpty) return;
+        if (!completedRestart && succeeded == 0 && failures.IsEmpty && skipped.IsEmpty) return;
         string report = restartTerminals
             ? $"Windows-Neustart für {succeeded} von {targets.Length} Hosts angefordert.\nDie Spalte 'Verbindung' prüft die WinRM-Erreichbarkeit automatisch ca. alle 10 Sekunden."
+            : restartPos ? $"POS-Neustart: {succeeded} von {targets.Length} Hosts erfolgreich; {skipped.Count} übersprungen."
             : $"Neustart: {succeeded} von {targets.Length} Hosts erfolgreich.";
+        if (!skipped.IsEmpty) report += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, skipped);
         if (!failures.IsEmpty) report += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, failures);
-        if (succeeded + failures.Count < targets.Length) report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
+        if (succeeded + skipped.Count + failures.Count < targets.Length) report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
         if (restartTerminals && !completedRestart) report += Environment.NewLine + "Bereits bestätigte Neustartaufträge bleiben bestehen.";
         MessageBox.Show(this, report, title, MessageBoxButtons.OK,
-            failures.IsEmpty && succeeded == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+            failures.IsEmpty && succeeded + skipped.Count == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
     private void CaptureCredentials()
@@ -1269,7 +1290,7 @@ public sealed class MainForm : Form
         Color color = h.Result switch
         {
             "Erfolgreich" => Color.FromArgb(223, 245, 230),
-            "Wieder online" or "Dienste OK" => Color.FromArgb(223, 245, 230),
+            "Wieder online" or "Dienste OK" or "POS OK" => Color.FromArgb(223, 245, 230),
             "Bereits aktuell / übersprungen" => Color.FromArgb(230, 242, 253),
             "Fehler" => Color.FromArgb(255, 229, 230),
             "Läuft" or "Neustart angefordert" => Color.FromArgb(255, 246, 213),

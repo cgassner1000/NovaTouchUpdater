@@ -6,6 +6,7 @@ internal sealed class CommandDialog : Form
     private readonly CheckBox fiscal = new() { Name = "fiscal" };
     private readonly CheckBox serverSuite = new() { Name = "serverSuite" };
     private readonly CheckBox terminal = new() { Name = "terminal" };
+    private readonly CheckBox pos = new() { Name = "pos" };
     private readonly Label selection = new() { Name = "selection", AutoSize = true, Dock = DockStyle.Fill };
     private readonly Button execute = new()
     {
@@ -15,9 +16,10 @@ internal sealed class CommandDialog : Form
     };
 
     public bool RestartTerminals => terminal.Checked;
-    public bool RestartPayment => !RestartTerminals && payment.Checked;
-    public bool RestartFiscal => !RestartTerminals && fiscal.Checked;
-    public bool StartServerSuite => !RestartTerminals && serverSuite.Checked;
+    public bool RestartPos => pos.Checked;
+    public bool RestartPayment => !RestartTerminals && !RestartPos && payment.Checked;
+    public bool RestartFiscal => !RestartTerminals && !RestartPos && fiscal.Checked;
+    public bool StartServerSuite => !RestartTerminals && !RestartPos && serverSuite.Checked;
 
     public CommandDialog(int hostCount)
     {
@@ -61,6 +63,9 @@ internal sealed class CommandDialog : Form
                 "Beendet die nt.fiscal-Dienste und startet sie neu. Der Fiskaldienst ist dabei kurzzeitig unterbrochen."),
             ActionCard(serverSuite, "nt3 Server Suite – starten / neu starten",
                 "Startet die nt3_server_suite-Dienste. Bereits laufende Dienste werden dafür zuerst beendet."),
+            Heading("Kassenanwendung", 14),
+            ActionCard(pos, "POS neustart – KassaPreh neu starten",
+                "Beendet die laufende KassaPreh.exe und startet sie in derselben angemeldeten Benutzersitzung neu. Fehlt die Anwendung oder läuft sie nicht, wird der Host übersprungen. Windows bleibt geöffnet.", true),
             Heading("Gesamtes Terminal / Windows", 14),
             ActionCard(terminal, "Terminal NEUSTART – Windows neu starten",
                 "Startet Windows auf den Hosts nach 30 Sekunden neu. Geöffnete Programme werden geschlossen; nicht gespeicherte Daten können verloren gehen.", true));
@@ -89,15 +94,18 @@ internal sealed class CommandDialog : Form
 
         foreach (var service in new[] { payment, fiscal, serverSuite })
             service.CheckedChanged += (_, _) => UpdateSelection();
-        terminal.CheckedChanged += (_, _) =>
+        void SelectExclusive(CheckBox selected, CheckBox other)
         {
+            if (selected.Checked) other.Checked = false;
             foreach (var service in new[] { payment, fiscal, serverSuite })
             {
-                if (terminal.Checked) service.Checked = false;
-                service.Enabled = !terminal.Checked;
+                if (selected.Checked) service.Checked = false;
+                service.Enabled = !RestartTerminals && !RestartPos;
             }
             UpdateSelection();
-        };
+        }
+        terminal.CheckedChanged += (_, _) => SelectExclusive(terminal, pos);
+        pos.CheckedChanged += (_, _) => SelectExclusive(pos, terminal);
         UpdateSelection();
         WindowLayout.CompleteInitialization(this);
     }
@@ -108,12 +116,13 @@ internal sealed class CommandDialog : Form
         if (RestartPayment) services.Add("nt.payment");
         if (RestartFiscal) services.Add("nt.fiscal");
         if (StartServerSuite) services.Add("nt3 Server Suite");
-        execute.Enabled = RestartTerminals || services.Count > 0;
-        execute.Text = RestartTerminals ? "Windows-Neustart bestätigen …" : "Auswahl ausführen";
+        execute.Enabled = RestartTerminals || RestartPos || services.Count > 0;
+        execute.Text = RestartTerminals ? "Windows-Neustart bestätigen …" : RestartPos ? "POS-Neustart bestätigen …" : "Auswahl ausführen";
         selection.Text = RestartTerminals
             ? "Ausgewählt: vollständiger Windows-Neustart. Eine Bestätigung folgt."
+            : RestartPos ? "Ausgewählt: KassaPreh im angemeldeten Benutzerkonto neu starten. Eine Bestätigung folgt."
             : services.Count > 0 ? "Ausgewählte Dienste: " + string.Join(", ", services) : "Noch keine Aktion ausgewählt.";
-        selection.ForeColor = RestartTerminals ? Color.FromArgb(153, 44, 32) : Color.FromArgb(75, 89, 107);
+        selection.ForeColor = RestartTerminals || RestartPos ? Color.FromArgb(153, 44, 32) : Color.FromArgb(75, 89, 107);
     }
 
     private static Label Paragraph(string text) => new()

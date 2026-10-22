@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using NovaTouchUpdater;
 
 static void Assert(bool condition, string message)
@@ -98,14 +99,35 @@ update.ApplyConnectionCheck(0, true, "online", now);
 Assert(update.Result == "Fehler" && update.Error == "Update failed" && update.CanRetryUpdate,
     "background monitoring alone never masks a real update failure");
 
+var pos = new HostState { Host = "pos.invalid", Result = "Fehler", Error = "Earlier check failed", Connection = "Verbunden", Scanned = true };
+int posRevision = pos.ConnectionState.Revision;
+pos.BeginCommand(false, true);
+Assert(pos.Phase.Contains("KassaPreh") && pos.Result == "Läuft" && pos.Error == "", "POS command replaces stale error with its own running phase");
+pos.CompleteCommand(false, now, true);
+Assert(pos.Result == "POS OK" && pos.CommandSucceeded && pos.Scanned && pos.ConnectionState.Revision == posRevision && pos.CanRetryUpdate,
+    "POS success preserves Windows connectivity, inventory eligibility and earlier update retry eligibility");
+pos.ApplyConnectionCheck(posRevision, true, "online", now.AddSeconds(10));
+Assert(pos.Result == "POS OK", "connection monitoring cannot turn a POS command into a Windows reboot result");
+pos.FailCommand(false, "Interactive start failed", true);
+pos.ApplyConnectionCheck(posRevision, true, "online", now.AddSeconds(20));
+Assert(pos.Result == "Fehler" && pos.Phase == "POS-Neustart fehlgeschlagen" && !pos.CommandSucceeded, "POS failures remain failures even when Windows is online");
+pos.CompleteCommand(false, now, true);
+var absentPos = new HostState { Host = "absent-pos.invalid", Error = "Stale error" };
+absentPos.BeginCommand(false, true);
+absentPos.SkipCommand("KassaPreh.exe nicht gefunden - übersprungen");
+Assert(absentPos.Result == "Übersprungen" && absentPos.Error == "" && !absentPos.CommandSucceeded && !absentPos.CanRetryUpdate,
+    "absent POS is explicitly skipped without an error or a new software-update retry");
+var skipDto = JsonSerializer.Deserialize<WorkerResult>("{\"Success\":true,\"Skipped\":true,\"Changed\":false}")!;
+Assert(skipDto.Success && skipDto.Skipped && !skipDto.Changed, "worker protocol preserves an explicit skipped command outcome");
+
 // Local state only: no worker, form, network call or actual reboot runs.
 service.BeginCommand(false);
 service.CompleteCommand(false, now);
 var pending = new HostState { Host = "pending.invalid" };
 pending.BeginCommand(true);
 pending.CompleteCommand(true, now);
-string report = WebUtility.HtmlDecode(HtmlReport.Create([host, service, failed, pending, update], "1.2", "2.3", now.LocalDateTime, false));
-Assert(report.Contains("Befehle erfolgreich</div><div class=\"num\">2</div>") &&
+string report = WebUtility.HtmlDecode(HtmlReport.Create([host, service, failed, pending, update, pos, absentPos], "1.2", "2.3", now.LocalDateTime, false));
+Assert(report.Contains("Befehle erfolgreich</div><div class=\"num\">3</div>") &&
     report.Contains("Aktualisiert</div><div class=\"num\">0</div>") &&
     report.Contains("Fehler</div><div class=\"num\">2</div>"),
     "HTML counts commands separately from updates and genuine errors");
@@ -113,5 +135,8 @@ Assert(Regex.IsMatch(report, "data-kind=\"command\"[^>]*>\\s*<td class=\"host\">
     "HTML exports a completed reboot with its explicit success state");
 Assert(Regex.IsMatch(report, "<td class=\"host\">pending.invalid</td>[\\s\\S]*?<span class=\"status other\">Neustart angefordert</span>"),
     "HTML distinguishes pending reboot requests from completed commands");
+Assert(Regex.IsMatch(report, "<td class=\"host\">pos.invalid</td>[\\s\\S]*?<span class=\"status command\">POS OK</span>") &&
+    Regex.IsMatch(report, "<td class=\"host\">absent-pos.invalid</td>[\\s\\S]*?<span class=\"status other\">Übersprungen</span>"),
+    "HTML distinguishes a verified POS restart from an absent, skipped POS");
 Assert(report.Contains("Earlier update failed") && report.Contains("Softwareversionen werden dabei nicht erneut geprüft"),
     "HTML retains earlier error history and explains the limit of the online confirmation");

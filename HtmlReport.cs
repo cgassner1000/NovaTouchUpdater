@@ -147,7 +147,8 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
             .Append(".NET 4.8: ✓ = 4.8 oder neuer installiert, ✗ = nicht installiert, – = nicht geprüft. ")
             .Append("Eine fehlende NovaTouch-POS-Installation wird nicht als Fehler gewertet. ")
             .Append("Die Anzeige „Erfolgreich“ beruht auf der Versions- und Dienststatusprüfung durch den Updater. ")
-            .AppendLine("„Neustart angefordert“ bestätigt den Windows-Auftrag; „Wieder online“ bedeutet, dass der Host nach dem 30-Sekunden-Vorlauf über WinRM erreichbar war. Die Softwareversionen werden dabei nicht erneut geprüft.</p>");
+            .Append("„Neustart angefordert“ bestätigt den Windows-Auftrag; „Wieder online“ bedeutet, dass der Host nach dem 30-Sekunden-Vorlauf über WinRM erreichbar war. Die Softwareversionen werden dabei nicht erneut geprüft. ")
+            .AppendLine("„POS OK“ bestätigt den KassaPreh-Prozess unter dem ursprünglichen Benutzer in derselben Sitzung und die Bereinigung der temporären Aufgabe; die Bedienbarkeit der Kasse wird dabei nicht geprüft.</p>");
         sb.AppendLine("""
 </main>
 <script>

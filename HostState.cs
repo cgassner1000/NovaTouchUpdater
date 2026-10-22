@@ -28,20 +28,20 @@ internal sealed class HostState
     // Command results preserve the last scan/update retry eligibility. A reboot
     // cannot repair an update failure or introduce a new reason to run an update.
     public bool CanRetryUpdate => UpdateFailed || retryableFailure;
-    public bool CommandSucceeded => resultFromCommand && (Result is "Wieder online" or "Dienste OK");
+    public bool CommandSucceeded => resultFromCommand && (Result is "Wieder online" or "Dienste OK" or "POS OK");
     public List<ServiceInfo> Services { get; set; } = [];
     public DataGridViewRow? Row { get; set; }
     public List<string> Log { get; } = [];
 
-    public void BeginCommand(bool restartTerminals)
+    public void BeginCommand(bool restartTerminals, bool restartPos = false)
     {
-        Phase = restartTerminals ? "Windows-Neustart wird angefordert" : "Dienste werden neu gestartet";
+        Phase = restartTerminals ? "Windows-Neustart wird angefordert" : restartPos ? "KassaPreh wird neu gestartet" : "Dienste werden neu gestartet";
         SetCommandResult("Läuft");
         Error = "";
         Attempt = 0;
     }
 
-    public void CompleteCommand(bool restartTerminals, DateTimeOffset completedAt)
+    public void CompleteCommand(bool restartTerminals, DateTimeOffset completedAt, bool restartPos = false)
     {
         Error = "";
         if (restartTerminals)
@@ -51,6 +51,11 @@ internal sealed class HostState
             ConnectionState.ExpectRestart(completedAt);
             Scanned = false;
         }
+        else if (restartPos)
+        {
+            Phase = "KassaPreh in der angemeldeten Benutzersitzung neu gestartet";
+            SetCommandResult("POS OK");
+        }
         else
         {
             Phase = "Dienste neu gestartet";
@@ -58,9 +63,16 @@ internal sealed class HostState
         }
     }
 
-    public void FailCommand(bool restartTerminals, string error)
+    public void SkipCommand(string reason)
     {
-        Phase = restartTerminals ? "Windows-Neustart fehlgeschlagen" : "Dienstbefehl fehlgeschlagen";
+        Phase = reason;
+        Error = "";
+        SetCommandResult("Übersprungen");
+    }
+
+    public void FailCommand(bool restartTerminals, string error, bool restartPos = false)
+    {
+        Phase = restartTerminals ? "Windows-Neustart fehlgeschlagen" : restartPos ? "POS-Neustart fehlgeschlagen" : "Dienstbefehl fehlgeschlagen";
         SetCommandResult("Fehler");
         Error = error;
     }

@@ -67,6 +67,7 @@ public sealed class WorkerResult
     public string Session { get; set; } = "Nicht getestet";
     public string Command { get; set; } = "Nicht getestet";
     public bool Changed { get; set; }
+    public bool Skipped { get; set; }
     public bool? DotNet48Installed { get; set; }
     public string PosVersion { get; set; } = "";
     public ServiceInfo[] Services { get; set; } = [];
