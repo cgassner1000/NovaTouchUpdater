@@ -65,7 +65,7 @@ internal sealed class CommandDialog : Form
                 "Startet die nt3_server_suite-Dienste. Bereits laufende Dienste werden dafür zuerst beendet."),
             Heading("Kassenanwendung", 14),
             ActionCard(pos, "POS neustart – KassaPreh neu starten",
-                "Beendet die laufende KassaPreh.exe und startet sie in derselben angemeldeten Benutzersitzung neu. Fehlt die Anwendung oder läuft sie nicht, wird der Host übersprungen. Windows bleibt geöffnet.", true),
+                "Startet KassaPreh.exe aus dem Standardverzeichnis als angemeldeter Benutzer. Läuft die Anwendung bereits, wird sie vorher beendet und in derselben Sitzung neu gestartet. Fehlt die Datei oder ist keine Benutzersitzung eindeutig, wird der Host übersprungen. Windows bleibt geöffnet.", true),
             Heading("Gesamtes Terminal / Windows", 14),
             ActionCard(terminal, "Terminal NEUSTART – Windows neu starten",
                 "Startet Windows auf den Hosts nach 30 Sekunden neu. Geöffnete Programme werden geschlossen; nicht gespeicherte Daten können verloren gehen.", true));

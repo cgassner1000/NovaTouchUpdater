@@ -58,8 +58,9 @@ internal static class Program
                 "leaving POS restart restores service controls without silently selecting an action");
             suite.Checked = true;
             Assert(dialog.StartServerSuite && !dialog.RestartPos && !dialog.RestartTerminals, "Server Suite retains its existing action");
-            Assert(pos.Text.StartsWith("POS neustart") && pos.AccessibleDescription!.Contains("übersprungen"),
-                "POS action explains its scope and how missing/inactive applications are handled");
+            Assert(pos.Text.StartsWith("POS neustart") && pos.AccessibleDescription!.Contains("übersprungen") &&
+                pos.AccessibleDescription.Contains("Startet KassaPreh.exe aus dem Standardverzeichnis") && !pos.AccessibleDescription.Contains("läuft sie nicht"),
+                "POS action explains initial start from the standard path, restart and skip conditions");
         }
 
         // Invisible controls only: never show a form or invoke the command worker.

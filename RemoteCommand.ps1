@@ -57,43 +57,117 @@ function RequestPosRestart {
 		}
 		throw 'Die ursprünglichen Startparameter von KassaPreh konnten nicht eindeutig gelesen werden. Der Prozess wurde nicht beendet.'
 	}
+	function Get-PosUserSessions {
+		# Query actual Windows logon sessions, including kiosk sessions without
+		# explorer.exe. The WinRM process account is never used as a fallback.
+		if (-not ('NovaTouchUpdater.PosUserSessions' -as [type])) {
+			Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+namespace NovaTouchUpdater {
+    public sealed class PosUserSession {
+        public int SessionId;
+        public string Account;
+        public string Sid;
+    }
+    public static class PosUserSessions {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SessionData { public int Id; public IntPtr Station; public int State; }
+        [DllImport("wtsapi32.dll", EntryPoint="WTSEnumerateSessionsW", ExactSpelling=true, SetLastError=true)]
+        private static extern bool Enumerate(IntPtr server, int reserved, int version, out IntPtr buffer, out int count);
+        [DllImport("wtsapi32.dll", EntryPoint="WTSQuerySessionInformationW", ExactSpelling=true, SetLastError=true)]
+        private static extern bool Query(IntPtr server, int session, int info, out IntPtr buffer, out int bytes);
+        [DllImport("wtsapi32.dll", EntryPoint="WTSFreeMemory", ExactSpelling=true)]
+        private static extern void Free(IntPtr buffer);
+        private static string ReadText(int session, int info) {
+            IntPtr buffer = IntPtr.Zero;
+            int bytes;
+            try {
+                if (!Query(IntPtr.Zero, session, info, out buffer, out bytes)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                return Marshal.PtrToStringUni(buffer) ?? "";
+            } finally { if (buffer != IntPtr.Zero) Free(buffer); }
+        }
+        public static PosUserSession[] Read() {
+            IntPtr buffer = IntPtr.Zero;
+            int count;
+            var result = new List<PosUserSession>();
+            try {
+                if (!Enumerate(IntPtr.Zero, 0, 1, out buffer, out count)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                int size = Marshal.SizeOf(typeof(SessionData));
+                for (int i = 0; i < count; i++) {
+                    var session = (SessionData)Marshal.PtrToStructure(IntPtr.Add(buffer, i * size), typeof(SessionData));
+                    // WTSActive=0, WTSDisconnected=4: both still have a logged-on user.
+                    if (session.Id <= 0 || (session.State != 0 && session.State != 4)) continue;
+                    string user = ReadText(session.Id, 5); // WTSUserName
+                    if (String.IsNullOrWhiteSpace(user)) continue;
+                    string domain = ReadText(session.Id, 7); // WTSDomainName
+                    string account = String.IsNullOrWhiteSpace(domain) ? user : domain + "\\" + user;
+                    string sid = new NTAccount(account).Translate(typeof(SecurityIdentifier)).Value;
+                    result.Add(new PosUserSession { SessionId=session.Id, Account=account, Sid=sid });
+                }
+                return result.ToArray();
+            } finally { if (buffer != IntPtr.Zero) Free(buffer); }
+        }
+    }
+}
+'@ -ErrorAction Stop
+		}
+		[NovaTouchUpdater.PosUserSessions]::Read()
+	}
 
 	$named = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'KassaPreh.exe'" -ErrorAction Stop)
 	if (@($named | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.ExecutablePath) }).Count -gt 0) {
 		throw 'Der Pfad eines KassaPreh-Prozesses ist nicht lesbar. Der Prozess wurde nicht beendet.'
 	}
 	$processes = @($named | Where-Object { $_.ExecutablePath -ieq $exe })
-	if ($processes.Count -eq 0) {
-		return [pscustomobject]@{ Results=@('KassaPreh.exe läuft nicht - übersprungen'); Failures=@(); Skipped=$true; Changed=$false }
-	}
-	if ($processes.Count -ne 1) {
+	if ($processes.Count -gt 1) {
 		throw 'Mehrere KassaPreh-Prozesse gefunden; keine eindeutige Benutzersitzung. Es wurde kein Prozess beendet.'
 	}
-	$original = $processes[0]
-	$sessionId = [int]$original.SessionId
-	if ($sessionId -le 0) {
-		return [pscustomobject]@{ Results=@('Keine angemeldete Benutzersitzung für KassaPreh gefunden - übersprungen'); Failures=@(); Skipped=$true; Changed=$false }
+	$original = $null
+	$arguments = ''
+	$originalId = 0
+	if ($processes.Count -eq 1) {
+		$original = $processes[0]
+		$sessionId = [int]$original.SessionId
+		if ($sessionId -le 0) {
+			return [pscustomobject]@{ Results=@('Keine angemeldete Benutzersitzung für KassaPreh gefunden - übersprungen'); Failures=@(); Skipped=$true; Changed=$false }
+		}
+		$ownerSid = Get-PosOwnerSid $original
+		$ownerName = $ownerSid
+		$ownerInfo = Invoke-CimMethod -InputObject $original -MethodName GetOwner -ErrorAction Stop
+		if ($ownerInfo.ReturnValue -eq 0) { $ownerName = "$($ownerInfo.Domain)\$($ownerInfo.User)" }
+		$arguments = Get-PosArguments ([string]$original.CommandLine)
+		$originalId = [int]$original.ProcessId
 	}
-	$ownerSid = Get-PosOwnerSid $original
+	else {
+		$users = @(Get-PosUserSessions)
+		if ($users.Count -eq 0) {
+			return [pscustomobject]@{ Results=@('Kein angemeldeter Benutzer für den KassaPreh-Start gefunden - übersprungen'); Failures=@(); Skipped=$true; Changed=$false }
+		}
+		if ($users.Count -ne 1) {
+			return [pscustomobject]@{ Results=@('Mehrere angemeldete Benutzersitzungen; kein eindeutiger Benutzer für den KassaPreh-Start - übersprungen'); Failures=@(); Skipped=$true; Changed=$false }
+		}
+		$sessionId = [int]$users[0].SessionId
+		$ownerSid = [string]$users[0].Sid
+		$ownerName = [string]$users[0].Account
+	}
 	if ($ownerSid -in @('S-1-5-18', 'S-1-5-19', 'S-1-5-20')) {
 		return [pscustomobject]@{ Results=@('KassaPreh läuft unter einem Dienstkonto - übersprungen'); Failures=@(); Skipped=$true; Changed=$false }
 	}
-	$ownerName = $ownerSid
-	$ownerInfo = Invoke-CimMethod -InputObject $original -MethodName GetOwner -ErrorAction Stop
-	if ($ownerInfo.ReturnValue -eq 0) { $ownerName = "$($ownerInfo.Domain)\$($ownerInfo.User)" }
-	$arguments = Get-PosArguments ([string]$original.CommandLine)
-	$originalId = [int]$original.ProcessId
 	$taskName = 'NovaTouchUpdater-POS-' + [Guid]::NewGuid().ToString('N')
 	$folder = $null
 	$taskCreated = $false
 	$registrationAttempted = $false
 	try {
-		# Prepare the exact interactive user/session before stopping the application.
+		# Prepare the exact interactive user/session before stopping or starting POS.
 		$scheduler = New-Object -ComObject 'Schedule.Service'
 		[void]$scheduler.Connect()
 		$folder = $scheduler.GetFolder('\')
 		$definition = $scheduler.NewTask(0)
-		$definition.RegistrationInfo.Description = 'Temporärer KassaPreh-Neustart durch NovaTouch Updater'
+		$definition.RegistrationInfo.Description = 'Temporärer KassaPreh-Start / Neustart durch NovaTouch Updater'
 		$definition.Principal.UserId = $ownerSid
 		$definition.Principal.LogonType = 3 # TASK_LOGON_INTERACTIVE_TOKEN; no password
 		$definition.Principal.RunLevel = 0
@@ -110,24 +184,30 @@ function RequestPosRestart {
 		$task = $folder.RegisterTaskDefinition($taskName, $definition, 2, $ownerSid, $null, 3, $null)
 		$taskCreated = $true
 
-		$current = @(Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $originalId" -ErrorAction Stop)
-		if ($current.Count -ne 1 -or $current[0].ExecutablePath -ine $exe -or
-			$current[0].CreationDate -ne $original.CreationDate -or [int]$current[0].SessionId -ne $sessionId -or
-			(Get-PosOwnerSid $current[0]) -ne $ownerSid) {
-			throw 'Der KassaPreh-Prozess hat sich während der Vorbereitung geändert. Es wurde kein Prozess beendet.'
+		if ($null -ne $original) {
+			$current = @(Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $originalId" -ErrorAction Stop)
+			if ($current.Count -ne 1 -or $current[0].ExecutablePath -ine $exe -or
+				$current[0].CreationDate -ne $original.CreationDate -or [int]$current[0].SessionId -ne $sessionId -or
+				(Get-PosOwnerSid $current[0]) -ne $ownerSid) {
+				throw 'Der KassaPreh-Prozess hat sich während der Vorbereitung geändert. Es wurde kein Prozess beendet.'
+			}
+			$taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+			$killOutput = @(& $taskkill /PID $originalId /F 2>&1)
+			$killExitCode = $LASTEXITCODE
+			if ($killExitCode -ne 0) { throw "KassaPreh konnte nicht beendet werden (taskkill Exitcode ${killExitCode}): $($killOutput -join ' ')" }
+			$outcome.Changed = $true
+			for ($attempt = 0; $attempt -lt 25; $attempt++) {
+				$remaining = @(Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $originalId" -ErrorAction Stop |
+					Where-Object { $_.CreationDate -eq $original.CreationDate })
+				if ($remaining.Count -eq 0) { break }
+				Start-Sleep -Milliseconds 200
+			}
+			if ($remaining.Count -gt 0) { throw 'KassaPreh wurde nach taskkill nicht beendet. Es wurde kein zweiter Prozess gestartet.' }
 		}
-		$taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
-		$killOutput = @(& $taskkill /PID $originalId /F 2>&1)
-		$killExitCode = $LASTEXITCODE
-		if ($killExitCode -ne 0) { throw "KassaPreh konnte nicht beendet werden (taskkill Exitcode ${killExitCode}): $($killOutput -join ' ')" }
-		$outcome.Changed = $true
-		for ($attempt = 0; $attempt -lt 25; $attempt++) {
-			$remaining = @(Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $originalId" -ErrorAction Stop |
-				Where-Object { $_.CreationDate -eq $original.CreationDate })
-			if ($remaining.Count -eq 0) { break }
-			Start-Sleep -Milliseconds 200
+		else {
+			$currentUsers = @(Get-PosUserSessions | Where-Object { [int]$_.SessionId -eq $sessionId -and $_.Sid -eq $ownerSid })
+			if ($currentUsers.Count -ne 1) { throw 'Die angemeldete Benutzersitzung hat sich vor dem KassaPreh-Start geändert. Es wurde keine Anwendung gestartet.' }
 		}
-		if ($remaining.Count -gt 0) { throw 'KassaPreh wurde nach taskkill nicht beendet. Es wurde kein zweiter Prozess gestartet.' }
 
 		# Some installations have a watchdog. Do not launch a duplicate if it
 		# already brought the application back in the intended user session.
@@ -135,6 +215,7 @@ function RequestPosRestart {
 		if ($reappeared.Count -eq 0) {
 			# TASK_RUN_USE_SESSION_ID | TASK_RUN_USER_SID: never the WinRM account.
 			[void]$task.RunEx($null, 12, $sessionId, $ownerSid)
+			$outcome.Changed = $true
 		}
 		$verified = $false
 		for ($attempt = 0; $attempt -lt 60; $attempt++) {
@@ -210,7 +291,7 @@ try {
 			$restartResult = Invoke-Command -Session $session -ScriptBlock ${function:RequestTerminalRestart} -ErrorAction Stop
 		}
 		elseif ($req.Action -eq 'restart-pos') {
-			Progress 'POS-Neustart' 'KassaPreh wird in der angemeldeten Benutzersitzung neu gestartet; die temporäre Aufgabe wird anschließend gelöscht'
+			Progress 'POS-Neustart' 'KassaPreh wird in der angemeldeten Benutzersitzung gestartet / neu gestartet; die temporäre Aufgabe wird anschließend gelöscht'
 			$restartResult = Invoke-Command -Session $session -ScriptBlock ${function:RequestPosRestart} -ErrorAction Stop
 		}
 		else {

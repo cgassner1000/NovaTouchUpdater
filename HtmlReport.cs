@@ -148,7 +148,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
             .Append("Eine fehlende NovaTouch-POS-Installation wird nicht als Fehler gewertet. ")
             .Append("Die Anzeige „Erfolgreich“ beruht auf der Versions- und Dienststatusprüfung durch den Updater. ")
             .Append("„Neustart angefordert“ bestätigt den Windows-Auftrag; „Wieder online“ bedeutet, dass der Host nach dem 30-Sekunden-Vorlauf über WinRM erreichbar war. Die Softwareversionen werden dabei nicht erneut geprüft. ")
-            .AppendLine("„POS OK“ bestätigt den KassaPreh-Prozess unter dem ursprünglichen Benutzer in derselben Sitzung und die Bereinigung der temporären Aufgabe; die Bedienbarkeit der Kasse wird dabei nicht geprüft.</p>");
+            .AppendLine("„POS OK“ bestätigt den KassaPreh-Prozess unter dem ermittelten angemeldeten Benutzer in der vorgesehenen Windows-Sitzung und die Bereinigung der temporären Aufgabe; die Bedienbarkeit der Kasse wird dabei nicht geprüft.</p>");
         sb.AppendLine("""
 </main>
 <script>

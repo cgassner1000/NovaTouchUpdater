@@ -35,7 +35,7 @@ internal sealed class HostState
 
     public void BeginCommand(bool restartTerminals, bool restartPos = false)
     {
-        Phase = restartTerminals ? "Windows-Neustart wird angefordert" : restartPos ? "KassaPreh wird neu gestartet" : "Dienste werden neu gestartet";
+        Phase = restartTerminals ? "Windows-Neustart wird angefordert" : restartPos ? "KassaPreh wird gestartet / neu gestartet" : "Dienste werden neu gestartet";
         SetCommandResult("Läuft");
         Error = "";
         Attempt = 0;
@@ -53,7 +53,7 @@ internal sealed class HostState
         }
         else if (restartPos)
         {
-            Phase = "KassaPreh in der angemeldeten Benutzersitzung neu gestartet";
+            Phase = "KassaPreh in der angemeldeten Benutzersitzung gestartet";
             SetCommandResult("POS OK");
         }
         else

@@ -817,10 +817,10 @@ public sealed class MainForm : Form
             "Abbrechen im Updater stoppt weitere Aufträge. Bereits übermittelte Neustartaufträge bleiben bestehen.",
             "Terminal neu starten", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
         if (restartPos && MessageBox.Show(this,
-            $"KassaPreh auf allen {targets.Length} eingetragenen Hosts neu starten?\n\n" +
-            "Die laufende KassaPreh.exe wird sofort per taskkill beendet und im selben angemeldeten Benutzerkonto neu gestartet. Nicht gespeicherte Eingaben können verloren gehen. Windows wird dabei nicht neu gestartet.\n\n" +
+            $"KassaPreh auf allen {targets.Length} eingetragenen Hosts starten / neu starten?\n\n" +
+            "Läuft KassaPreh bereits, wird sie sofort per taskkill beendet und im selben Benutzerkonto neu gestartet. Nicht gespeicherte Eingaben können verloren gehen. Läuft sie nicht, wird sie als angemeldeter Benutzer aus dem Standardverzeichnis gestartet. Windows wird dabei nicht neu gestartet.\n\n" +
             "Pfad: C:\\Program Files (x86)\\novatouch\\bin\\KassaPreh.exe\n" +
-            "Fehlt die Datei oder läuft die Anwendung nicht, wird der Host übersprungen. Die temporäre Windows-Aufgabe wird nach der Startprüfung wieder gelöscht.\n\n" +
+            "Fehlt die Datei oder lässt sich keine eindeutige Benutzersitzung ermitteln, wird der Host übersprungen. Die temporäre Windows-Aufgabe wird nach der Startprüfung wieder gelöscht.\n\n" +
             "Abbrechen stoppt weitere Aufträge. Bereits gestartete POS-Neustarts werden einschließlich Bereinigung abgeschlossen.",
             "POS neustart", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
         CaptureCredentials();
