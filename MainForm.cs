@@ -7,28 +7,6 @@ using System.Text.RegularExpressions;
 
 namespace NovaTouchUpdater;
 
-internal sealed class HostState
-{
-    public string Host { get; init; } = "";
-    public ConnectionState ConnectionState { get; } = new();
-    public string Connection { get => ConnectionState.Status; set => ConnectionState.SetForegroundStatus(value); }
-    public bool? DotNet48Installed { get; set; }
-    public string Payment { get; set; } = "–";
-    public string Fiscal { get; set; } = "–";
-    public string PosVersion { get; set; } = "–";
-    public string PaymentBefore { get; set; } = "–";
-    public string FiscalBefore { get; set; } = "–";
-    public string Phase { get; set; } = "Bereit";
-    public string Result { get; set; } = "Offen";
-    public string Error { get; set; } = "";
-    public int Attempt { get; set; }
-    public bool Scanned { get; set; }
-    public bool UpdateFailed { get; set; }
-    public List<ServiceInfo> Services { get; set; } = [];
-    public DataGridViewRow? Row { get; set; }
-    public List<string> Log { get; } = [];
-}
-
 public sealed class MainForm : Form
 {
     private readonly List<HostState> hosts = [];
@@ -350,7 +328,7 @@ public sealed class MainForm : Form
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-Dienste auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
         tips.SetToolTip(chkSkipZipTransfer, "Lokale ZIPs bestimmen weiterhin die Zielversion. ZIPs auf den Clients werden bei Updates nicht übertragen.");
-        tips.SetToolTip(btnRetry, "Nur Hosts mit Ergebnis 'Fehler' erneut prüfen/aktualisieren; erfolgreiche Hosts bleiben unberührt.");
+        tips.SetToolTip(btnRetry, "Hosts mit Prüf- oder Updatefehlern erneut prüfen/aktualisieren. Frühere Updatefehler bleiben auch nach einem erfolgreichen Neustart wiederholbar. Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         var settings = Stack(login, optionBar, chkSkipZipTransfer);
         configuration.Controls.Add(settings, 1, 0);
         bool stacked = false;
@@ -439,6 +417,7 @@ public sealed class MainForm : Form
         table.Columns["attempt"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["result"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["result"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+        table.Columns["result"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         table.ShowCellToolTips = true;
         table.CellDoubleClick += (_, e) =>
         {
@@ -670,7 +649,7 @@ public sealed class MainForm : Form
             bool include = statusFilter.SelectedIndex switch
             {
                 1 => host.Result == "Fehler",
-                2 => host.Result == "Erfolgreich",
+                2 => host.Result == "Erfolgreich" || host.CommandSucceeded,
                 3 => host.Result == "Bereits aktuell / übersprungen",
                 4 => host.Connection == "Nicht erreichbar",
                 _ => true
@@ -850,10 +829,16 @@ public sealed class MainForm : Form
                 new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
                 async (host, token) =>
                 {
+                    bool commandStarted = false;
                     try
                     {
                         token.ThrowIfCancellationRequested();
-                        Mark(host, h => { h.Phase = restartTerminals ? "Windows-Neustart wird angefordert" : "Dienste werden neu gestartet"; h.Error = ""; });
+                        Mark(host, h =>
+                        {
+                            if (h.Result == "Fehler") Log(h.Host, "Vorheriges Ergebnis: Fehler – " + DisplayText.Information(h.Phase, h.Error));
+                            h.BeginCommand(restartTerminals);
+                        });
+                        commandStarted = true;
                         using var commandRunner = new WorkerRunner("NovaTouchUpdater.RemoteCommand.ps1");
                         // Once sent, wait for the restart acknowledgement. Cancelling
                         // scheduling cannot undo a restart accepted by Windows.
@@ -871,26 +856,26 @@ public sealed class MainForm : Form
                         if (result.Success)
                         {
                             Interlocked.Increment(ref succeeded);
-                            Mark(host, h =>
-                            {
-                                h.Phase = restartTerminals ? "Windows-Neustart angefordert (30 Sekunden)" : "Dienste neu gestartet";
-                                if (restartTerminals) { h.ConnectionState.ExpectRestart(DateTimeOffset.Now); h.Scanned = false; }
-                            });
+                            Mark(host, h => h.CompleteCommand(restartTerminals, DateTimeOffset.Now));
                             Log(host.Host, logAction + " => OK " + result.Message);
                         }
                         else
                         {
                             string error = FriendlyError(result);
                             failures.Add(host.Host + ": " + error);
-                            Mark(host, h => { h.Phase = restartTerminals ? "Windows-Neustart fehlgeschlagen" : "Neustart fehlgeschlagen"; h.Error = error; });
+                            Mark(host, h => h.FailCommand(restartTerminals, error));
                             Log(host.Host, logAction + " => FEHLER " + error);
                         }
                     }
-                    catch (OperationCanceledException) { throw; }
+                    catch (OperationCanceledException)
+                    {
+                        if (commandStarted && !restartTerminals) Mark(host, h => h.CancelCommand());
+                        throw;
+                    }
                     catch (Exception ex)
                     {
                         failures.Add(host.Host + ": " + ex.Message);
-                        Mark(host, h => { h.Phase = restartTerminals ? "Windows-Neustart fehlgeschlagen" : "Neustart fehlgeschlagen"; h.Error = ex.Message; });
+                        Mark(host, h => h.FailCommand(restartTerminals, ex.Message));
                         Log(host.Host, logAction + " => FEHLER " + ex);
                     }
                     finally { CountCompleted(); }
@@ -1007,7 +992,7 @@ public sealed class MainForm : Form
                 "Zielpfad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        var selected = onlyFailed ? hosts.Where(h => h.Result == "Fehler").ToArray() : hosts.Where(h => h.Scanned).ToArray();
+        var selected = onlyFailed ? hosts.Where(h => h.CanRetryUpdate).ToArray() : hosts.Where(h => h.Scanned).ToArray();
         if (selected.Length == 0)
         {
             MessageBox.Show(this, onlyFailed ? "Keine fehlerhaften Hosts vorhanden." : "Zuerst die Hosts prüfen und Versionen auslesen."); return;
@@ -1138,16 +1123,20 @@ public sealed class MainForm : Form
     {
         if (connectionClosing || IsDisposed || connectionScanPaused || generation != connectionGeneration || !hosts.Contains(host)) return;
         string previous;
+        string previousResult;
         lock (host)
         {
             previous = host.Connection;
-            if (!host.ConnectionState.Apply(revision, connected, detail, checkedAt)) return;
+            previousResult = host.Result;
+            if (!host.ApplyConnectionCheck(revision, connected, detail, checkedAt)) return;
         }
         if (previous != host.Connection)
         {
             Log(host.Host, "VERBINDUNG => " + host.Connection);
-            if (statusFilter.SelectedIndex == 4) RebuildRows();
         }
+        if (previousResult != host.Result) Log(host.Host, "NEUSTART => " + host.Result);
+        if ((previous != host.Connection && statusFilter.SelectedIndex == 4) ||
+            (previousResult != host.Result && statusFilter.SelectedIndex is 1 or 2)) RebuildRows();
         PaintRow(host);
         UpdateSummary();
     }
@@ -1280,9 +1269,10 @@ public sealed class MainForm : Form
         Color color = h.Result switch
         {
             "Erfolgreich" => Color.FromArgb(223, 245, 230),
+            "Wieder online" or "Dienste OK" => Color.FromArgb(223, 245, 230),
             "Bereits aktuell / übersprungen" => Color.FromArgb(230, 242, 253),
             "Fehler" => Color.FromArgb(255, 229, 230),
-            "Läuft" => Color.FromArgb(255, 246, 213),
+            "Läuft" or "Neustart angefordert" => Color.FromArgb(255, 246, 213),
             _ => Color.White
         };
         h.Row.DefaultCellStyle.BackColor = color;
@@ -1293,6 +1283,7 @@ public sealed class MainForm : Form
         lblSummary.Text = $"Hosts: {hosts.Count}    |    Verbunden: {hosts.Count(h => h.Connection == "Verbunden")}    |    " +
             $"Aktualisiert: {hosts.Count(h => h.Result == "Erfolgreich")}    |    " +
             $"Bereits aktuell: {hosts.Count(h => h.Result == "Bereits aktuell / übersprungen")}    |    " +
+            $"Befehle OK: {hosts.Count(h => h.CommandSucceeded)}    |    " +
             $"Fehler: {hosts.Count(h => h.Result == "Fehler")}";
     }
 
@@ -1321,7 +1312,7 @@ public sealed class MainForm : Form
         btnUpdate.Enabled = !busy && hosts.Any(h => h.Scanned);
         btnTransfer.Enabled = !busy && hosts.Count > 0;
         btnSendCommand.Enabled = !busy && hosts.Count > 0;
-        btnRetry.Enabled = !busy && hosts.Any(h => h.Result == "Fehler");
+        btnRetry.Enabled = !busy && hosts.Any(h => h.CanRetryUpdate);
         btnExport.Enabled = !busy && hosts.Count > 0;
         btnCancel.Enabled = busy;
         nScan.Enabled = !busy; nUpdate.Enabled = !busy; chkSsl.Enabled = !busy; chkForceUpdate.Enabled = !busy;

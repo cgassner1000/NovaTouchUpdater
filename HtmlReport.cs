@@ -16,9 +16,10 @@ internal static class HtmlReport
         int updated = hosts.Count(x => x.Result == "Erfolgreich");
         int current = hosts.Count(x => x.Result == "Bereits aktuell / übersprungen");
         int errors = hosts.Count(x => x.Result == "Fehler");
-        int other = count - updated - current - errors;
+        int commands = hosts.Count(x => x.CommandSucceeded);
+        int other = count - updated - current - errors - commands;
         int offline = hosts.Count(x => x.Connection == "Nicht erreichbar");
-        int finished = updated + current;
+        int finished = updated + current + commands;
         int percent = count == 0 ? 0 : (int)Math.Round(100.0 * finished / count);
         var sb = new StringBuilder(Math.Max(8192, count * 800));
 
@@ -35,7 +36,7 @@ internal static class HtmlReport
 .hero{background:linear-gradient(112deg,#10253e,#23496b);color:#fff;padding:35px max(28px,calc((100vw - 1400px)/2)) 32px}
 .hero h1{margin:0;font-size:29px;letter-spacing:-.5px}.hero p{margin:5px 0 0;color:#c5d7ea}.hero .stamp{color:#d6e8fa;font-size:13px;margin-top:18px}
 main{max-width:1460px;margin:0 auto;padding:25px 28px 40px}.meta{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px}.chip{background:white;border:1px solid var(--line);border-radius:999px;padding:7px 12px;color:var(--muted)}.chip strong{color:var(--ink)}
-.stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}
 .stat{background:white;border:1px solid var(--line);border-radius:14px;padding:17px 19px;min-width:0;box-shadow:0 3px 15px #1e3b5910}.stat .name{color:var(--muted);font-size:12px;font-weight:650}.stat .num{font-size:30px;font-weight:750;line-height:1.4}.stat.error .num{color:var(--err)}.stat.success .num{color:var(--ok)}
 .progress{height:11px;background:#e3eaf3;border-radius:20px;overflow:hidden;margin-bottom:25px}.progress>span{display:block;background:linear-gradient(90deg,#21ad73,#3bbb96);height:100%;border-radius:20px}
 .panel{background:#fff;border:1px solid var(--line);border-radius:15px;box-shadow:0 5px 22px #203b5910;overflow:hidden}
@@ -44,11 +45,11 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 .scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:1440px;font-size:12.5px}thead th{position:sticky;top:0;background:#eef3fa;text-align:left;color:#52677f;font-weight:700;padding:12px 11px;white-space:nowrap;border-bottom:1px solid var(--line)}tbody td{padding:11px;border-bottom:1px solid #e9eef4;vertical-align:top}tbody tr:hover{background:#f9fbfe}tbody tr:last-child td{border-bottom:none}
 .framework{width:1%;text-align:center;white-space:nowrap}.framework span{font-size:17px;font-weight:700}.framework .yes{color:var(--ok)}.framework .no{color:var(--err)}.pos-ver{min-width:110px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .attempt{width:1%;white-space:nowrap;text-align:center}.host{font-weight:700;white-space:nowrap}.ver{font-variant-numeric:tabular-nums;white-space:nowrap;width:145px}.ver-head{white-space:normal;min-width:145px;width:145px}.ver .before,.ver .after{display:block}.dim{color:var(--muted)}.before{color:#74859a;font-size:12px}.after{font-weight:700}.arrow{display:none}.ver .after::before{content:"→ ";color:#94a2b2;font-weight:normal}
-.status{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11.5px;font-weight:750;white-space:nowrap}.status.ok{background:var(--okbg);color:var(--ok)}.status.bad{background:var(--errbg);color:var(--err)}.status.current{background:var(--bluebg);color:var(--blue)}.status.other{background:var(--warnbg);color:var(--warn)}
+.status{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11.5px;font-weight:750;white-space:nowrap}.status.ok,.status.command{background:var(--okbg);color:var(--ok)}.status.bad{background:var(--errbg);color:var(--err)}.status.current{background:var(--bluebg);color:var(--blue)}.status.other{background:var(--warnbg);color:var(--warn)}
 .info-cell{min-width:430px;width:45%;overflow-wrap:anywhere}.info-phase{color:var(--ink)}.info-error{color:var(--err);margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere}.result-cell{white-space:nowrap;text-align:center}.log details{min-width:100px}.log summary{color:#245f9d;cursor:pointer;font-weight:650}.log pre{max-width:470px;max-height:320px;overflow:auto;font-size:11px;background:#13233a;color:#dce6f2;border-radius:8px;padding:11px;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}
 .footer{color:var(--muted);font-size:12px;margin-top:16px}.empty{padding:24px;text-align:center;color:var(--muted)}
 @media(max-width:1000px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{padding:26px 22px}main{padding:18px}}
-@media print{body{background:white}.hero{background:white;color:black;padding:8px 0 12px}.hero p,.hero .stamp{color:#555}main{padding:0}.stats{grid-template-columns:repeat(5,1fr)}.stat,.panel{box-shadow:none}.controls{display:none}.scroll{overflow:visible}table{min-width:0;font-size:9px}tbody td,thead th{padding:6px 4px}.log{display:none}.before{font-size:9px}.footer{margin-top:8px}}
+@media print{body{background:white}.hero{background:white;color:black;padding:8px 0 12px}.hero p,.hero .stamp{color:#555}main{padding:0}.stats{grid-template-columns:repeat(6,1fr)}.stat,.panel{box-shadow:none}.controls{display:none}.scroll{overflow:visible}table{min-width:0;font-size:9px}tbody td,thead th{padding:6px 4px}.log{display:none}.before{font-size:9px}.footer{margin-top:8px}}
 </style>
 </head>
 <body>
@@ -66,6 +67,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
         Card(sb, "Hosts gesamt", count, "");
         Card(sb, "Aktualisiert", updated, "success");
         Card(sb, "Bereits aktuell", current, "");
+        Card(sb, "Befehle erfolgreich", commands, "success");
         Card(sb, "Fehler", errors, "error");
         Card(sb, "Weitere / offen", other, "");
         sb.Append("</section><div class=\"progress\" title=\"").Append(finished).Append(" von ").Append(count)
@@ -81,6 +83,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
       <option value="bad">Nur Fehler</option>
       <option value="ok">Aktualisiert</option>
       <option value="current">Bereits aktuell</option>
+      <option value="command">Befehle erfolgreich</option>
       <option value="other">Weitere / offen</option>
     </select>
     <button type="button" id="saveHtml">HTML speichern</button>
@@ -95,7 +98,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 """);
         foreach (HostState host in hosts.OrderBy(h => h.Host, StringComparer.OrdinalIgnoreCase))
         {
-            string kind = host.Result switch
+            string kind = host.CommandSucceeded ? "command" : host.Result switch
             {
                 "Erfolgreich" => "ok",
                 "Bereits aktuell / übersprungen" => "current",
@@ -143,7 +146,8 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
             .Append(" · Hinweis: Der Bericht bildet den Zustand zum Exportzeitpunkt ab. ")
             .Append(".NET 4.8: ✓ = 4.8 oder neuer installiert, ✗ = nicht installiert, – = nicht geprüft. ")
             .Append("Eine fehlende NovaTouch-POS-Installation wird nicht als Fehler gewertet. ")
-            .AppendLine("Die Anzeige „Erfolgreich“ beruht auf der Versions- und Dienststatusprüfung durch den Updater.</p>");
+            .Append("Die Anzeige „Erfolgreich“ beruht auf der Versions- und Dienststatusprüfung durch den Updater. ")
+            .AppendLine("„Neustart angefordert“ bestätigt den Windows-Auftrag; „Wieder online“ bedeutet, dass der Host nach dem 30-Sekunden-Vorlauf über WinRM erreichbar war. Die Softwareversionen werden dabei nicht erneut geprüft.</p>");
         sb.AppendLine("""
 </main>
 <script>
