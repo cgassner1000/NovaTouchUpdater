@@ -10,6 +10,10 @@ static void Assert(bool condition, string message)
 }
 
 var now = DateTimeOffset.Now.AddMinutes(1);
+Assert(DisplayText.ServiceVersions([]) == "Nicht installiert", "a successfully read empty service inventory is shown as not installed");
+Assert(DisplayText.ServiceVersions([new ServiceInfo { ProductVersion="1.2.3.4" }]) == "1.2.3.4" &&
+    DisplayText.ServiceVersions([new ServiceInfo { FileVersion="2.3.4.5" }]) == "2.3.4.5", "installed services keep product versions and file-version fallback");
+Assert(DisplayText.ServiceVersions([new ServiceInfo()]) == "–", "an installed service without readable version metadata is not falsely reported as absent");
 var host = new HostState
 {
     Host = "reboot.invalid", Result = "Fehler", Error = "Earlier update failed",
@@ -140,3 +144,9 @@ Assert(Regex.IsMatch(report, "<td class=\"host\">pos.invalid</td>[\\s\\S]*?<span
     "HTML distinguishes a verified POS restart from an absent, skipped POS");
 Assert(report.Contains("Earlier update failed") && report.Contains("Softwareversionen werden dabei nicht erneut geprüft"),
     "HTML retains earlier error history and explains the limit of the online confirmation");
+var optionalServices = new HostState { Host="pos-only.invalid", Result="Bereit", Scanned=true,
+    Payment=DisplayText.ServiceVersions([]), Fiscal=DisplayText.ServiceVersions([]), PosVersion="2.5.1", DotNet48Installed=true };
+string optionalReport = WebUtility.HtmlDecode(HtmlReport.Create([optionalServices], "", "", now.LocalDateTime, false));
+Assert(optionalReport.Contains("Nicht installiert") && optionalReport.Contains("2.5.1") &&
+    optionalReport.Contains("Fehler</div><div class=\"num\">0</div>") && optionalReport.Contains(">Bereit</span>"),
+    "HTML shows absent optional services alongside POS inventory without counting a scan error");

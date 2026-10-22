@@ -14,7 +14,7 @@ function Progress([string]$phase, [string]$message) {
 }
 
 function ReadInventory {
-    $services = @(Get-Service | Where-Object { $_.Name -match '^nt\.(payment|fiscal)' })
+    $services = @(Get-Service -ErrorAction Stop | Where-Object { $_.Name -match '^nt\.(payment|fiscal)' })
     $inventory = @()
     foreach ($svc in $services) {
         $kind = if ($svc.Name -match '^nt\.payment') { 'payment' } else { 'fiscal' }
@@ -185,13 +185,13 @@ try {
             $software = Invoke-Command -Session $session -ScriptBlock ${function:ReadSoftwareInventory} -ErrorAction Stop
         }
         Progress 'Versionen' 'Dienste und installierte Versionen werden ausgelesen'
-        $services = @(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory})
-        if ($services.Count -eq 0) { throw 'Keine nt.payment-/nt.fiscal-Dienste gefunden.' }
+        $services = @(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
         if ($req.Action -eq 'scan') {
             Emit @{ Event='result'; Success=$true; Message='Versionen und Software geprüft'; Services=$services;
                 DotNet48Installed=$software.DotNet48Installed; PosVersion=$software.PosVersion }
             exit 0
         }
+        if ($services.Count -eq 0) { throw 'Keine nt.payment-/nt.fiscal-Dienste gefunden.' }
         if ($req.Action -ne 'update') { throw ('Unbekannte Aktion: ' + $req.Action) }
 
         # Nur Komponenten mit explizit gewaehlter ZIP und Zielversion koennen aktualisiert werden.

@@ -51,4 +51,14 @@ internal static class DisplayText
         Match match = VersionNumber.Match(value);
         return match.Success ? match.Value : Clean(value.Trim());
     }
+
+    public static string ServiceVersions(IEnumerable<ServiceInfo> services)
+    {
+        ServiceInfo[] installed = services.ToArray();
+        if (installed.Length == 0) return "Nicht installiert";
+        string[] versions = installed.Select(s => Version(
+                string.IsNullOrWhiteSpace(s.ProductVersion) ? s.FileVersion : s.ProductVersion))
+            .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().ToArray();
+        return versions.Length > 0 ? string.Join(", ", versions) : "–";
+    }
 }

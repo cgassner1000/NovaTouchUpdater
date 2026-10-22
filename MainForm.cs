@@ -1228,20 +1228,14 @@ public sealed class MainForm : Form
         h.DotNet48Installed = result.DotNet48Installed;
         h.PosVersion = string.IsNullOrWhiteSpace(result.PosVersion) ? "–" : DisplayText.Clean(result.PosVersion);
         h.Services = result.Services.ToList();
-        ReadVersions(h);
+        if (result.Success) ReadVersions(h);
+        else { h.Payment = "–"; h.Fiscal = "–"; }
     }
 
     private void ReadVersions(HostState h)
     {
-        static string Display(IEnumerable<ServiceInfo> svc)
-        {
-            string[] versions = svc.Select(s => DisplayText.Version(
-                    string.IsNullOrWhiteSpace(s.ProductVersion) ? s.FileVersion : s.ProductVersion))
-                .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().ToArray();
-            return versions.Length > 0 ? string.Join(", ", versions) : "–";
-        }
-        h.Payment = Display(h.Services.Where(s => s.Kind == "payment"));
-        h.Fiscal = Display(h.Services.Where(s => s.Kind == "fiscal"));
+        h.Payment = DisplayText.ServiceVersions(h.Services.Where(s => s.Kind == "payment"));
+        h.Fiscal = DisplayText.ServiceVersions(h.Services.Where(s => s.Kind == "fiscal"));
     }
 
     private void Mark(HostState h, Action<HostState> update)
