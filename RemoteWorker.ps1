@@ -9,8 +9,62 @@ function Emit([hashtable]$message) {
     [Console]::Out.Flush()
 }
 
-function Progress([string]$phase, [string]$message) {
-    Emit @{ Event='progress'; Phase=$phase; Message=$message }
+function Progress([string]$phase, [string]$message, [Nullable[int]]$percent = $null) {
+    Emit @{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent }
+}
+
+function NewUploadPipeline($session, [string]$localFile, [string]$remoteFile) {
+    $pipeline = [Management.Automation.PowerShell]::Create()
+    try {
+        [void]$pipeline.AddScript('$ProgressPreference = ''Continue''').AddStatement()
+        [void]$pipeline.AddCommand('Copy-Item')
+        [void]$pipeline.AddParameter('LiteralPath', $localFile)
+        [void]$pipeline.AddParameter('Destination', $remoteFile)
+        [void]$pipeline.AddParameter('ToSession', $session)
+        [void]$pipeline.AddParameter('Force', $true)
+        [void]$pipeline.AddParameter('ErrorAction', 'Stop')
+        return $pipeline
+    }
+    catch { $pipeline.Dispose(); throw }
+}
+
+function CopyRemoteFileWithProgress($session, [string]$localFile, [string]$remoteFile, [string]$label) {
+    function PublishUploadProgress($pipeline, $state, [string]$message, [bool]$flush) {
+        # Copy-Item reports progress after sending data blocks. Read its progress
+        # stream without opening another remote session or changing the transfer.
+        foreach ($record in $pipeline.Streams.Progress.ReadAll()) {
+            if ($record.PercentComplete -ge 0) {
+                $state.Pending = [Math]::Max($state.Pending, [Math]::Min(99, $record.PercentComplete))
+            }
+        }
+        if ($state.Pending -gt $state.Published -and ($flush -or $state.Timer.ElapsedMilliseconds -ge 200)) {
+            Progress 'Übertragung' $message $state.Pending
+            $state.Published = $state.Pending
+            $state.Timer.Restart()
+        }
+    }
+    $message = "$label : $([IO.Path]::GetFileName($localFile)) wird hochgeladen nach $remoteFile"
+    Progress 'Übertragung' $message 0
+    $pipeline = $null
+    $operation = $null
+    $state = [pscustomobject]@{ Pending=0; Published=0; Timer=[Diagnostics.Stopwatch]::StartNew() }
+    try {
+        $pipeline = NewUploadPipeline $session $localFile $remoteFile
+        $operation = $pipeline.BeginInvoke()
+        while (-not $operation.IsCompleted) {
+            PublishUploadProgress $pipeline $state $message $false
+            [void]$operation.AsyncWaitHandle.WaitOne(100)
+        }
+        $null = $pipeline.EndInvoke($operation)
+        if ($pipeline.HadErrors) { throw ($pipeline.Streams.Error | Out-String).Trim() }
+        PublishUploadProgress $pipeline $state $message $true
+        # 100% is emitted by the caller only after the remote SHA256 check.
+        Progress 'Übertragung' ("$label : $([IO.Path]::GetFileName($localFile)) hochgeladen; Prüfsumme wird geprüft") 99
+    }
+    finally {
+        if ($null -ne $pipeline) { $pipeline.Dispose() }
+        if ($null -ne $operation) { $operation.AsyncWaitHandle.Close() }
+    }
 }
 
 function ReadInventory {
@@ -211,12 +265,15 @@ try {
             $files = @($req.TransferFiles)
             if ($files.Count -eq 0) { throw 'Keine Dateien zur Übertragung angegeben.' }
             $copied = 0
+            $verified = 0
             foreach ($file in $files) {
                 $localFile = [string]$file.LocalPath
                 $expectedHash = [string]$file.Sha256
                 if (-not (Test-Path -LiteralPath $localFile -PathType Leaf)) { throw "Lokale Datei fehlt auf dem Updater-PC: $localFile" }
                 if ([string]::IsNullOrWhiteSpace($expectedHash)) { throw "SHA256-Pruefsumme fehlt fuer $localFile" }
                 $remoteFile = Join-Path $remotePath (Split-Path -Path $localFile -Leaf)
+                $fileLabel = "Datei $($verified + 1)/$($files.Count)"
+                Progress 'Übertragung' ("$fileLabel : Prüfe $([IO.Path]::GetFileName($localFile))") 0
                 $remoteHash = Invoke-Command -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
                     param([string]$path)
                     if (Test-Path -LiteralPath $path -PathType Leaf) {
@@ -224,9 +281,8 @@ try {
                     } else { '' }
                 }
                 if ($remoteHash -ne $expectedHash) {
-                    Progress 'Übertragung' ("Kopiere $(Split-Path -Path $localFile -Leaf) nach $remoteHost : $remoteFile")
                     try {
-                        Copy-Item -LiteralPath $localFile -Destination $remoteFile -ToSession $session -Force -ErrorAction Stop
+                        CopyRemoteFileWithProgress $session $localFile $remoteFile $fileLabel
                     }
                     catch {
                         throw "Dateiübertragung fehlgeschlagen ($remoteHost; $remoteFile): $($_.Exception.Message)"
@@ -239,7 +295,8 @@ try {
                     if ($remoteHash -ne $expectedHash) { throw "SHA256-Pruefung nach der Übertragung fehlgeschlagen ($remoteHost; $remoteFile)" }
                     $copied++
                 }
-                Progress 'Übertragung' ("Datei verifiziert: $remoteHost : $remoteFile")
+                $verified++
+                Progress 'Übertragung' ("Datei verifiziert: $remoteHost : $remoteFile ($verified/$($files.Count) Dateien fertig)") 100
             }
             Emit @{ Event='result'; Success=$true; Message="$($files.Count) Datei(en) geprüft; $copied übertragen; keine Installation ausgeführt."; Changed=($copied -gt 0); Services=@() }
             exit 0
@@ -337,6 +394,8 @@ try {
 
         # Die exakten, auf dem Remote-Host verifizierten Pfade fuer das Entpacken merken.
         $remoteZipFiles = @{ payment = ''; fiscal = ''; serversuite = '' }
+        $zipCount = @($pending | Select-Object -ExpandProperty Kind -Unique).Count
+        $verifiedZips = 0
         foreach ($kind in @('payment','fiscal','serversuite')) {
             if (-not @($pending | Where-Object Kind -eq $kind).Count) { continue }
             $zip = if ($kind -eq 'payment') { [string]$req.PaymentZip } elseif ($kind -eq 'fiscal') { [string]$req.FiscalZip } else { [string]$req.ServerSuiteZip }
@@ -344,6 +403,8 @@ try {
             if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Lokale ZIP fehlt auf dem Updater-PC: $zip" }
             if ([string]::IsNullOrWhiteSpace($expectedHash)) { throw "Lokale SHA256-Pruefsumme fehlt fuer $kind" }
             $remoteFile = Join-Path $remotePath (Split-Path -Path $zip -Leaf)
+            $fileLabel = "ZIP $($verifiedZips + 1)/$zipCount ($kind)"
+            Progress 'Übertragung' ("$fileLabel : Prüfe $([IO.Path]::GetFileName($zip))") 0
             $remoteHash = Invoke-Command -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
                 param([string]$path)
                 if (Test-Path -LiteralPath $path -PathType Leaf) {
@@ -354,9 +415,8 @@ try {
                 if ($skipZipTransfer) {
                     throw "ZIP-Übertragung deaktiviert: '$remoteFile' fehlt auf $remoteHost oder stimmt nicht mit der ausgewählten lokalen ZIP überein (SHA256)."
                 }
-                Progress 'Übertragung' ("Kopiere $kind : $zip => $remoteHost : $remoteFile")
                 try {
-                    Copy-Item -LiteralPath $zip -Destination $remoteFile -ToSession $session -Force -ErrorAction Stop
+                    CopyRemoteFileWithProgress $session $zip $remoteFile $fileLabel
                 } catch {
                     throw "ZIP-Transfer fehlgeschlagen ($kind; $remoteHost; $remoteFile): $($_.Exception.Message)"
                 }
@@ -371,11 +431,12 @@ try {
             if ($remoteHash -ne $expectedHash) { throw "SHA256-Pruefung fehlgeschlagen ($remoteHost; $remoteFile)" }
             $remoteZipFiles[$kind] = [string]$remoteFile
             $verifiedMessage = if ($skipZipTransfer) { "Vorhandene ZIP verifiziert: $remoteHost : $remoteFile" } else { "ZIP verifiziert: $remoteHost : $remoteFile" }
-            Progress 'ZIP-Prüfung' $verifiedMessage
+            $verifiedZips++
+            Progress 'ZIP-Prüfung' ($verifiedMessage + " ($verifiedZips/$zipCount ZIPs fertig)") 100
         }
 
         # Prepare and expand away from running services; only stop after successful extraction.
-        Progress 'Vorbereitung' 'Archive werden in ein temporäres Verzeichnis entpackt'
+        Progress 'Archive entpacken' 'Archive werden geprüft und in ein temporäres Verzeichnis entpackt' 0
         $kindsCsv = (@($pending | Select-Object -ExpandProperty Kind -Unique) -join ',')
         # Kein Cast direkt in -ArgumentList: Windows PowerShell wertet
         # [string]$req.PaymentZip dort sonst als Stringdarstellung von $req aus.
@@ -384,7 +445,12 @@ try {
         $fiscalRemoteZip = [string]$remoteZipFiles['fiscal']
         $serverSuiteRemoteZip = [string]$remoteZipFiles['serversuite']
         $stageArgs = @($remotePath, $kindsCsv, $paymentRemoteZip, $fiscalRemoteZip, $serverSuiteRemoteZip)
-        $stage = Invoke-Command -Session $session -ArgumentList $stageArgs -ErrorAction Stop -ScriptBlock ${function:PrepareUpdatePackages}
+        $stage = Invoke-Command -Session $session -ArgumentList $stageArgs -ErrorAction Stop -ScriptBlock ${function:PrepareUpdatePackages} |
+            ForEach-Object {
+                if ($null -ne $_ -and $null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') {
+                    Progress ([string]$_.Phase) ([string]$_.Message) $_.ProgressPercent
+                } else { $_ }
+            }
 
         $updateError = $null
         try {
@@ -395,7 +461,7 @@ try {
             Invoke-Command -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget -ErrorAction Stop -ScriptBlock ${function:InstallUpdatePackages} |
                 ForEach-Object {
                     if ($null -ne $_ -and $null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') {
-                        Progress ([string]$_.Phase) ([string]$_.Message)
+                        Progress ([string]$_.Phase) ([string]$_.Message) $_.ProgressPercent
                     }
                 }
             Progress 'Verifikation' 'Versionen und Dienststatus werden erneut kontrolliert'

@@ -120,9 +120,16 @@ function ReadInventory {
 }
 '@
     ReadSoftwareInventory = 'function ReadSoftwareInventory { [pscustomobject]@{ DotNet48Installed=$true; PosVersion="Nicht installiert" } }'
+    CopyRemoteFileWithProgress = @'
+function CopyRemoteFileWithProgress($session, [string]$localFile, [string]$remoteFile, [string]$label) {
+    Progress 'Upload test' $label 25
+    Copy-Item -LiteralPath $localFile -Destination $remoteFile -ToSession $session -Force -ErrorAction Stop
+    Progress 'Upload test' $label 99
+}
+'@
 }
 # Replace from the end to preserve AST offsets. The entire real update flow remains.
-$nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('ReadInventory','ReadSoftwareInventory') }, $true))
+$nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('ReadInventory','ReadSoftwareInventory','CopyRemoteFileWithProgress') }, $true))
 foreach ($node in @($nodes | Sort-Object { $_.Extent.StartOffset } -Descending)) {
     $source = $source.Remove($node.Extent.StartOffset, $node.Extent.EndOffset - $node.Extent.StartOffset).Insert($node.Extent.StartOffset, $readers[$node.Name])
 }
@@ -271,7 +278,20 @@ try {
     Assert ($versionCopies.Count -eq 3 -and $pythonCopies.Count -eq 3) 'Shared suite and Python folders must receive each file once'
     Assert (@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Instanz vorgesehen' }).Count -eq 4 -and
         @($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Instanz gepr' + [char]0x00FC + 'ft' }).Count -eq 4) 'Every suite instance must appear in planning and verification logs'
-    Assert (@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Update installieren' }).Count -eq 6) 'Every distinct suite and Python destination must be reported live during installation'
+    $copyMessages=@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Update installieren' })
+    Assert (@($copyMessages | Where-Object { $_.Message -like '*Dateien werden installiert nach*' }).Count -eq 6) 'Every distinct suite and Python destination must be reported live during installation'
+    Assert ($copyMessages[0].ProgressPercent -eq 0 -and $copyMessages[-1].ProgressPercent -eq 100) 'Copy progress must run from zero to 100 across all destinations'
+    $previousPercent=-1
+    foreach ($message in $copyMessages) {
+        Assert ($message.ProgressPercent -ge $previousPercent -and $message.ProgressPercent -le 100) 'Copy progress must never move backwards between shared and separate folders'
+        $previousPercent=$message.ProgressPercent
+    }
+    $stopMessages=@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Dienste stoppen' })
+    $startMessages=@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Dienste starten' })
+    Assert ($stopMessages[-1].ProgressPercent -eq 50 -and $startMessages[0].ProgressPercent -eq 50 -and $startMessages[-1].ProgressPercent -eq 100) 'Service progress must reach 50 only after every stop and 100 after every enabled restart'
+    $extractMessages=@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Archive entpacken' })
+    Assert ($extractMessages[0].ProgressPercent -eq 0 -and $extractMessages[-1].ProgressPercent -eq 100 -and
+        $extractMessages[-1].Message -like '*nt.server.suite-2026.4.9792.zip fertig:*') 'Extraction progress must reach the UI with ZIP name and verified completion'
     Passed 'all instances copied and verified without deleting client folders or extra files; shared paths once'
     Passed 'stop, installation and start phases reach the UI before their operations execute'
 
@@ -434,14 +454,28 @@ try {
         }
     }
     ResetCase 'combined'; Service 'a' 'one'; Component 'payment'; Component 'fiscal'; Package
-    foreach ($kind in @('payment','fiscal')) { Package @{ 'component.exe'='1.2.3.4'; 'nested/updated.txt'='new' } $kind }
+    foreach ($kind in @('payment','fiscal')) { Package @{ 'component.exe'='1.2.3.4'; 'nested/updated.txt'='new'; 'nested/empty/'='' } $kind }
     $null=RunWorker
     foreach ($kind in @('payment','fiscal')) {
         $root = Join-Path $script:case $kind
         Assert ([IO.File]::ReadAllText((Join-Path $root 'component.exe')) -eq '1.2.3.4' -and [IO.File]::ReadAllText((Join-Path $root 'nested\updated.txt')) -eq 'new') 'Existing component ZIPs must still overlay nested files at the correct paths'
         Assert ([IO.File]::ReadAllText((Join-Path $root 'settings.json')) -eq 'preserve local settings') 'Existing payment/fiscal overlay behavior must retain extra files'
+        Assert ([IO.Directory]::Exists((Join-Path $root 'nested\empty'))) 'Explicit ZIP directory entries must still be extracted and deployed'
+    }
+    $extractMessages=@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Archive entpacken' })
+    Assert (@($extractMessages | Where-Object { $_.Message -like '*.zip fertig:*' -and $_.ProgressPercent -eq 100 }).Count -eq 3) 'Each extracted ZIP must report its own 100 percent completion'
+    foreach ($zip in @($script:request.PaymentZip,$script:request.FiscalZip,$script:request.ServerSuiteZip)) {
+        $filename=[IO.Path]::GetFileName($zip)
+        $zipMessages=@($extractMessages | Where-Object { $_.Message.StartsWith($filename, [StringComparison]::OrdinalIgnoreCase) })
+        Assert ($zipMessages[0].ProgressPercent -eq 0 -and $zipMessages[-1].ProgressPercent -eq 100) 'Each ZIP must restart extraction progress at zero'
+        $previousPercent=-1
+        foreach ($message in $zipMessages) {
+            Assert ($message.ProgressPercent -ge $previousPercent -and $message.ProgressPercent -le 100) 'Extraction progress must stay monotonic within each ZIP'
+            $previousPercent=$message.ProgressPercent
+        }
     }
     Passed 'combined suite/payment/fiscal updates preserve existing overlay behavior'
+    Passed 'extraction progress resets for each archive and handles explicit empty directories'
 
     ResetCase 'absent'; Package; $result = RunWorker
     Assert ($result.Skipped -and -not $result.Changed -and $script:events.Count -eq 0) 'Missing suite is optional and must not transfer or change anything'
@@ -453,7 +487,7 @@ try {
     Assert ('stop:nt3_server_suite_a' -in $script:events) 'Force must reinstall a selected current suite'
     Passed 'force update reinstalls current selected suite'
 
-    foreach ($bad in @('missing-folder','missing-version','empty-version','version','traversal','empty')) {
+    foreach ($bad in @('missing-folder','missing-version','empty-version','version','traversal','empty','entry-conflict')) {
         ResetCase $bad; Service 'a' 'one'
         switch ($bad) {
             'missing-folder' { Package @{ 'suite.exe'='2026.4.9792' }; $pattern='apps.*nt3-server-suite' }
@@ -462,10 +496,14 @@ try {
             'version' { Package @{ 'apps/nt3-server-suite/suite.exe'='2026.4.9792'; 'apps/nt3-server-suite/version.txt'='2025.1.1' }; $pattern='2025.1.1.*2026.4.9792' }
             'traversal' { Package @{ '../outside.txt'='unsafe' }; $pattern='ZIP-Eintrag' }
             'empty' { Package @{} -WithoutPython; $pattern='leer|apps.*nt3-server-suite' }
+            'entry-conflict' { Package @{ 'apps/nt3-server-suite/version.txt'='2026.4.9792'; 'apps/nt3-server-suite/version.txt/nested.txt'='conflict' }; $pattern='' }
         }
         $null = RunWorker $false $pattern
         NoServiceOrTargetChanges
         Assert (-not (Test-Path -LiteralPath (Join-Path $script:case 'outside.txt'))) 'ZIP traversal must not escape staging'
+        if ($bad -eq 'entry-conflict') {
+            Assert (@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Archive entpacken' -and $_.ProgressPercent -eq 100 }).Count -eq 0) 'Failed extraction must not report 100 percent'
+        }
         Passed ('reject invalid ZIP before stopping services: ' + $bad)
     }
     ResetCase 'wrong-target'; Service 'a' 'one'; Package
@@ -542,6 +580,27 @@ try {
         if ($existing -eq 'identical') { $null=RunWorker } else { $null=RunWorker $false 'SHA256'; NoServiceOrTargetChanges }
         Assert (@($script:events | Where-Object { $_ -like 'transfer:*' }).Count -eq 0) 'Disabled ZIP transfer must never upload files'
         Passed ('reuse ZIP with SHA256 validation: ' + $existing)
+    }
+
+    foreach ($reuse in @($false,$true)) {
+        ResetCase ('transfer-progress-' + $reuse)
+        $script:request.Action='transfer'
+        $transferFiles=@()
+        foreach ($filename in @('first.zip','second.exe')) {
+            $path=Join-Path $script:case $filename
+            WriteFixture $path ('dummy transfer content: ' + $filename)
+            $transferFiles += @{ LocalPath=$path; Sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
+            if ($reuse) { WriteFixture (Join-Path $script:request.RemoteInstallPath $filename) ('dummy transfer content: ' + $filename) }
+        }
+        $script:request.TransferFiles=$transferFiles
+        $result=RunWorker
+        $verifiedMessages=@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Message -like 'Datei verifiziert:*' })
+        Assert (($verifiedMessages.ProgressPercent -join ',') -eq '100,100') 'Every transferred or reused file reaches 100 only after hash verification'
+        $fileStarts=@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Message -like 'Datei */* : *' -and $_.ProgressPercent -eq 0 })
+        Assert ($fileStarts.Count -eq 2) 'Each upload file must restart its percentage at zero'
+        Assert (@($script:events | Where-Object { $_ -like 'transfer:*' }).Count -eq $(if ($reuse) { 0 } else { 2 })) 'Progress reporting must retain hash-based transfer reuse'
+        Assert (@($script:events | Where-Object { $_ -match '^(copy|stop|start):' }).Count -eq 0) 'Transfer progress must not cause installation or service operations'
+        Passed ('verified transfer progress, reuse=' + $reuse)
     }
 }
 finally {

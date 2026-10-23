@@ -409,6 +409,7 @@ public sealed class MainForm : Form
         table.Columns.Add("serversuite", "Server Suite Ist");
         table.Columns.Add("pos", "NovaTouch POS");
         table.Columns.Add("information", "Information");
+        table.Columns["information"].CellTemplate = new InformationProgressCell();
         table.Columns.Add("attempt", "Versuch");
         table.Columns.Add("result", "Ergebnis");
         // Prozentwerte werden nach dem Anzeigen des Fensters in ApplyColumnWeights gesetzt.
@@ -792,12 +793,12 @@ public sealed class MainForm : Form
                         }, ev =>
                         {
                             Log(host.Host, ev.Phase + ": " + ev.Message);
-                            Mark(host, h => h.Phase = ev.Phase + " – " + ev.Message);
+                            Mark(host, h => h.ApplyProgress(ev));
                         }, token);
                         if (result.Success)
                         {
                             Interlocked.Increment(ref succeeded);
-                            Mark(host, h => h.Phase = "Dateiübertragung abgeschlossen");
+                            Mark(host, h => { h.Phase = "Dateiübertragung abgeschlossen"; h.SetProgress(100); });
                             Log(host.Host, "TRANSFER => OK " + result.Message);
                         }
                         else
@@ -896,7 +897,7 @@ public sealed class MainForm : Form
                         }, ev =>
                         {
                             Log(host.Host, ev.Phase + ": " + ev.Message);
-                            Mark(host, h => h.Phase = ev.Phase + " – " + ev.Message);
+                            Mark(host, h => h.ApplyProgress(ev));
                         }, restartTerminals || restartPos ? CancellationToken.None : token);
                         if (result.Success && result.Skipped)
                         {
@@ -1106,6 +1107,7 @@ public sealed class MainForm : Form
                             if (result.Skipped) h.Phase = result.Message;
                             h.Services = result.Services.ToList(); ReadVersions(h);
                             h.UpdateFailed = false;
+                            if (result.Changed) h.SetProgress(100);
                         }
                     });
                     if (result.Success) { succeeded = true; break; }
@@ -1212,7 +1214,7 @@ public sealed class MainForm : Form
         WorkerResult result = await runner.RunAsync(Request(action, host), ev =>
         {
             Log(host.Host, ev.Phase + ": " + ev.Message);
-            Mark(host, h => h.Phase = ev.Phase + " – " + ev.Message);
+            Mark(host, h => h.ApplyProgress(ev));
         }, action == "update" ? CancellationToken.None : ct);
         if (action == "scan")
         {
@@ -1294,10 +1296,14 @@ public sealed class MainForm : Form
         if (h.Row is null) return;
         string connection;
         string connectionToolTip;
+        string info;
+        int? rowProgress;
         lock (h)
         {
             connection = h.Connection;
             connectionToolTip = h.ConnectionState.ToolTip;
+            info = DisplayText.Information(h.Phase, h.Error);
+            rowProgress = h.ProgressPercent;
         }
         var cells = h.Row.Cells;
         cells["hostname"].Value = h.Host;
@@ -1322,7 +1328,8 @@ public sealed class MainForm : Form
         cells["fiscal"].ToolTipText = h.Fiscal;
         cells["pos"].ToolTipText = h.PosVersion;
         // Aktuellen Schritt und bisherige Fehler-/Informationstexte gemeinsam anzeigen.
-        string info = DisplayText.Information(h.Phase, h.Error);
+        if (rowProgress is int percent) info = $"{percent} % · {info}";
+        cells["information"].Tag = rowProgress;
         cells["information"].Value = info;
         cells["information"].ToolTipText = info;
         cells["attempt"].Value = h.Attempt == 0 ? "–" : h.Attempt + "/3";

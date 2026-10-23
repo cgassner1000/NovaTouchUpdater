@@ -11,6 +11,8 @@ function PrepareUpdatePackages {
     try {
         Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem -ErrorAction Stop
         $archives = @{ payment=$pZip; fiscal=$fZip; serversuite=$sZip }
+        $packages = @()
+        # Validate every path and count each ZIP's bytes before extracting.
         foreach ($kind in ($kindsCsv -split ',')) {
             if (-not $archives.ContainsKey($kind)) { throw "Unbekannte Update-Komponente: $kind" }
             $zip = [string]$archives[$kind]
@@ -20,25 +22,89 @@ function PrepareUpdatePackages {
             $destPrefix = [IO.Path]::GetFullPath($dest).TrimEnd('\') + '\'
             $archive = [IO.Compression.ZipFile]::OpenRead($zip)
             try {
+                $totalBytes = [long]0
+                if ($archive.Entries.Count -eq 0) { throw "ZIP ist leer: $zip" }
                 foreach ($entry in $archive.Entries) {
                     $relative = $entry.FullName.Replace('/', '\')
                     if ([IO.Path]::IsPathRooted($relative) -or $relative.Contains(':')) { throw "Ungültiger ZIP-Eintrag: $relative" }
                     $entryPath = [IO.Path]::GetFullPath((Join-Path $dest $relative))
                     if (-not $entryPath.StartsWith($destPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "ZIP-Eintrag verlässt das Update-Verzeichnis: $relative" }
+                    if (-not $relative.EndsWith('\')) { $totalBytes += $entry.Length }
+                }
+                $entryCount = $archive.Entries.Count
+            }
+            finally { $archive.Dispose() }
+            $packages += [pscustomobject]@{ Kind=$kind; Zip=$zip; Destination=$dest; Prefix=$destPrefix; TotalBytes=$totalBytes; EntryCount=$entryCount }
+        }
+        $packageNumber = 0
+        $buffer = [byte[]]::new(256 * 1024)
+        foreach ($package in $packages) {
+            $packageNumber++
+            $completedEntries = 0
+            $completedBytes = [long]0
+            $lastPercent = 0
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            $zipName = [IO.Path]::GetFileName($package.Zip)
+            $zipLabel = "$zipName (ZIP $packageNumber/$($packages.Count))"
+            [pscustomobject]@{ Event='progress'; Phase='Archive entpacken';
+                Message="$zipLabel : Entpacken wird gestartet"; ProgressPercent=0 }
+            $archive = [IO.Compression.ZipFile]::OpenRead($package.Zip)
+            try {
+                foreach ($entry in $archive.Entries) {
+                    $relative = $entry.FullName.Replace('/', '\')
+                    # Revalidate the reopened archive before each write.
+                    if ([IO.Path]::IsPathRooted($relative) -or $relative.Contains(':')) { throw "Ungültiger ZIP-Eintrag: $relative" }
+                    $entryPath = [IO.Path]::GetFullPath((Join-Path $package.Destination $relative))
+                    if (-not $entryPath.StartsWith($package.Prefix, [StringComparison]::OrdinalIgnoreCase)) { throw "ZIP-Eintrag verlässt das Update-Verzeichnis: $relative" }
+                    if ($relative.EndsWith('\')) {
+                        [void][IO.Directory]::CreateDirectory($entryPath)
+                    } else {
+                        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($entryPath))
+                        $inputStream = $null
+                        $outputStream = $null
+                        $entryBytes = [long]0
+                        try {
+                            $inputStream = $entry.Open()
+                            $outputStream = [IO.File]::Open($entryPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                            while (($read = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                                $outputStream.Write($buffer, 0, $read)
+                                $entryBytes += $read
+                                $completedBytes += $read
+                                if ($timer.ElapsedMilliseconds -ge 250 -and $package.TotalBytes -gt 0) {
+                                    $percent = [int][Math]::Min(99, [Math]::Floor(100.0 * $completedBytes / $package.TotalBytes))
+                                    if ($percent -ne $lastPercent) {
+                                        [pscustomobject]@{ Event='progress'; Phase='Archive entpacken';
+                                            Message=("{0} : {1:N1}/{2:N1} MB entpackt; {3}" -f $zipLabel, ($completedBytes / 1MB), ($package.TotalBytes / 1MB), $relative);
+                                            ProgressPercent=$percent }
+                                        $lastPercent = $percent
+                                        $timer.Restart()
+                                    }
+                                }
+                            }
+                            if ($entryBytes -ne $entry.Length) { throw "Unvollständiger ZIP-Eintrag: $relative" }
+                        }
+                        finally {
+                            if ($null -ne $outputStream) { $outputStream.Dispose() }
+                            if ($null -ne $inputStream) { $inputStream.Dispose() }
+                        }
+                        [IO.File]::SetLastWriteTime($entryPath, $entry.LastWriteTime.DateTime)
+                    }
+                    $completedEntries++
                 }
             }
             finally { $archive.Dispose() }
-            Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force -ErrorAction Stop
-            if (@(Get-ChildItem -LiteralPath $dest -Force).Count -eq 0) { throw "ZIP ist leer: $zip" }
-            if ($kind -eq 'serversuite') {
+            if ($package.Kind -eq 'serversuite') {
                 foreach ($relative in @('apps\nt3-server-suite', 'installer\python\portable_python')) {
-                    $payload = Join-Path $dest $relative
+                    $payload = Join-Path $package.Destination $relative
                     if (-not (Test-Path -LiteralPath $payload -PathType Container) -or
                         @(Get-ChildItem -LiteralPath $payload -Force -Recurse -File).Count -eq 0) {
                         throw "Die Server-Suite-ZIP muss den gefüllten Ordner $relative enthalten."
                     }
                 }
             }
+            [pscustomobject]@{ Event='progress'; Phase='Archive entpacken';
+                Message="$zipName fertig: $completedEntries/$($package.EntryCount) ZIP-Einträge entpackt (ZIP $packageNumber/$($packages.Count))";
+                ProgressPercent=100 }
         }
         $dir
     }
@@ -56,9 +122,9 @@ function InstallUpdatePackages {
     param([string]$wantedJson, [string]$stageDir, [string]$serverSuiteTarget)
     $ErrorActionPreference = 'Stop'
     Set-StrictMode -Version Latest
-    function UpdateProgress([string]$phase, [string]$message) {
+    function UpdateProgress([string]$phase, [string]$message, [Nullable[int]]$percent = $null) {
         # Stream these records through Invoke-Command while the update runs.
-        [pscustomobject]@{ Event='progress'; Phase=$phase; Message=$message }
+        [pscustomobject]@{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent }
     }
     function FullPath([string]$path) {
         if ([string]::IsNullOrWhiteSpace($path) -or $path -notmatch '^[A-Za-z]:\\') { throw "Kein absoluter Windows-Pfad: '$path'" }
@@ -97,17 +163,27 @@ function InstallUpdatePackages {
         if ($expected -match '^\d+\.\d+\.\d+$') { $versionMatches = $installed -match ('^' + [regex]::Escape($expected) + '(?:\.\d+)?$') }
         if (-not $versionMatches) { throw "Server-Suite-ZIP enthält in version.txt Version '$($version.Trim())', erwartet '$serverSuiteTarget'." }
     }
-    function CopyContents([string]$source, [string]$destination) {
+    function CopyContents([string]$source, [string]$destination, [object[]]$files, [string]$component, $copyProgress) {
         New-Item -ItemType Directory -Path $destination -Force -ErrorAction Stop | Out-Null
         foreach ($folder in Get-ChildItem -LiteralPath $source -Directory -Recurse -Force -ErrorAction Stop) {
             $relative = $folder.FullName.Substring($source.Length).TrimStart('\')
             New-Item -ItemType Directory -Path (Join-Path $destination $relative) -Force -ErrorAction Stop | Out-Null
         }
-        foreach ($file in Get-ChildItem -LiteralPath $source -File -Recurse -Force -ErrorAction Stop) {
+        foreach ($file in $files) {
             $relative = $file.FullName.Substring($source.Length).TrimStart('\')
             $destinationFile = Join-Path $destination $relative
             if ([IO.Directory]::Exists($destinationFile)) { throw "Eine Datei kann keinen vorhandenen Ordner ersetzen: $destinationFile" }
             Copy-Item -LiteralPath $file.FullName -Destination $destinationFile -Force -ErrorAction Stop
+            $copyProgress.Completed++
+            $percent = [int][Math]::Floor(100.0 * $copyProgress.Completed / [Math]::Max(1, $copyProgress.Total))
+            # Avoid thousands of UI/log messages for a Python runtime. Always
+            # publish completion; intermediate progress is at most four times/s.
+            if ($copyProgress.Completed -eq $copyProgress.Total -or
+                ($percent -ne $copyProgress.LastPercent -and $copyProgress.Timer.ElapsedMilliseconds -ge 250)) {
+                UpdateProgress 'Update installieren' ("$component : $($copyProgress.Completed)/$($copyProgress.Total) Dateien kopiert; $relative") $percent
+                $copyProgress.LastPercent = $percent
+                $copyProgress.Timer.Restart()
+            }
         }
     }
     function CheckServiceExecutable([string]$exe, [string]$target, [string]$source, [string]$name) {
@@ -149,13 +225,14 @@ function InstallUpdatePackages {
         if (-not (Test-Path -LiteralPath $source -PathType Container) -or @(Get-ChildItem -LiteralPath $source -Force).Count -eq 0) {
             throw "Leeres oder fehlendes Update-Verzeichnis für $kind : $source"
         }
-        if ($expectedLeaf -and @(Get-ChildItem -LiteralPath $source -Force -Recurse -File).Count -eq 0) { throw "Keine Dateien im Update-Verzeichnis: $source" }
+        $files = @(Get-ChildItem -LiteralPath $source -Force -Recurse -File -ErrorAction Stop)
+        if ($expectedLeaf -and $files.Count -eq 0) { throw "Keine Dateien im Update-Verzeichnis: $source" }
         if ((ContainsPath $target $stage) -or (ContainsPath $stage $target)) { throw 'Staging und Installationsziel dürfen nicht ineinander liegen.' }
         $parent = [IO.Path]::GetDirectoryName($target)
         CheckTarget $target ([bool]$expectedLeaf) $allowMissing
         # Every service retains its own stop/start, but shared folders are copied once.
         $plans[$kind + '|' + $target.ToLowerInvariant()] = [pscustomobject]@{
-            Kind=$kind; Source=$source; Target=$target; ExpectedLeaf=$expectedLeaf; Parent=$parent; AllowMissing=$allowMissing
+            Kind=$kind; Source=$source; Target=$target; ExpectedLeaf=$expectedLeaf; Parent=$parent; AllowMissing=$allowMissing; Files=$files
         }
     }
 
@@ -223,16 +300,23 @@ function InstallUpdatePackages {
     $changes = @()
     $operationError = ''
     $restartErrors = @()
+    $stoppedCount = 0
+    $startedCount = 0
+    $startNames = @($servicesToStart | Select-Object -Unique)
+    $totalFiles = 0
+    foreach ($plan in $allPlans) { $totalFiles += $plan.Files.Count }
+    $copyProgress = [pscustomobject]@{ Total=$totalFiles; Completed=0; LastPercent=-1; Timer=[Diagnostics.Stopwatch]::StartNew() }
     try {
         # Stop every selected service before the first file or directory change.
         foreach ($svc in $wanted) {
             $service = Get-Service -Name ([WildcardPattern]::Escape([string]$svc.Name)) -ErrorAction Stop
             if ($service.Status -ne 'Stopped') {
-                UpdateProgress 'Dienste stoppen' ("Stoppe Dienst '$($svc.Name)'")
+                UpdateProgress 'Dienste stoppen' ("Stoppe Dienst '$($svc.Name)'") ([int][Math]::Floor(50.0 * $stoppedCount / $wanted.Count))
                 Stop-Service -Name ([WildcardPattern]::Escape([string]$svc.Name)) -Force -ErrorAction Stop
                 $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
-                UpdateProgress 'Dienste stoppen' ("Dienst '$($svc.Name)' ist gestoppt")
             }
+            $stoppedCount++
+            UpdateProgress 'Dienste stoppen' ("Dienst '$($svc.Name)' ist gestoppt ($stoppedCount/$($wanted.Count))") ([int][Math]::Floor(50.0 * $stoppedCount / $wanted.Count))
         }
         foreach ($plan in $allPlans) {
             $component = switch ($plan.Kind) {
@@ -240,7 +324,7 @@ function InstallUpdatePackages {
                 'fiscal' { 'nt.fiscal' }
                 'serversuite' { if ($plan.ExpectedLeaf -eq 'portable_python') { 'Server Suite / Python' } else { 'Server Suite' } }
             }
-            UpdateProgress 'Update installieren' ("$component : Dateien werden installiert nach $($plan.Target)")
+            UpdateProgress 'Update installieren' ("$component : Dateien werden installiert nach $($plan.Target); $($copyProgress.Completed)/$totalFiles Dateien kopiert") ([int][Math]::Floor(100.0 * $copyProgress.Completed / [Math]::Max(1, $totalFiles)))
             if ($plan.ExpectedLeaf) {
                 # Recheck the exact target before copying; never delete client folders.
                 $checkedTarget = FullPath $plan.Target
@@ -249,18 +333,20 @@ function InstallUpdatePackages {
                     -not [IO.Path]::GetDirectoryName($checkedTarget).Equals($plan.Parent, [StringComparison]::OrdinalIgnoreCase)) { throw 'Ungültiges Server-Suite-Austauschziel.' }
                 CheckTarget $checkedTarget $true $plan.AllowMissing
             }
-            CopyContents $plan.Source $plan.Target
+            CopyContents $plan.Source $plan.Target $plan.Files $component $copyProgress
             $changes += ($plan.Kind + ' => ' + $plan.Target)
         }
+        if ($totalFiles -eq 0) { UpdateProgress 'Update installieren' 'Alle Zielordner wurden angelegt' 100 }
     }
     catch { $operationError = $_.Exception.Message }
     finally {
-        foreach ($name in @($servicesToStart | Select-Object -Unique)) {
+        foreach ($name in $startNames) {
             try {
-                UpdateProgress 'Dienste starten' ("Starte Dienst '$name'")
+                UpdateProgress 'Dienste starten' ("Starte Dienst '$name'") (50 + [int][Math]::Floor(50.0 * $startedCount / $startNames.Count))
                 Start-Service -Name ([WildcardPattern]::Escape($name)) -ErrorAction Stop
                 (Get-Service -Name ([WildcardPattern]::Escape($name)) -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
-                UpdateProgress 'Dienste starten' ("Dienst '$name' läuft")
+                $startedCount++
+                UpdateProgress 'Dienste starten' ("Dienst '$name' läuft ($startedCount/$($startNames.Count))") (50 + [int][Math]::Floor(50.0 * $startedCount / $startNames.Count))
             }
             catch { $restartErrors += "Dienst '$name' konnte nicht wieder gestartet werden: $($_.Exception.Message)" }
         }

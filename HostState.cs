@@ -5,6 +5,7 @@ internal sealed class HostState
     private string result = "Offen";
     private bool resultFromCommand;
     private bool retryableFailure;
+    private string phase = "Bereit";
 
     public string Host { get; init; } = "";
     public ConnectionState ConnectionState { get; } = new();
@@ -17,7 +18,18 @@ internal sealed class HostState
     public string PaymentBefore { get; set; } = "–";
     public string FiscalBefore { get; set; } = "–";
     public string ServerSuiteBefore { get; set; } = "–";
-    public string Phase { get; set; } = "Bereit";
+    public string Phase
+    {
+        get => phase;
+        set { phase = value; ProgressPercent = null; }
+    }
+    public int? ProgressPercent { get; private set; }
+    public void SetProgress(int? percent) => ProgressPercent = percent is int value ? Math.Clamp(value, 0, 100) : null;
+    public void ApplyProgress(WorkerEvent progress)
+    {
+        Phase = progress.Phase + " – " + progress.Message;
+        SetProgress(progress.ProgressPercent);
+    }
     public string Result
     {
         get => result;
@@ -61,6 +73,7 @@ internal sealed class HostState
         else
         {
             Phase = "Dienste neu gestartet";
+            SetProgress(100);
             SetCommandResult("Dienste OK");
         }
     }

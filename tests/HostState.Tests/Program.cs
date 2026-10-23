@@ -10,6 +10,21 @@ static void Assert(bool condition, string message)
 }
 
 var now = DateTimeOffset.Now.AddMinutes(1);
+var progressEvent = JsonSerializer.Deserialize<WorkerEvent>("{\"Event\":\"progress\",\"Phase\":\"Kopieren\",\"Message\":\"12/20 Dateien\",\"ProgressPercent\":60}")!;
+var progressHost = new HostState();
+progressHost.ApplyProgress(progressEvent);
+Assert(progressHost.ProgressPercent == 60 && progressHost.Phase.Contains("12/20 Dateien"), "worker percentages and readable status text reach the host state together");
+progressHost.Phase = "Update fehlgeschlagen";
+Assert(progressHost.ProgressPercent is null, "a new phase or failure clears stale green progress");
+progressHost.SetProgress(120);
+Assert(progressHost.ProgressPercent == 100, "progress is constrained to the cell bounds");
+progressHost.BeginCommand(false);
+Assert(progressHost.ProgressPercent is null, "a new command clears completed progress");
+progressHost.ApplyProgress(new WorkerEvent { Phase="Gestoppt", ProgressPercent=50 });
+progressHost.CompleteCommand(false, now);
+Assert(progressHost.ProgressPercent == 100, "confirmed service restart completes its progress bar");
+progressHost.FailCommand(false, "Service failed");
+Assert(progressHost.ProgressPercent is null, "a failed service command removes the success bar");
 Assert(new WorkerRequest().HttpsPort == 5986 &&
     JsonSerializer.Deserialize<WorkerRequest>("{\"UseSsl\":true,\"HttpsPort\":443}") is { UseSsl: true, HttpsPort: 443 } &&
     JsonSerializer.Serialize(new WorkerRequest { UseSsl=true, HttpsPort=443 }).Contains("\"HttpsPort\":443"),

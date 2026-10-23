@@ -99,6 +99,7 @@ function CommandCase {
     try { [Console]::SetOut($writer); & $worker }
     finally { [Console]::SetOut($original) }
     $events = @($writer.ToString() -split '\r?\n' | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    $script:lastEvents=$events
     $results = @($events | Where-Object Event -eq 'result')
     Assert ($results.Count -eq 1) "$Name must emit exactly one result"
     $result = $results[0]
@@ -150,3 +151,9 @@ CommandCase 'missing selected service' -Request @{ RestartFiscal=$true } -Setup 
 CommandCase 'service failure remains visible' -Request @{ RestartPayment=$true } -Setup { Service 'nt.payment'; $script:failedService='nt.payment' } -Actions @('stop:nt.payment') -Success $false -ErrorPattern 'Simulated service failure'
 CommandCase 'no selection rejected' -Success $false -Connections 0 -Cleanup 0 -ErrorPattern 'Kein Dienst'
 CommandCase 'unknown action rejected' -Request @{ Action='arbitrary-command' } -Success $false -Connections 0 -Cleanup 0 -ErrorPattern 'Unbekannte Aktion'
+
+CommandCase 'service restart progress' -Request @{ RestartPayment=$true } -Setup { Service 'nt.payment' } -Actions @('stop:nt.payment','start:nt.payment')
+$serviceProgress=@($script:lastEvents | Where-Object { $_.Event -eq 'progress' -and $null -ne $_.ProgressPercent })
+Assert (($serviceProgress.ProgressPercent -join ',') -eq '0,50,50,100') 'Service progress must confirm stopped at 50 and running at 100'
+CommandCase 'failed stop cannot report completed service progress' -Request @{ RestartPayment=$true } -Setup { Service 'nt.payment'; $script:failedService='nt.payment' } -Actions @('stop:nt.payment') -Success $false
+Assert (@($script:lastEvents | Where-Object { $_.Event -eq 'progress' -and $_.ProgressPercent -eq 100 }).Count -eq 0) 'A failed service must never report 100 percent'

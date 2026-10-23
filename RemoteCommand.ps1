@@ -8,8 +8,8 @@ function Emit([hashtable]$message) {
 	[Console]::Out.Flush()
 }
 
-function Progress([string]$phase, [string]$message) {
-	Emit @{ Event='progress'; Phase=$phase; Message=$message }
+function Progress([string]$phase, [string]$message, [Nullable[int]]$percent = $null) {
+	Emit @{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent }
 }
 
 function RequestTerminalRestart {
@@ -304,6 +304,9 @@ try {
 		else {
 			$restartResult = Invoke-Command -Session $session -ArgumentList $restartPayment, $restartFiscal, $startServerSuite -ErrorAction Stop -ScriptBlock {
 			param([bool]$restartPayment, [bool]$restartFiscal, [bool]$startServerSuite)
+			function ServiceProgress([string]$phase, [string]$message, [int]$percent) {
+				[pscustomobject]@{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent }
+			}
 			$selectedServices = @(Get-Service -ErrorAction Stop | Where-Object {
 				($restartPayment -and $_.Name -match '^nt\.payment(?:\.|$)') -or
 				($restartFiscal -and $_.Name -match '^nt\.fiscal(?:\.|$)') -or
@@ -328,12 +331,16 @@ try {
 						throw "Nicht erlaubter Dienstname: $name"
 					}
 					$service = Get-Service -Name $name -ErrorAction Stop
+					ServiceProgress 'Dienste stoppen' ("Stoppe Dienst '$name'") 0
 					if ($service.Status -ne 'Stopped') {
 						Stop-Service -Name $name -Force -ErrorAction Stop
 						$service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
 					}
+					ServiceProgress 'Dienste stoppen' ("Dienst '$name' ist gestoppt") 50
+					ServiceProgress 'Dienste starten' ("Starte Dienst '$name'") 50
 					Start-Service -Name $name -ErrorAction Stop
 					(Get-Service -Name $name -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+					ServiceProgress 'Dienste starten' ("Dienst '$name' läuft") 100
 					$results += "$name läuft"
 				}
 				catch {
@@ -341,6 +348,10 @@ try {
 				}
 			}
 			[pscustomobject]@{ Results = @($results); Failures = @($failures) }
+			} | ForEach-Object {
+				if ($null -ne $_ -and $null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') {
+					Progress ([string]$_.Phase) ([string]$_.Message) $_.ProgressPercent
+				} else { $_ }
 			}
 		}
 	}

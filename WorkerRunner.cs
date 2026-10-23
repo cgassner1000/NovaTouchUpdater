@@ -61,6 +61,7 @@ public sealed class WorkerEvent
     public string Message { get; set; } = "";
     public string Host { get; set; } = "";
     public bool? Connected { get; set; }
+    public int? ProgressPercent { get; set; }
 }
 
 public sealed class WorkerResult
