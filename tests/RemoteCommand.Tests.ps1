@@ -17,10 +17,12 @@ $worker = [scriptblock]::Create($source)
 
 function New-PSSessionOption { param($OpenTimeout, $OperationTimeout) return @{} }
 function New-PSSession {
-    param($ComputerName, $SessionOption, $ErrorAction, [switch]$UseSSL, $Credential)
+    param($ComputerName, $Port, $SessionOption, $ErrorAction, [switch]$UseSSL, $Credential)
     $script:connections++
     Assert ($ComputerName -eq 'example.invalid') 'Only the mocked host may be addressed'
     Assert ($UseSSL.IsPresent -eq [bool]$script:request.UseSsl) 'HTTPS selection must be forwarded'
+    $expectedPort = if (-not $script:request.UseSsl) { 5985 } elseif ($script:request.ContainsKey('HttpsPort')) { $script:request.HttpsPort } else { 5986 }
+    Assert ($Port -eq $expectedPort) 'Selected HTTPS port or HTTP default must be forwarded'
     if ($script:request.Username) {
         Assert ($null -ne $Credential -and $Credential.UserName -eq $script:request.Username) 'Selected credentials must be forwarded'
     } else {
@@ -125,17 +127,22 @@ function CommandCase {
 
 CommandCase 'Windows restart' -Request @{ Action='restart-terminal' } -Shutdowns 1
 CommandCase 'Windows restart with HTTPS credentials' -Request @{ Action='restart-terminal'; UseSsl=$true; Username='DOMAIN\test'; Password='test-only' } -Shutdowns 1
+CommandCase 'Windows restart on HTTPS 443' -Request @{ Action='restart-terminal'; UseSsl=$true; HttpsPort=443 } -Shutdowns 1
+CommandCase 'HTTP restart ignores configured HTTPS port' -Request @{ Action='restart-terminal'; UseSsl=$false; HttpsPort=443 } -Shutdowns 1
+CommandCase 'invalid HTTPS port rejected' -Request @{ Action='restart-terminal'; UseSsl=$true; HttpsPort=0 } -Success $false -Connections 0 -Cleanup 0 -ErrorPattern 'HTTPS-Port'
 CommandCase 'Windows restart ignores service flags' -Request @{ Action='restart-terminal'; RestartPayment=$true; RestartFiscal=$true; StartServerSuite=$true } -Shutdowns 1 -Setup { Service 'nt.payment'; Service 'nt.fiscal'; Service 'nt3_server_suite' }
 CommandCase 'Windows restart without service fields' -Request @{ Action='restart-terminal' } -Shutdowns 1 -Setup { $script:request.Remove('RestartPayment'); $script:request.Remove('RestartFiscal'); $script:request.Remove('StartServerSuite') }
 CommandCase 'shutdown rejection' -Request @{ Action='restart-terminal' } -Shutdowns 1 -Success $false -Setup { $script:shutdownExitCode=5 } -ErrorPattern 'Exitcode 5.*Simulated access denied'
 CommandCase 'restart connection failure' -Request @{ Action='restart-terminal' } -Success $false -Setup { $script:connectionError=$true } -ErrorPattern 'Simulated connection failure' -Cleanup 0
 CommandCase 'restart remoting failure' -Request @{ Action='restart-terminal' } -Success $false -Setup { $script:remoteError=$true } -ErrorPattern 'Simulated remoting failure'
 CommandCase 'POS restart with HTTPS credentials' -Request @{ Action='restart-pos'; UseSsl=$true; Username='DOMAIN\test'; Password='test-only' } -PosCalls 1
+CommandCase 'POS restart on HTTPS 443' -Request @{ Action='restart-pos'; UseSsl=$true; HttpsPort=443 } -PosCalls 1
 CommandCase 'POS restart ignores service flags' -Request @{ Action='restart-pos'; RestartPayment=$true; RestartFiscal=$true; StartServerSuite=$true } -PosCalls 1
 CommandCase 'POS restart without service fields' -Request @{ Action='restart-pos' } -PosCalls 1 -Setup { $script:request.Remove('RestartPayment'); $script:request.Remove('RestartFiscal'); $script:request.Remove('StartServerSuite') }
 CommandCase 'absent POS is skipped without error' -Request @{ Action='restart-pos' } -PosCalls 1 -Skipped $true -Setup { $script:posSkipped=$true }
 CommandCase 'POS cleanup failure stays an error' -Request @{ Action='restart-pos' } -PosCalls 1 -Success $false -Setup { $script:posFailure=$true } -ErrorPattern 'POS cleanup failure'
 CommandCase 'payment restart only' -Request @{ RestartPayment=$true } -Setup { Service 'nt.payment.1'; Service 'nt.payment.2' 'Stopped'; Service 'nt.fiscal'; Service 'other' } -Actions @('stop:nt.payment.1','start:nt.payment.1','start:nt.payment.2')
+CommandCase 'payment restart on HTTPS 443' -Request @{ RestartPayment=$true; UseSsl=$true; HttpsPort=443 } -Setup { Service 'nt.payment.1' } -Actions @('stop:nt.payment.1','start:nt.payment.1')
 CommandCase 'fiscal restart only' -Request @{ RestartFiscal=$true } -Setup { Service 'nt.payment'; Service 'nt.fiscal' } -Actions @('stop:nt.fiscal','start:nt.fiscal')
 CommandCase 'server suite start' -Request @{ StartServerSuite=$true } -Setup { Service 'nt3_server_suite' 'Stopped'; Service 'other' } -Actions @('start:nt3_server_suite')
 CommandCase 'all service actions' -Request @{ RestartPayment=$true; RestartFiscal=$true; StartServerSuite=$true } -Setup { Service 'nt.payment'; Service 'nt.fiscal'; Service 'nt3_server_suite' } -Actions @('stop:nt.payment','start:nt.payment','stop:nt.fiscal','start:nt.fiscal','stop:nt3_server_suite','start:nt3_server_suite')

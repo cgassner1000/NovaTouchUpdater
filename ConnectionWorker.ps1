@@ -10,15 +10,16 @@ function Emit([hashtable]$message) {
 }
 
 function TestHostConnection {
-    param([string]$computer, [pscredential]$credential, [bool]$useSsl)
+    param([string]$computer, [pscredential]$credential, [bool]$useSsl, [int]$httpsPort = 5986)
     $ErrorActionPreference = 'Stop'
     $session = $null
     $connected = $false
     $message = ''
     try {
+        if ($useSsl -and ($httpsPort -lt 1 -or $httpsPort -gt 65535)) { throw 'HTTPS-Port muss zwischen 1 und 65535 liegen.' }
         $sessionArgs = @{
             ComputerName = $computer
-            Port = $(if ($useSsl) { 5986 } else { 5985 })
+            Port = $(if ($useSsl) { $httpsPort } else { 5985 })
             SessionOption = (New-PSSessionOption -OpenTimeout 3000 -OperationTimeout 3000 -CancelTimeout 500)
             ErrorAction = 'Stop'
         }
@@ -40,6 +41,9 @@ $active = [Collections.Generic.List[object]]::new()
 try {
     $req = [Console]::In.ReadLine() | ConvertFrom-Json
     if ($req.Action -ne 'monitor-connections') { throw 'Unbekannte Verbindungsprüfung.' }
+    $httpsPort = 5986
+    if ([bool]$req.UseSsl -and $null -ne $req.PSObject.Properties['HttpsPort']) { $httpsPort = [int]$req.HttpsPort }
+    if ([bool]$req.UseSsl -and ($httpsPort -lt 1 -or $httpsPort -gt 65535)) { throw 'HTTPS-Port muss zwischen 1 und 65535 liegen.' }
     $parallelism = [Math]::Max(1, [Math]::Min(40, [int]$req.Parallelism))
     $queue = [Collections.Generic.Queue[string]]::new()
     foreach ($computer in @($req.Hosts | Select-Object -Unique)) {
@@ -57,7 +61,7 @@ try {
             $computer = $queue.Dequeue()
             $pipeline = [PowerShell]::Create()
             $pipeline.RunspacePool = $pool
-            [void]$pipeline.AddScript(${function:TestHostConnection}.ToString()).AddArgument($computer).AddArgument($credential).AddArgument([bool]$req.UseSsl)
+            [void]$pipeline.AddScript(${function:TestHostConnection}.ToString()).AddArgument($computer).AddArgument($credential).AddArgument([bool]$req.UseSsl).AddArgument($httpsPort)
             try {
                 $active.Add([pscustomobject]@{
                     Computer=$computer; Pipeline=$pipeline; Handle=$pipeline.BeginInvoke(); Started=[Diagnostics.Stopwatch]::StartNew()

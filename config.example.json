@@ -6,5 +6,6 @@
   "RemotePath": "C:\\install\\Novacom",
   "Username": "DOMAIN\\support",
   "Password": "mein-passwort",
-  "UseSsl": false
+  "UseSsl": false,
+  "HttpsPort": 5986
 }

@@ -71,7 +71,12 @@ function Copy-Item {
     Microsoft.PowerShell.Management\Copy-Item -LiteralPath $source -Destination $target -Recurse:$Recurse -Force:$Force -ErrorAction Stop
 }
 function New-PSSessionOption { param($OpenTimeout, $OperationTimeout) @{} }
-function New-PSSession { param($ComputerName, $SessionOption, $ErrorAction) [pscustomobject]@{ Id=1 } }
+function New-PSSession {
+    param($ComputerName, $Port, $SessionOption, $ErrorAction, [switch]$UseSSL)
+    $expectedPort = if ($script:request.UseSsl) { $script:request.HttpsPort } else { 5985 }
+    Assert ($Port -eq $expectedPort -and $UseSSL.IsPresent -eq $script:request.UseSsl) 'Updates must use the selected WinRM transport and port'
+    [pscustomobject]@{ Id=1 }
+}
 function Invoke-Command { param($Session, $ScriptBlock, [object[]]$ArgumentList, $ErrorAction) & $ScriptBlock @ArgumentList }
 function Remove-PSSession { param($Session, $ErrorAction) $script:sessionRemoved++ }
 
@@ -234,6 +239,8 @@ try {
             # Stale version fields without a ZIP must never select another component.
             $script:request.PaymentVersion='1.2.3.4'; $script:request.FiscalVersion='1.2.3.4'
             $script:request.ForceUpdate=$force
+            # Verify the complete update path over custom HTTPS as well as HTTP.
+            $script:request.UseSsl=$force; $script:request.HttpsPort=443
             $expectedVersion = if ($selectedKind -eq 'serversuite') { '2026.4.9792.0' } else { '1.2.3.4' }
             $before = @{}
             foreach ($svc in $script:installed) {

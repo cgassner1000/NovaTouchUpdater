@@ -274,10 +274,17 @@ try {
 	$sessionOptions = New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 180000
 	$sessionArgs = @{
 		ComputerName = [string]$req.Host
+		Port = 5985
 		SessionOption = $sessionOptions
 		ErrorAction = 'Stop'
 	}
-	if ([bool]$req.UseSsl) { $sessionArgs.UseSSL = $true }
+	if ([bool]$req.UseSsl) {
+		$httpsPort = 5986
+		if ($null -ne $req.PSObject.Properties['HttpsPort']) { $httpsPort = [int]$req.HttpsPort }
+		if ($httpsPort -lt 1 -or $httpsPort -gt 65535) { throw 'HTTPS-Port muss zwischen 1 und 65535 liegen.' }
+		$sessionArgs.UseSSL = $true
+		$sessionArgs.Port = $httpsPort
+	}
 	if (-not [string]::IsNullOrWhiteSpace([string]$req.Username)) {
 		$secure = ConvertTo-SecureString -String ([string]$req.Password) -AsPlainText -Force
 		$sessionArgs.Credential = New-Object System.Management.Automation.PSCredential([string]$req.Username, $secure)

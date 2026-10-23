@@ -28,6 +28,8 @@ $details = [Collections.Generic.List[string]]::new()
 try {
     $req = [Console]::In.ReadLine() | ConvertFrom-Json
     $port = if ([bool]$req.UseSsl) { 5986 } else { 5985 }
+    if ([bool]$req.UseSsl -and $null -ne $req.PSObject.Properties['HttpsPort']) { $port = [int]$req.HttpsPort }
+    if ($port -lt 1 -or $port -gt 65535) { throw 'HTTPS-Port muss zwischen 1 und 65535 liegen.' }
     try {
         Test-TcpPort ([string]$req.Host) $port
         $result.Tcp = 'OK'

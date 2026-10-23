@@ -35,6 +35,7 @@ public sealed class MainForm : Form
     private readonly TextBox txtRemotePath = new();
     private readonly NumericUpDown nScan = new();
     private readonly NumericUpDown nUpdate = new();
+    private readonly NumericUpDown nHttpsPort = new();
     private readonly CheckBox chkSsl = new();
     private readonly CheckBox chkForceUpdate = new();
     private readonly CheckBox chkSkipZipTransfer = new();
@@ -68,6 +69,7 @@ public sealed class MainForm : Form
     private string activeUser = "";
     private string activePassword = "";
     private bool activeSsl;
+    private int activeHttpsPort = 5986;
     private bool activeForceUpdate;
     private string activeRemoteInstallPath = @"C:\install\Novacom";
     private bool activeSkipZipTransfer;
@@ -92,7 +94,8 @@ public sealed class MainForm : Form
         connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
         txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
         txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
-        chkSsl.CheckedChanged += (_, _) => InvalidateConnectionChecks();
+        chkSsl.CheckedChanged += (_, _) => { InvalidateConnectionChecks(); UpdateButtons(); };
+        nHttpsPort.ValueChanged += (_, _) => InvalidateConnectionChecks();
         Shown += async (_, _) =>
         {
             ApplyColumnWeights();
@@ -132,10 +135,12 @@ public sealed class MainForm : Form
         {
             var config = JsonSerializer.Deserialize<UpdaterConfig>(File.ReadAllText(configPath));
             if (config is null) return;
+            if (config.HttpsPort is < 1 or > 65535) throw new JsonException("HttpsPort muss zwischen 1 und 65535 liegen.");
 
             txtRemotePath.Text = string.IsNullOrWhiteSpace(config.RemotePath) ? activeRemoteInstallPath : config.RemotePath;
             txtUser.Text = config.Username ?? "";
             chkSsl.Checked = config.UseSsl;
+            nHttpsPort.Value = config.HttpsPort;
 
             txtPassword.Text = config.Password ?? "";
 
@@ -168,6 +173,7 @@ public sealed class MainForm : Form
         public string? Username { get; set; }
         public string? Password { get; set; }
         public bool UseSsl { get; set; }
+        public int HttpsPort { get; set; } = 5986;
     }
 
     private static Button Button(string text) => new()
@@ -319,6 +325,8 @@ public sealed class MainForm : Form
         optionBar.Controls.Add(LabeledInput("Update parallel:", nUpdate));
         chkSsl.Text = "HTTPS"; chkSsl.AutoSize = true; chkSsl.Margin = new Padding(5, 3, 8, 3);
         optionBar.Controls.Add(chkSsl);
+        nHttpsPort.Minimum = 1; nHttpsPort.Maximum = 65535; nHttpsPort.Value = 5986; nHttpsPort.Width = 75;
+        optionBar.Controls.Add(LabeledInput("HTTPS-Port:", nHttpsPort));
         chkForceUpdate.Text = "Force Up-Downgrade";
         chkForceUpdate.AutoSize = true;
         chkForceUpdate.Margin = new Padding(5, 3, 8, 3);
@@ -331,6 +339,7 @@ public sealed class MainForm : Form
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts (WinRM und Versionsprüfung).");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
+        tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
         tips.SetToolTip(chkSkipZipTransfer, "Lokale ZIPs bestimmen weiterhin die Zielversion. ZIPs auf den Clients werden bei Updates nicht übertragen.");
@@ -454,7 +463,7 @@ public sealed class MainForm : Form
         {
             if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
             using var dialog = new WinRmTestForm(hosts.Select(h => h.Host).ToArray(),
-                txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked);
+                txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked, (int)nHttpsPort.Value);
             dialog.ShowDialog(this);
         };
         btnScan.Click += async (_, _) => await RunScansAsync();
@@ -779,7 +788,7 @@ public sealed class MainForm : Form
                         WorkerResult result = await runner.RunAsync(new WorkerRequest
                         {
                             Action = "transfer", Host = host.Host, Username = activeUser, Password = activePassword,
-                            UseSsl = activeSsl, RemoteInstallPath = activeRemoteInstallPath, TransferFiles = transferFiles
+                            UseSsl = activeSsl, HttpsPort = activeHttpsPort, RemoteInstallPath = activeRemoteInstallPath, TransferFiles = transferFiles
                         }, ev =>
                         {
                             Log(host.Host, ev.Phase + ": " + ev.Message);
@@ -881,7 +890,7 @@ public sealed class MainForm : Form
                         WorkerResult result = await commandRunner.RunAsync(new WorkerRequest
                         {
                             Action = action, Host = host.Host,
-                            Username = activeUser, Password = activePassword, UseSsl = activeSsl,
+                            Username = activeUser, Password = activePassword, UseSsl = activeSsl, HttpsPort = activeHttpsPort,
                             RestartPayment = restartPayment, RestartFiscal = restartFiscal,
                             StartServerSuite = startServerSuite
                         }, ev =>
@@ -948,6 +957,7 @@ public sealed class MainForm : Form
         activeUser = txtUser.Text.Trim();
         activePassword = txtPassword.Text;
         activeSsl = chkSsl.Checked;
+        activeHttpsPort = (int)nHttpsPort.Value;
         activeForceUpdate = chkForceUpdate.Checked;
         activeRemoteInstallPath = txtRemotePath.Text.Trim();
         activeSkipZipTransfer = chkSkipZipTransfer.Checked;
@@ -956,7 +966,7 @@ public sealed class MainForm : Form
     private WorkerRequest Request(string action, HostState host) => new()
     {
         Action = action, Host = host.Host,
-        Username = activeUser, Password = activePassword, UseSsl = activeSsl, ForceUpdate = activeForceUpdate,
+        Username = activeUser, Password = activePassword, UseSsl = activeSsl, HttpsPort = activeHttpsPort, ForceUpdate = activeForceUpdate,
         RemoteInstallPath = activeRemoteInstallPath, SkipZipTransfer = activeSkipZipTransfer,
         PaymentZip = paymentZip, PaymentVersion = paymentVersion, PaymentSha256 = paymentHash,
         FiscalZip = fiscalZip, FiscalVersion = fiscalVersion, FiscalSha256 = fiscalHash,
@@ -1126,14 +1136,15 @@ public sealed class MainForm : Form
     {
         if (connectionClosing || IsDisposed || connectionScanPaused || connectionCheckRunning || hosts.Count == 0) return;
         // Do not repeatedly authenticate while credentials are being edited.
-        if (txtUser.Focused || txtPassword.Focused || (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)) return;
+        if (txtUser.Focused || txtPassword.Focused || nHttpsPort.ContainsFocus || (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)) return;
 
         var targets = hosts.ToDictionary(h => h.Host, h => (Host: h, Revision: h.ConnectionState.Revision), StringComparer.OrdinalIgnoreCase);
         var received = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         int generation = connectionGeneration;
         int parallelism = Math.Clamp((int)nScan.Value, 1, 40);
         bool useSsl = chkSsl.Checked;
-        string transport = useSsl ? "WinRM HTTPS/5986" : "WinRM HTTP/5985";
+        int httpsPort = (int)nHttpsPort.Value;
+        string transport = useSsl ? $"WinRM HTTPS/{httpsPort}" : "WinRM HTTP/5985";
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(10, Math.Ceiling(targets.Count / (double)parallelism) * 6 + 5)));
         connectionCancellation = timeout;
         connectionCheckRunning = true;
@@ -1150,7 +1161,7 @@ public sealed class MainForm : Form
             WorkerResult result = await connectionRunner.RunAsync(new WorkerRequest
             {
                 Action = "monitor-connections", Hosts = targets.Keys.ToArray(), Parallelism = parallelism,
-                Username = txtUser.Text.Trim(), Password = txtPassword.Text, UseSsl = useSsl
+                Username = txtUser.Text.Trim(), Password = txtPassword.Text, UseSsl = useSsl, HttpsPort = httpsPort
             }, ev =>
             {
                 if (string.IsNullOrEmpty(ev.Host) || !targets.TryGetValue(ev.Host, out var target)) return;
@@ -1365,6 +1376,7 @@ public sealed class MainForm : Form
         btnExport.Enabled = !busy && hosts.Count > 0;
         btnCancel.Enabled = busy;
         nScan.Enabled = !busy; nUpdate.Enabled = !busy; chkSsl.Enabled = !busy; chkForceUpdate.Enabled = !busy;
+        nHttpsPort.Enabled = !busy && chkSsl.Checked;
         txtRemotePath.Enabled = !busy; chkSkipZipTransfer.Enabled = !busy;
         txtUser.Enabled = !busy; txtPassword.Enabled = !busy; statusFilter.Enabled = !busy;
     }

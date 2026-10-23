@@ -11,10 +11,10 @@ internal sealed class WinRmTestForm : Form
     private bool running = true;
     private int completed;
 
-    public WinRmTestForm(string[] hosts, string username, string password, int parallelism, bool useSsl)
+    public WinRmTestForm(string[] hosts, string username, string password, int parallelism, bool useSsl, int httpsPort = 5986)
     {
         SuspendLayout();
-        string protocol = useSsl ? "HTTPS / 5986" : "HTTP / 5985";
+        string protocol = useSsl ? $"HTTPS / {httpsPort}" : "HTTP / 5985";
         Text = "Test WinRM – " + (useSsl ? "HTTPS" : "HTTP");
         Size = new Size(1100, 700);
         MinimumSize = new Size(640, 420);
@@ -87,7 +87,7 @@ internal sealed class WinRmTestForm : Form
                             result = await runner.RunAsync(new WorkerRequest
                             {
                                 Action = "winrm-test", Host = hosts[index], Username = username,
-                                Password = password, UseSsl = useSsl
+                                Password = password, UseSsl = useSsl, HttpsPort = httpsPort
                             }, _ => { }, timeout.Token);
                         }
                         catch (OperationCanceledException) when (!token.IsCancellationRequested)

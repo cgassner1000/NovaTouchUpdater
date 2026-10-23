@@ -18,7 +18,7 @@ function New-PSSession {
     param($ComputerName, $Port, $SessionOption, $ErrorAction, [switch]$UseSSL, $Credential)
     $script:connections++
     Assert ($ComputerName -eq 'example.invalid') 'Unexpected probe target'
-    Assert ($Port -eq $(if ($script:ssl) { 5986 } else { 5985 })) 'Probe must use the selected WinRM port'
+    Assert ($Port -eq $(if ($script:ssl) { $script:httpsPort } else { 5985 })) 'Probe must use the selected WinRM port'
     Assert ($UseSSL.IsPresent -eq $script:ssl) 'Probe must preserve HTTPS selection'
     Assert ($Credential -eq $script:credential) 'Probe must preserve selected credentials/current identity'
     if ($script:failConnection) { throw 'Simulated offline or authentication failure' }
@@ -27,15 +27,17 @@ function New-PSSession {
 function Remove-PSSession { param($Session, $ErrorAction) $script:removed++ }
 function Invoke-Command { throw 'Connection monitoring must not run remote application commands' }
 foreach ($script:ssl in @($false, $true)) {
+    foreach ($script:httpsPort in @(5986, 443)) {
     foreach ($script:failConnection in @($false, $true)) {
         $script:connections=0; $script:removed=0
         $script:credential = if ($script:ssl) { [pscredential]::new('DOMAIN\test', (ConvertTo-SecureString 'test-only' -AsPlainText -Force)) } else { $null }
-        $result = @(TestHostConnection 'example.invalid' $script:credential $script:ssl)
+        $result = @(TestHostConnection 'example.invalid' $script:credential $script:ssl $script:httpsPort)
         Assert ($result.Count -eq 1) 'Probe must return one host result'
         Assert ($result[0].Connected -eq (-not $script:failConnection)) 'Probe must distinguish successful and failed authentication'
         Assert ($result[0].Host -eq 'example.invalid' -and $script:connections -eq 1) 'Probe must preserve the host identity'
         Assert ($script:removed -eq $(if ($script:failConnection) { 0 } else { 1 })) 'Probe must close an established session'
-        Write-Output "PASS authenticated probe HTTPS=$script:ssl failure=$script:failConnection"
+        Write-Output "PASS authenticated probe HTTPS=$script:ssl HTTPS-port=$script:httpsPort failure=$script:failConnection"
+    }
     }
 }
 
@@ -45,6 +47,7 @@ public static class ConnectionTestCounters {
     public static int Active, Maximum;
     public static string ExpectedUser;
     public static bool ExpectedSsl;
+    public static int ExpectedHttpsPort;
     public static void Enter() {
         int count = Interlocked.Increment(ref Active);
         int old;
@@ -56,10 +59,11 @@ public static class ConnectionTestCounters {
 '@
 $fakeProbe = @'
 function TestHostConnection {
-    param([string]$computer, [pscredential]$credential, [bool]$useSsl)
+    param([string]$computer, [pscredential]$credential, [bool]$useSsl, [int]$httpsPort = 5986)
     [ConnectionTestCounters]::Enter()
     try {
         if ($useSsl -ne [ConnectionTestCounters]::ExpectedSsl) { throw 'Wrong TLS selection in runspace' }
+        if ($httpsPort -ne [ConnectionTestCounters]::ExpectedHttpsPort) { throw 'Wrong HTTPS port in runspace' }
         $user = if ($null -ne $credential) { $credential.UserName } else { '' }
         if ($user -ne [ConnectionTestCounters]::ExpectedUser) { throw 'Wrong credentials in runspace' }
         switch ($computer) {
@@ -81,10 +85,12 @@ $batchAst = [Management.Automation.Language.Parser]::ParseInput($batchSource, [r
 $remoteCalls = @($batchAst.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'New-PSSession' }, $true))
 Assert ($remoteCalls.Count -eq 0) 'The runspace test must contain no real authentication calls'
 $batch = [scriptblock]::Create($batchSource)
-function RunBatch([string[]]$computers, [int]$parallelism, [bool]$ssl, [string]$username='', [string]$action='monitor-connections') {
+function RunBatch([string[]]$computers, [int]$parallelism, [bool]$ssl, [string]$username='', [string]$action='monitor-connections', $httpsPort=$null) {
     [ConnectionTestCounters]::Active=0; [ConnectionTestCounters]::Maximum=0
     [ConnectionTestCounters]::ExpectedSsl=$ssl; [ConnectionTestCounters]::ExpectedUser=$username
+    [ConnectionTestCounters]::ExpectedHttpsPort = if ($ssl -and $null -ne $httpsPort) { [int]$httpsPort } else { 5986 }
     $script:request = [pscustomobject]@{ Action=$action; Hosts=$computers; Parallelism=$parallelism; UseSsl=$ssl; Username=$username; Password='test-only' }
+    if ($null -ne $httpsPort) { $script:request | Add-Member HttpsPort $httpsPort }
     $writer = [IO.StringWriter]::new()
     $original = [Console]::Out
     try { [Console]::SetOut($writer); & $batch }
@@ -112,6 +118,12 @@ $events = @(RunBatch @('first','second','second') 0 $false)
 Assert (@($events | Where-Object Event -eq 'progress').Count -eq 2) 'Duplicate hosts must not be checked twice'
 Assert ([ConnectionTestCounters]::Maximum -eq 1) 'Zero parallelism must be clamped to one'
 Write-Output 'PASS duplicate hosts and minimum parallelism'
+$events = @(RunBatch @('first','second') 2 $true 'DOMAIN\test' 'monitor-connections' 443)
+Assert (@($events | Where-Object { $_.Event -eq 'progress' -and $_.Connected -eq $true }).Count -eq 2) 'Every runspace must receive HTTPS port 443'
+Write-Output 'PASS custom HTTPS port passed to parallel runspaces'
+$events = @(RunBatch @('first') 2 $true '' 'monitor-connections' 65536)
+Assert (-not ($events | Where-Object Event -eq 'result').Success -and [ConnectionTestCounters]::Maximum -eq 0) 'Invalid HTTPS port must fail before any network probe'
+Write-Output 'PASS invalid HTTPS port rejected before probing'
 $events = @(RunBatch @('first') 2 $false '' 'invalid-action')
 Assert (-not ($events | Where-Object Event -eq 'result').Success) 'Unknown actions must be rejected'
 Assert ([ConnectionTestCounters]::Maximum -eq 0) 'Unknown actions must not run any probes'

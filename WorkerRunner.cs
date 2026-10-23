@@ -15,6 +15,7 @@ public sealed class WorkerRequest
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
     public bool UseSsl { get; set; }
+    public int HttpsPort { get; set; } = 5986;
     public bool ForceUpdate { get; set; }
     public string RemoteInstallPath { get; set; } = "C:\\install\\Novacom";
     public bool SkipZipTransfer { get; set; }

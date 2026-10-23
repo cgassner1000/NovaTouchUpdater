@@ -20,7 +20,8 @@ Optional kann neben der EXE eine lokale `config.json` liegen. Sie füllt beim St
   "RemotePath": "C:\\install\\Novacom",
   "Username": "DOMAIN\\support",
 	"Password": "mein-passwort",
-  "UseSsl": false
+  "UseSsl": false,
+  "HttpsPort": 5986
 }
 ```
 
@@ -49,7 +50,7 @@ Zur Prüfung der Darstellung die Anwendung bei 100 %, 125 %, 150 % und 200 % Win
 1. Hostnamen-TXT laden: ein Hostname/IP pro Zeile; Leerzeilen und Zeilen mit `#`/`;` werden ignoriert, Duplikate entfernt.
 2. `nt.payment_VERSION*.zip`, `nt.fiscal_VERSION*.zip` und/oder `nt.server.suite-VERSION.zip` wählen (die Auswahlfelder stehen direkt untereinander). Beispiele: `nt.payment_2026.2.9546.5587.zip`, `nt.server.suite-2026.4.9792.zip`. Die Server-Suite-Auswahl steht unter Fiscal; sie akzeptiert ZIP-Dateien mit dem gefüllten Ordner `apps\nt3-server-suite`.
    **Eine einzige ZIP genügt:** Nur Payment, nur Fiscal oder nur Server Suite können unabhängig aktualisiert werden. Dienste und Installationsdateien der nicht ausgewählten Komponenten bleiben auch bei Force unverändert. Bei einer ausgewählten Server-Suite-ZIP werden alle zugehörigen Instanzen des Hosts berücksichtigt.
-3. Den `Zielpfad auf den Clients` bei Bedarf anpassen (Standard: `C:\install\Novacom`). Dort liegen die Update-ZIPs und temporären Update-Dateien. Wenn andere Windows-Anmeldedaten benötigt werden, Benutzername und Passwort eingeben. Sonst wird das aktuelle Windows-Konto genutzt. Option `HTTPS` aktiviert WinRM/TLS.
+3. Den `Zielpfad auf den Clients` bei Bedarf anpassen (Standard: `C:\install\Novacom`). Dort liegen die Update-ZIPs und temporären Update-Dateien. Wenn andere Windows-Anmeldedaten benötigt werden, Benutzername und Passwort eingeben. Sonst wird das aktuelle Windows-Konto genutzt. Option `HTTPS` aktiviert WinRM/TLS. Im Feld **HTTPS-Port** kann der Port zwischen 1 und 65535 eingestellt werden, beispielsweise **443** statt des Standards **5986**. Die Einstellung gilt für Prüfen, Upload, Updates, Befehle, Test WinRM und Verbindungsüberwachung. Ohne HTTPS wird weiterhin **HTTP/5985** verwendet. Optional setzt `"HttpsPort": 443` zusammen mit `"UseSsl": true` in `config.json` diese Werte beim Start; ohne Portangabe bleibt 5986 vorbelegt. Die Einstellung wählt den vorhandenen WinRM-Endpunkt aus und ändert keine Listener oder Firewallregeln auf dem Client.
 4. `Installationsdateien nicht übertragen` überspringt den ZIP-Transfer. Die lokal ausgewählten ZIPs werden weiterhin für Zielversion und SHA256 verwendet. Die passenden ZIP-Dateien müssen im eingestellten Zielpfad auf jedem Client unter demselben Dateinamen liegen; der Updater prüft sie vor dem Entpacken auf identische SHA256-Prüfsumme. Installierte Dienstversionen werden weiterhin mit den Zielversionen aus den lokalen ZIP-Dateinamen verglichen.
 5. `1. Prüfen + Versionen`: alle Hosts zuerst per WinRM prüfen (Standard: bis zu 40 parallel), dann .NET Framework 4.8, die installierte NovaTouch-POS-Version sowie vorhandene Dienste lesen. Payment/Fiscal verwenden ProductVersion/FileVersion der Dienst-EXE. Die Server-Suite-Version stammt je Instanz ausschließlich aus `apps\nt3-server-suite\version.txt`; die Version der Python-EXE wird dafür nicht verwendet. Diese Quelle gilt auch für Tabelle, HTML-Bericht, Versionsvergleich und Verifikation nach einem Update.
    Fehlende Payment-, Fiscal- oder Server-Suite-Dienste sind beim Prüfen kein Fehler, auch wenn alle fehlen. In den jeweiligen IST-Spalten und im HTML-Bericht steht **Nicht installiert**; .NET und POS werden trotzdem geprüft. Alle Dienste mit Namen `nt3_server_suite_…` werden einzeln erfasst. Unterschiedliche Server-Suite-Versionen bleiben sichtbar; der Tooltip nennt alle Instanzen mit Dienstnamen und Pfaden. Verbindungsfehler und Fehler beim Auslesen vorhandener Dienste bleiben Fehler. Nach einem fehlgeschlagenen Scan steht bei den Dienstversionen **–** statt einer vermeintlich fehlenden Installation.
@@ -79,7 +80,7 @@ dotnet run --project tests\CommandDialog.Tests\CommandDialog.Tests.csproj -c Rel
 
 Die Hostübersicht zeigt die **IST-Versionen** von Payment, Fiscal und Server Suite. Die für alle Hosts identischen Zielversionen stehen als **Payment Target**, **Fiscal Target** und **Server Suite Target** bei der ZIP-Auswahl und werden automatisch aus dem ZIP-Dateinamen gelesen.
 
-Die Spalte **Verbindung** prüft ab dem Öffnen des Hauptfensters alle eingetragenen Hosts im Hintergrund ungefähr alle **10 Sekunden** mit einer WinRM-Anmeldung. Sie verwendet die eingestellten Anmeldedaten und die HTTPS-Auswahl. **Verbunden** erscheint grün, **Nicht erreichbar** rot und **Neustart angefordert** während des Vorlaufs braun. **Unbekannt** bedeutet, dass die Hintergrundprüfung selbst kein verlässliches Ergebnis liefern konnte. Der Tooltip zeigt die Uhrzeit der letzten Prüfung und Details; der Filter „Nicht erreichbar“ passt sich automatisch an. Statuswechsel werden im Hostprotokoll erfasst, gleichbleibende Ergebnisse erzeugen keine wiederholten Logzeilen. Der HTML-Bericht übernimmt den Zustand und die letzte Prüfzeit zum Exportzeitpunkt.
+Die Spalte **Verbindung** prüft ab dem Öffnen des Hauptfensters alle eingetragenen Hosts im Hintergrund ungefähr alle **10 Sekunden** mit einer WinRM-Anmeldung. Sie verwendet die eingestellten Anmeldedaten, die HTTPS-Auswahl und den HTTPS-Port. **Verbunden** erscheint grün, **Nicht erreichbar** rot und **Neustart angefordert** während des Vorlaufs braun. **Unbekannt** bedeutet, dass die Hintergrundprüfung selbst kein verlässliches Ergebnis liefern konnte. Der Tooltip zeigt die Uhrzeit der letzten Prüfung und Details; der Filter „Nicht erreichbar“ passt sich automatisch an. Statuswechsel werden im Hostprotokoll erfasst, gleichbleibende Ergebnisse erzeugen keine wiederholten Logzeilen. Der HTML-Bericht übernimmt den Zustand und die letzte Prüfzeit zum Exportzeitpunkt.
 
 Während eines manuellen `Prüfen + Versionen` pausiert die Hintergrundprüfung, danach läuft sie wieder weiter. Beim Bearbeiten der Zugangsdaten und bei einem Benutzernamen ohne Passwort wird keine neue automatische Prüfung gestartet. Update-Ergebnisse und Versionsangaben werden durch die Hintergrundprüfung nicht geändert. Nur ein ausstehender Neustartauftrag wechselt bei bestätigter Erreichbarkeit nach dem Vorlauf auf **Wieder online**, einschließlich des Informationstexts. Die Prüfungen verwenden `Prüfen parallel` mit höchstens 40 gleichzeitigen Verbindungen und einem Zeitlimit pro Host. Eine noch laufende Runde wird nicht überlappt; bei vielen oder langsam antwortenden Hosts kann das Intervall deshalb länger ausfallen. Beim Schließen der Anwendung wird die Überwachung beendet.
 
@@ -194,7 +195,7 @@ Im Projektordner
 dotnet publish .\NovaTouchUpdater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o ".\publish-single"
 ### WinRM separat testen
 
-Der Button **Test WinRM** prüft alle importierten Hosts mit der unter **Prüfen parallel** eingestellten Parallelität und den vorhandenen Anmeldedaten (leerer Benutzername: aktuelle Windows-Anmeldung). Pro Host werden HTTP/5985 und HTTPS/5986 unabhängig von der HTTPS-Auswahl nacheinander geprüft; verschiedene Hosts laufen parallel.
+Der Button **Test WinRM** prüft alle importierten Hosts mit der unter **Prüfen parallel** eingestellten Parallelität und den vorhandenen Anmeldedaten (leerer Benutzername: aktuelle Windows-Anmeldung). Geprüft wird ausschließlich das ausgewählte Protokoll: HTTP/5985 oder HTTPS auf dem eingestellten HTTPS-Port (Standard 5986, beispielsweise 443). Protokoll und tatsächlich verwendeter Port stehen im Diagnosefenster; verschiedene Hosts laufen parallel.
 
 Das separate Ergebnisfenster zeigt TCP-Erreichbarkeit, `New-PSSession` und `Invoke-Command` jeweils einzeln. Eine ausgewählte Zeile zeigt vollständige Fehlerdetails. Ohne erfolgreiche Sitzung wird die Befehlsprüfung ausdrücklich als übersprungen ausgewiesen. Die TLS-Zertifikatsprüfung bleibt aktiv. Pro Protokoll gilt ein Gesamtzeitlimit von 60 Sekunden; der TCP-Test wartet maximal 5 Sekunden.
 
@@ -204,4 +205,5 @@ Lokaler Test der Diagnose-Fehlerpfade ohne Netzwerkzugriff:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\WinRmWorker.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\WinRmPort.Tests.ps1
 ```

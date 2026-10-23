@@ -10,6 +10,10 @@ static void Assert(bool condition, string message)
 }
 
 var now = DateTimeOffset.Now.AddMinutes(1);
+Assert(new WorkerRequest().HttpsPort == 5986 &&
+    JsonSerializer.Deserialize<WorkerRequest>("{\"UseSsl\":true,\"HttpsPort\":443}") is { UseSsl: true, HttpsPort: 443 } &&
+    JsonSerializer.Serialize(new WorkerRequest { UseSsl=true, HttpsPort=443 }).Contains("\"HttpsPort\":443"),
+    "worker protocol defaults to HTTPS 5986 and preserves configured port 443");
 Assert(UpdatePackageNames.TryServerSuiteVersion(@"C:\updates\nt.server.suite-2026.4.9792.zip", out string suiteTarget) && suiteTarget == "2026.4.9792",
     "server-suite target version is read from the ZIP filename");
 Assert(UpdatePackageNames.TryServerSuiteVersion("NT.SERVER.SUITE-2026.4.9792.1-release.zip", out string suiteRevision) && suiteRevision == "2026.4.9792.1" &&
