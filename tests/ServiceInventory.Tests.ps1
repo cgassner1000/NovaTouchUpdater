@@ -82,7 +82,7 @@ Assert ($result[0].ProductVersion -eq '2026.4.9792' -and $result[1].ProductVersi
 Write-Output 'PASS external shared Python with different suite folders and quoted/unquoted arguments'
 Reset
 Service 'nt3_server_suite_a' 'C:\ShopA\apps\python\python.exe' '3.13.2'
-Service 'nt3_server_suite_b' 'D:\ShopB\portable-python\python.exe' '3.13.2'
+Service 'nt3_server_suite_b' 'D:\ShopB\portable_python\python.exe' '3.13.2'
 SuiteVersion 'C:\ShopA\apps\nt3-server-suite' '2026.4.9792'
 SuiteVersion 'D:\ShopB\apps\nt3-server-suite' '2026.3.9700'
 $result=@(& $reader)

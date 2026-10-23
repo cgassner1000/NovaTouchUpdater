@@ -31,10 +31,12 @@ function PrepareUpdatePackages {
             Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force -ErrorAction Stop
             if (@(Get-ChildItem -LiteralPath $dest -Force).Count -eq 0) { throw "ZIP ist leer: $zip" }
             if ($kind -eq 'serversuite') {
-                $payload = Join-Path $dest 'apps\nt3-server-suite'
-                if (-not (Test-Path -LiteralPath $payload -PathType Container) -or
-                    @(Get-ChildItem -LiteralPath $payload -Force -Recurse -File).Count -eq 0) {
-                    throw 'Die Server-Suite-ZIP muss den gefüllten Ordner apps\nt3-server-suite enthalten.'
+                foreach ($relative in @('apps\nt3-server-suite', 'installer\python\portable_python')) {
+                    $payload = Join-Path $dest $relative
+                    if (-not (Test-Path -LiteralPath $payload -PathType Container) -or
+                        @(Get-ChildItem -LiteralPath $payload -Force -Recurse -File).Count -eq 0) {
+                        throw "Die Server-Suite-ZIP muss den gefüllten Ordner $relative enthalten."
+                    }
                 }
             }
         }
@@ -102,6 +104,38 @@ function InstallUpdatePackages {
             Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $destination $relative) -Force -ErrorAction Stop
         }
     }
+    function CheckServiceExecutable([string]$exe, [string]$target, [string]$source, [string]$name) {
+        if (ContainsPath $target $exe) {
+            $relativeExe = $exe.Substring($target.Length).TrimStart('\')
+            $payloadExe = FullPath (Join-Path $source $relativeExe)
+            if (-not (ContainsPath $source $payloadExe) -or -not (Test-Path -LiteralPath $payloadExe -PathType Leaf)) {
+                throw "Die ZIP enthält die Dienst-EXE für '$name' nicht: $relativeExe"
+            }
+        }
+    }
+    function AddPlan([string]$kind, [string]$source, [string]$target, [string]$expectedLeaf = '', [bool]$allowMissing = $false) {
+        $source = FullPath $source
+        $target = FullPath $target
+        if ($expectedLeaf -and [IO.Path]::GetFileName($target) -ine $expectedLeaf) { throw "Ungültiges Austauschziel: $target" }
+        if (-not (Test-Path -LiteralPath $source -PathType Container) -or @(Get-ChildItem -LiteralPath $source -Force).Count -eq 0) {
+            throw "Leeres oder fehlendes Update-Verzeichnis für $kind : $source"
+        }
+        if ($expectedLeaf -and @(Get-ChildItem -LiteralPath $source -Force -Recurse -File).Count -eq 0) { throw "Keine Dateien im Update-Verzeichnis: $source" }
+        if ((ContainsPath $target $stage) -or (ContainsPath $stage $target)) { throw 'Staging und Installationsziel dürfen nicht ineinander liegen.' }
+        $parent = [IO.Path]::GetDirectoryName($target)
+        if (Test-Path -LiteralPath $target) {
+            if (-not (Test-Path -LiteralPath $target -PathType Container)) { throw "Installationsziel ist kein Ordner: $target" }
+            NoLinks $target ([bool]$expectedLeaf)
+        } else {
+            if (-not $allowMissing) { throw "Installationsverzeichnis fehlt: $target" }
+            if (-not (Test-Path -LiteralPath $parent -PathType Container)) { throw "Installationsverzeichnis fehlt: $parent" }
+            NoLinks $parent $false
+        }
+        # Every service retains its own stop/start, but shared folders are copied once.
+        $plans[$kind + '|' + $target.ToLowerInvariant()] = [pscustomobject]@{
+            Kind=$kind; Source=$source; Target=$target; ExpectedLeaf=$expectedLeaf; Parent=$parent; AllowMissing=$allowMissing
+        }
+    }
 
     $wanted = @()
     foreach ($entry in (ConvertFrom-Json -InputObject $wantedJson -ErrorAction Stop)) {
@@ -127,21 +161,22 @@ function InstallUpdatePackages {
         if ($kind -eq 'serversuite') {
             if ($null -eq $svc.PSObject.Properties['ExePath']) { throw "Dienstpfad fehlt: $name" }
             if ([IO.Path]::GetFileName($target) -ine 'nt3-server-suite') { throw "Kein eindeutiger Ordner nt3-server-suite im Installationspfad: $target" }
+            $apps = [IO.Path]::GetDirectoryName($target)
+            if ([IO.Path]::GetFileName($apps) -ine 'apps') { throw "Der Server-Suite-Ordner muss direkt unter apps liegen: $target" }
+            $installationRoot = [IO.Path]::GetDirectoryName($apps)
+            $pythonTarget = FullPath (Join-Path $installationRoot 'portable_python')
+            $pythonSource = FullPath (Join-Path $source 'installer\python\portable_python')
             $source = FullPath (Join-Path $source 'apps\nt3-server-suite')
             $exe = FullPath ([string]$svc.ExePath)
-            if (ContainsPath $target $exe) {
-                $relativeExe = $exe.Substring($target.Length).TrimStart('\')
-                $payloadExe = FullPath (Join-Path $source $relativeExe)
-                if (-not (ContainsPath $source $payloadExe) -or -not (Test-Path -LiteralPath $payloadExe -PathType Leaf)) { throw "Die ZIP enthält die Dienst-EXE für '$name' nicht: $relativeExe" }
-            }
+            CheckServiceExecutable $exe $target $source $name
+            CheckServiceExecutable $exe $pythonTarget $pythonSource $name
             CheckSuiteVersion $source
+            AddPlan $kind $source $target 'nt3-server-suite'
+            AddPlan $kind $pythonSource $pythonTarget 'portable_python' $true
             $suiteNames += $name
+        } else {
+            AddPlan $kind $source $target
         }
-        if (-not (Test-Path -LiteralPath $source -PathType Container) -or @(Get-ChildItem -LiteralPath $source -Force).Count -eq 0) { throw "Leeres oder fehlendes Update-Verzeichnis für $kind" }
-        if (-not (Test-Path -LiteralPath $target -PathType Container)) { throw "Installationsverzeichnis fehlt: $target" }
-        if ((ContainsPath $target $stage) -or (ContainsPath $stage $target)) { throw 'Staging und Installationsziel dürfen nicht ineinander liegen.' }
-        NoLinks $target ($kind -eq 'serversuite')
-        $plans[$kind + '|' + $target.ToLowerInvariant()] = [pscustomobject]@{ Kind=$kind; Source=$source; Target=$target }
         if ([string]$svc.StartType -ne 'Disabled') { $servicesToStart += $name }
     }
     $allPlans = @($plans.Values)
@@ -172,13 +207,20 @@ function InstallUpdatePackages {
             }
         }
         foreach ($plan in $allPlans) {
-            if ($plan.Kind -eq 'serversuite') {
+            if ($plan.ExpectedLeaf) {
                 # Recheck the exact named target immediately before recursive deletion.
                 $checkedTarget = FullPath $plan.Target
-                if ([IO.Path]::GetFileName($checkedTarget) -ine 'nt3-server-suite' -or
-                    -not $checkedTarget.Equals($plan.Target, [StringComparison]::OrdinalIgnoreCase)) { throw 'Ungültiges Server-Suite-Austauschziel.' }
-                NoLinks $checkedTarget $true
-                Remove-Item -LiteralPath $checkedTarget -Recurse -Force -ErrorAction Stop
+                if ([IO.Path]::GetFileName($checkedTarget) -ine $plan.ExpectedLeaf -or
+                    -not $checkedTarget.Equals($plan.Target, [StringComparison]::OrdinalIgnoreCase) -or
+                    -not [IO.Path]::GetDirectoryName($checkedTarget).Equals($plan.Parent, [StringComparison]::OrdinalIgnoreCase)) { throw 'Ungültiges Server-Suite-Austauschziel.' }
+                if (Test-Path -LiteralPath $checkedTarget) {
+                    if (-not (Test-Path -LiteralPath $checkedTarget -PathType Container)) { throw "Installationsziel ist kein Ordner: $checkedTarget" }
+                    NoLinks $checkedTarget $true
+                    Remove-Item -LiteralPath $checkedTarget -Recurse -Force -ErrorAction Stop
+                } else {
+                    if (-not $plan.AllowMissing) { throw "Installationsverzeichnis fehlt: $checkedTarget" }
+                    NoLinks $plan.Parent $false
+                }
             }
             CopyContents $plan.Source $plan.Target
             $changes += ($plan.Kind + ' => ' + $plan.Target)
