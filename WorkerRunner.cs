@@ -24,6 +24,9 @@ public sealed class WorkerRequest
     public string FiscalVersion { get; set; } = "";
     public string PaymentSha256 { get; set; } = "";
     public string FiscalSha256 { get; set; } = "";
+    public string ServerSuiteZip { get; set; } = "";
+    public string ServerSuiteVersion { get; set; } = "";
+    public string ServerSuiteSha256 { get; set; } = "";
     public TransferFileRequest[] TransferFiles { get; set; } = [];
     public bool RestartPayment { get; set; }
     public bool RestartFiscal { get; set; }
@@ -43,7 +46,9 @@ public sealed class ServiceInfo
     public string State { get; set; } = "";
     public string StartType { get; set; } = "";
     public string ExePath { get; set; } = "";
+    // Suite services use the resolved nt3-server-suite root, even with external Python.
     public string InstallDir { get; set; } = "";
+    // For server suite this is the version from version.txt; FileVersion stays empty.
     public string ProductVersion { get; set; } = "";
     public string FileVersion { get; set; } = "";
 }
@@ -86,7 +91,15 @@ public sealed class WorkerRunner : IDisposable
         using Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"Die eingebettete Ressource {resourceName} ist nicht vorhanden.");
         using StreamReader reader = new(stream, Encoding.UTF8);
-        File.WriteAllText(scriptFile, reader.ReadToEnd(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        string script = reader.ReadToEnd();
+        if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
+        {
+            using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream("NovaTouchUpdater.UpdateSteps.ps1")
+                ?? throw new InvalidOperationException("Die eingebetteten Update-Schritte fehlen.");
+            using var stepsReader = new StreamReader(steps, Encoding.UTF8);
+            script = stepsReader.ReadToEnd() + Environment.NewLine + script;
+        }
+        File.WriteAllText(scriptFile, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     }
 
     public static async Task<string> Sha256Async(string path, CancellationToken ct)

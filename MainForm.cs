@@ -29,6 +29,7 @@ public sealed class MainForm : Form
     private readonly Label lblSummary = new();
     private readonly Label lblPayment = new();
     private readonly Label lblFiscal = new();
+    private readonly Label lblServerSuite = new();
     private readonly TextBox txtUser = new();
     private readonly TextBox txtPassword = new();
     private readonly TextBox txtRemotePath = new();
@@ -43,6 +44,7 @@ public sealed class MainForm : Form
     private readonly Button btnRemoveHost = Button("Entfernen");
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
+    private readonly Button btnServerSuite = Button("Server-Suite-ZIP wählen");
     private readonly Button btnWinRm = Button("Test WinRM");
     private readonly Button btnScan = Button("1. Prüfen + Versionen");
     private readonly Button btnUpdate = Button("2. Updates starten");
@@ -54,10 +56,13 @@ public sealed class MainForm : Form
 
     private string paymentZip = "";
     private string fiscalZip = "";
+    private string serverSuiteZip = "";
     private string paymentVersion = "";
     private string fiscalVersion = "";
+    private string serverSuiteVersion = "";
     private string paymentHash = "";
     private string fiscalHash = "";
+    private string serverSuiteHash = "";
     private int completed;
     private int total;
     private string activeUser = "";
@@ -236,13 +241,13 @@ public sealed class MainForm : Form
         });
         header.Controls.Add(new Label
         {
-            Text = "nt.payment / nt.fiscal    ·    parallele Remote-Updates",
+            Text = "nt.payment / nt.fiscal / nt3 Server Suite    ·    parallele Remote-Updates",
             AutoSize = true, Anchor = AnchorStyles.Left, TextAlign = ContentAlignment.MiddleLeft,
             ForeColor = Color.FromArgb(95, 110, 130)
         });
         main.Controls.Add(header, 0, 0);
 
-        // Hostliste, Payment-ZIP und Fiscal-ZIP immer untereinander anzeigen.
+        // Hostliste und die drei Update-Dateien immer untereinander anzeigen.
         var configuration = new TableLayoutPanel
         {
             Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
@@ -281,11 +286,12 @@ public sealed class MainForm : Form
         txtRemotePath.Margin = new Padding(3, 2, 8, 2);
         targetPath.Controls.Add(txtRemotePath, 1, 0);
         var files = Stack(Stack(hostList, lblFile), PanelRow(btnPayment, lblPayment),
-            PanelRow(btnFiscal, lblFiscal), targetPath);
+            PanelRow(btnFiscal, lblFiscal), PanelRow(btnServerSuite, lblServerSuite), targetPath);
         configuration.Controls.Add(files, 0, 0);
         lblFile.Text = "Keine Hostliste";
         lblPayment.Text = "Payment Target: –";
         lblFiscal.Text = "Fiscal Target: –";
+        lblServerSuite.Text = "Server Suite Target: –";
 
         // Login-Daten rechts in zwei eigenen Zeilen, damit nichts abgeschnitten wird.
         var login = new TableLayoutPanel
@@ -325,7 +331,7 @@ public sealed class MainForm : Form
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts (WinRM und Versionsprüfung).");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
-        tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-Dienste auch bei identischer IST-/Zielversion erneut installieren.");
+        tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
         tips.SetToolTip(chkSkipZipTransfer, "Lokale ZIPs bestimmen weiterhin die Zielversion. ZIPs auf den Clients werden bei Updates nicht übertragen.");
         tips.SetToolTip(btnRetry, "Hosts mit Prüf- oder Updatefehlern erneut prüfen/aktualisieren. Frühere Updatefehler bleiben auch nach einem erfolgreichen Neustart wiederholbar. Dienst- und Neustartbefehle werden hier nicht wiederholt.");
@@ -391,6 +397,7 @@ public sealed class MainForm : Form
         table.Columns.Add("dotnet48", ".NET 4.8");
         table.Columns.Add("payment", "Payment Ist");
         table.Columns.Add("fiscal", "Fiscal Ist");
+        table.Columns.Add("serversuite", "Server Suite Ist");
         table.Columns.Add("pos", "NovaTouch POS");
         table.Columns.Add("information", "Information");
         table.Columns.Add("attempt", "Versuch");
@@ -405,6 +412,8 @@ public sealed class MainForm : Form
         table.Columns["dotnet48"].MinimumWidth = 52;
         table.Columns["payment"].MinimumWidth = 110;
         table.Columns["fiscal"].MinimumWidth = 110;
+        table.Columns["serversuite"].MinimumWidth = 125;
+        table.Columns["serversuite"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         table.Columns["pos"].MinimumWidth = 110;
         table.Columns["information"].MinimumWidth = 200;
         table.Columns["attempt"].MinimumWidth = 62;
@@ -440,6 +449,7 @@ public sealed class MainForm : Form
         btnRemoveHost.Click += (_, _) => RemoveSelectedHost();
         btnPayment.Click += (_, _) => ChooseZip("payment");
         btnFiscal.Click += (_, _) => ChooseZip("fiscal");
+        btnServerSuite.Click += (_, _) => ChooseServerSuite();
         btnWinRm.Click += (_, _) =>
         {
             if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
@@ -483,8 +493,9 @@ public sealed class MainForm : Form
             table.Columns["dotnet48"].FillWeight = 3;
             table.Columns["payment"].FillWeight = 6;
             table.Columns["fiscal"].FillWeight = 6;
+            table.Columns["serversuite"].FillWeight = 8;
             table.Columns["pos"].FillWeight = 9;
-            table.Columns["information"].FillWeight = 43;
+            table.Columns["information"].FillWeight = 35;
             table.Columns["attempt"].FillWeight = 5;
             table.Columns["result"].FillWeight = 8;
 
@@ -675,6 +686,22 @@ public sealed class MainForm : Form
         }
         if (kind == "payment") { paymentZip = dialog.FileName; paymentVersion = m.Groups[2].Value; lblPayment.Text = "Payment Target: " + paymentVersion; }
         else { fiscalZip = dialog.FileName; fiscalVersion = m.Groups[2].Value; lblFiscal.Text = "Fiscal Target: " + fiscalVersion; }
+        UpdateButtons();
+    }
+
+    private void ChooseServerSuite()
+    {
+        using OpenFileDialog dialog = new() { Filter = "ZIP (*.zip)|*.zip", Title = "Server-Suite-Update auswählen" };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (!UpdatePackageNames.TryServerSuiteVersion(dialog.FileName, out string version))
+        {
+            MessageBox.Show(this, "Ungültiger ZIP-Dateiname. Erwartet: nt.server.suite-2026.4.9792.zip",
+                "Server-Suite-Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        serverSuiteZip = dialog.FileName;
+        serverSuiteVersion = version;
+        lblServerSuite.Text = "Server Suite Target: " + version;
         UpdateButtons();
     }
 
@@ -932,7 +959,8 @@ public sealed class MainForm : Form
         Username = activeUser, Password = activePassword, UseSsl = activeSsl, ForceUpdate = activeForceUpdate,
         RemoteInstallPath = activeRemoteInstallPath, SkipZipTransfer = activeSkipZipTransfer,
         PaymentZip = paymentZip, PaymentVersion = paymentVersion, PaymentSha256 = paymentHash,
-        FiscalZip = fiscalZip, FiscalVersion = fiscalVersion, FiscalSha256 = fiscalHash
+        FiscalZip = fiscalZip, FiscalVersion = fiscalVersion, FiscalSha256 = fiscalHash,
+        ServerSuiteZip = serverSuiteZip, ServerSuiteVersion = serverSuiteVersion, ServerSuiteSha256 = serverSuiteHash
     };
 
     private bool ValidateCredentials()
@@ -990,7 +1018,7 @@ public sealed class MainForm : Form
                 {
                     h.Scanned = result.Success;
                     ReadScanInventory(h, result);
-                    if (result.Success) { h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; }
+                    if (result.Success) { h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; }
                     h.Phase = result.Success ? "Scan abgeschlossen" : "Scan fehlgeschlagen";
                     h.Result = result.Success ? "Bereit" : "Fehler";
                     h.Error = result.Success ? "" : FriendlyError(result);
@@ -1003,7 +1031,7 @@ public sealed class MainForm : Form
     private async Task RunUpdatesAsync(bool onlyFailed)
     {
         if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
-        if (string.IsNullOrWhiteSpace(paymentZip) && string.IsNullOrWhiteSpace(fiscalZip))
+        if (string.IsNullOrWhiteSpace(paymentZip) && string.IsNullOrWhiteSpace(fiscalZip) && string.IsNullOrWhiteSpace(serverSuiteZip))
         {
             MessageBox.Show(this, "Mindestens eine Update-ZIP auswählen."); return;
         }
@@ -1019,7 +1047,7 @@ public sealed class MainForm : Form
             MessageBox.Show(this, onlyFailed ? "Keine fehlerhaften Hosts vorhanden." : "Zuerst die Hosts prüfen und Versionen auslesen."); return;
         }
         if (MessageBox.Show(this,
-            $"Update für {selected.Length} Hosts starten?\n\nModus: {(chkForceUpdate.Checked ? "FORCE UPDATE (Versiongleichheit ignorieren)" : "Normal (gleiche Version überspringen)")}\nPayment Target: {(paymentVersion.Length == 0 ? "–" : paymentVersion)}\nFiscal Target: {(fiscalVersion.Length == 0 ? "–" : fiscalVersion)}\nZielpfad: {txtRemotePath.Text.Trim()}\nZIP-Übertragung: {(chkSkipZipTransfer.Checked ? "deaktiviert (ZIPs auf Hosts werden geprüft)" : "aktiv")}\n\nNur Dienste mit ausgewählter ZIP werden während des Updates angehalten.",
+            $"Update für {selected.Length} Hosts starten?\n\nModus: {(chkForceUpdate.Checked ? "FORCE UPDATE (Versiongleichheit ignorieren)" : "Normal (gleiche Version überspringen)")}\nPayment Target: {(paymentVersion.Length == 0 ? "–" : paymentVersion)}\nFiscal Target: {(fiscalVersion.Length == 0 ? "–" : fiscalVersion)}\nServer Suite Target: {(serverSuiteVersion.Length == 0 ? "–" : serverSuiteVersion)}\nZielpfad: {txtRemotePath.Text.Trim()}\nZIP-Übertragung: {(chkSkipZipTransfer.Checked ? "deaktiviert (ZIPs auf Hosts werden geprüft)" : "aktiv")}\n\nNur Komponenten mit ausgewählter ZIP werden aktualisiert. Bei der Server Suite werden alle Instanzen angehalten und deren Ordner nt3-server-suite vollständig durch apps\\nt3-server-suite aus der ZIP ersetzt; deaktivierte Dienste bleiben deaktiviert.",
             "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         CaptureCredentials();
         lastUpdateForce = activeForceUpdate;
@@ -1027,9 +1055,11 @@ public sealed class MainForm : Form
         {
             paymentHash = await WorkerRunner.Sha256Async(paymentZip, ct);
             fiscalHash = await WorkerRunner.Sha256Async(fiscalZip, ct);
-            Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Zielpfad: {activeRemoteInstallPath}; ZIP-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
+            serverSuiteHash = await WorkerRunner.Sha256Async(serverSuiteZip, ct);
+            Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; Zielpfad: {activeRemoteInstallPath}; ZIP-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
             await ParallelPhaseAsync(selected, (int)nUpdate.Value, async (host, token) =>
             {
+                bool succeeded = false;
                 for (int attempt = 1; attempt <= 3; attempt++)
                 {
                     token.ThrowIfCancellationRequested();
@@ -1053,7 +1083,7 @@ public sealed class MainForm : Form
                             if (attempt < 3) await Task.Delay(TimeSpan.FromSeconds(attempt * 3), token);
                             continue;
                         }
-                        Mark(host, h => { h.Scanned = true; h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; });
+                        Mark(host, h => { h.Scanned = true; h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; });
                     }
                     var result = await DoWorkerAsync(host, "update", token);
                     Mark(host, h =>
@@ -1062,17 +1092,18 @@ public sealed class MainForm : Form
                         h.Phase = result.Success ? "Verifiziert" : "Update fehlgeschlagen";
                         if (result.Success)
                         {
-                            h.Result = result.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
+                            h.Result = result.Skipped ? "Übersprungen" : result.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
+                            if (result.Skipped) h.Phase = result.Message;
                             h.Services = result.Services.ToList(); ReadVersions(h);
                             h.UpdateFailed = false;
                         }
                     });
-                    if (result.Success) break;
+                    if (result.Success) { succeeded = true; break; }
                     if (attempt < 3) await Task.Delay(TimeSpan.FromSeconds(attempt * 3), token);
                 }
                 Mark(host, h =>
                 {
-                    if (h.Result is not ("Erfolgreich" or "Bereits aktuell / übersprungen"))
+                    if (!succeeded)
                     {
                         h.Result = "Fehler";
                         h.UpdateFailed = true;
@@ -1229,13 +1260,14 @@ public sealed class MainForm : Form
         h.PosVersion = string.IsNullOrWhiteSpace(result.PosVersion) ? "–" : DisplayText.Clean(result.PosVersion);
         h.Services = result.Services.ToList();
         if (result.Success) ReadVersions(h);
-        else { h.Payment = "–"; h.Fiscal = "–"; }
+        else { h.Payment = "–"; h.Fiscal = "–"; h.ServerSuite = "–"; }
     }
 
     private void ReadVersions(HostState h)
     {
         h.Payment = DisplayText.ServiceVersions(h.Services.Where(s => s.Kind == "payment"));
         h.Fiscal = DisplayText.ServiceVersions(h.Services.Where(s => s.Kind == "fiscal"));
+        h.ServerSuite = DisplayText.ServiceVersions(h.Services.Where(s => s.Kind == "serversuite"));
     }
 
     private void Mark(HostState h, Action<HostState> update)
@@ -1269,6 +1301,8 @@ public sealed class MainForm : Form
         cells["dotnet48"].ToolTipText = DisplayText.DotNet48Description(h.DotNet48Installed);
         cells["payment"].Value = h.Payment;
         cells["fiscal"].Value = h.Fiscal;
+        cells["serversuite"].Value = h.ServerSuite;
+        cells["serversuite"].ToolTipText = DisplayText.ServiceInstances(h.Services.Where(s => s.Kind == "serversuite"), h.ServerSuite);
         cells["pos"].Value = h.PosVersion;
         // Bei mehreren abweichenden Versionsständen bleibt der volle Inhalt per Tooltip lesbar.
         cells["payment"].ToolTipText = h.Payment;
@@ -1321,7 +1355,7 @@ public sealed class MainForm : Form
     {
         btnImport.Enabled = !busy; btnAddHost.Enabled = !busy;
         btnRemoveHost.Enabled = !busy && table.CurrentRow?.Tag is HostState;
-        btnPayment.Enabled = !busy; btnFiscal.Enabled = !busy;
+        btnPayment.Enabled = !busy; btnFiscal.Enabled = !busy; btnServerSuite.Enabled = !busy;
         btnWinRm.Enabled = !busy && hosts.Count > 0;
         btnScan.Enabled = !busy && hosts.Count > 0;
         btnUpdate.Enabled = !busy && hosts.Any(h => h.Scanned);
@@ -1370,7 +1404,7 @@ public sealed class MainForm : Form
             string filename = "NovaTouchUpdate-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") +
                 "-" + Guid.NewGuid().ToString("N")[..8] + ".html";
             string previewFile = Path.Combine(previewDir, filename);
-            string report = HtmlReport.Create(hosts, paymentVersion, fiscalVersion, DateTime.Now, lastUpdateForce);
+            string report = HtmlReport.Create(hosts, paymentVersion, fiscalVersion, DateTime.Now, lastUpdateForce, serverSuiteVersion);
             File.WriteAllText(previewFile, report, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             Process.Start(new ProcessStartInfo(previewFile) { UseShellExecute = true });
         }

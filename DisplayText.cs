@@ -15,7 +15,7 @@ internal static class DisplayText
     };
 
     private static readonly Regex NamedHashes = new(
-        @"\b(?:PaymentSha256|FiscalSha256)\s*[:=]\s*[^\s;,|]*",
+        @"\b(?:PaymentSha256|FiscalSha256|ServerSuiteSha256)\s*[:=]\s*[^\s;,|]*",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex HexHash = new(
         @"\b[0-9a-f]{64}\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -60,5 +60,12 @@ internal static class DisplayText
                 string.IsNullOrWhiteSpace(s.ProductVersion) ? s.FileVersion : s.ProductVersion))
             .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().ToArray();
         return versions.Length > 0 ? string.Join(", ", versions) : "–";
+    }
+
+    public static string ServiceInstances(IEnumerable<ServiceInfo> services, string emptyText = "Nicht installiert")
+    {
+        ServiceInfo[] instances = services.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        return instances.Length == 0 ? emptyText : string.Join(Environment.NewLine,
+            instances.Select(s => $"{s.Name}: {ServiceVersions([s])} ({s.State}) – {s.InstallDir}"));
     }
 }

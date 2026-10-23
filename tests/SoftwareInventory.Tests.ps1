@@ -118,6 +118,7 @@ ScanCase 'POS-only host succeeds without payment and fiscal' { Framework 528040;
 ScanCase 'payment-only host succeeds without fiscal' {} $false 'Nicht installiert'
 ScanCase 'fiscal-only host succeeds without payment' { $script:serviceKinds=@('fiscal') } $false 'Nicht installiert' -expectedKinds @('fiscal')
 ScanCase 'both service kinds remain visible' { $script:serviceKinds=@('payment','fiscal') } $false 'Nicht installiert' -expectedKinds @('payment','fiscal')
+ScanCase 'server-suite-only host scans successfully' { $script:serviceKinds=@('serversuite') } $false 'Nicht installiert' -expectedKinds @('serversuite')
 
 # Exercise the real inventory function under a remote-style Continue preference.
 # A provider access failure must throw instead of looking like an empty inventory.

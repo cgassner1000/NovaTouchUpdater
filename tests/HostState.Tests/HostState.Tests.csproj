@@ -13,5 +13,6 @@
     <Compile Include="../../WorkerRunner.cs" Link="WorkerRunner.cs" />
     <Compile Include="../../HtmlReport.cs" Link="HtmlReport.cs" />
     <Compile Include="../../DisplayText.cs" Link="DisplayText.cs" />
+    <Compile Include="../../UpdatePackageNames.cs" Link="UpdatePackageNames.cs" />
   </ItemGroup>
 </Project>

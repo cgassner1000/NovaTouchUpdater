@@ -10,7 +10,7 @@ internal static class HtmlReport
 {
     private static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
 
-    public static string Create(IReadOnlyList<HostState> hosts, string paymentTarget, string fiscalTarget, DateTime createdAt, bool forceUpdate)
+    public static string Create(IReadOnlyList<HostState> hosts, string paymentTarget, string fiscalTarget, DateTime createdAt, bool forceUpdate, string serverSuiteTarget = "")
     {
         int count = hosts.Count;
         int updated = hosts.Count(x => x.Result == "Erfolgreich");
@@ -55,12 +55,13 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 <body>
 <header class="hero">
   <h1>NovaTouch Updater</h1>
-  <p>Update-Ergebnisbericht · nt.payment / nt.fiscal</p>
+  <p>Update-Ergebnisbericht · nt.payment / nt.fiscal / nt3 Server Suite</p>
 """);
         sb.Append("  <div class=\"stamp\">Erstellt: ").Append(E(createdAt.ToString("dd.MM.yyyy HH:mm:ss"))).AppendLine("</div>");
         sb.AppendLine("</header><main><section class=\"meta\" aria-label=\"Zielversionen\">");
         sb.Append("<span class=\"chip\">Payment Target: <strong>").Append(E(Show(paymentTarget))).AppendLine("</strong></span>");
         sb.Append("<span class=\"chip\">Fiscal Target: <strong>").Append(E(Show(fiscalTarget))).AppendLine("</strong></span>");
+        sb.Append("<span class=\"chip\">Server Suite Target: <strong>").Append(E(Show(serverSuiteTarget))).AppendLine("</strong></span>");
         sb.Append("<span class=\"chip\">Update-Modus: <strong>").Append(forceUpdate ? "Force Update" : "Normal").AppendLine("</strong></span>");
         sb.Append("<span class=\"chip\">Erfolgsquote: <strong>").Append(percent).AppendLine(" %</strong></span>");
         sb.AppendLine("</section><section class=\"stats\" aria-label=\"Zusammenfassung\">");
@@ -92,7 +93,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 </div>
 <div class="scroll"><table id="hostTable">
 <thead><tr>
-  <th>Hostname</th><th>Verbindung</th><th class="framework">.NET 4.8</th><th class="ver-head">Payment (vorher → nachher)</th><th class="ver-head">Fiscal (vorher → nachher)</th><th>NovaTouch POS</th>
+  <th>Hostname</th><th>Verbindung</th><th class="framework">.NET 4.8</th><th class="ver-head">Payment (vorher → nachher)</th><th class="ver-head">Fiscal (vorher → nachher)</th><th class="ver-head">Server Suite (vorher → nachher)</th><th>NovaTouch POS</th>
   <th>Information</th><th>Details</th><th class="attempt">Versuch</th><th>Ergebnis</th>
 </tr></thead><tbody>
 """);
@@ -107,6 +108,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
             };
             string search = string.Join(' ', new[] { host.Host, host.Connection, DisplayText.Clean(host.PaymentBefore), DisplayText.Clean(host.Payment),
                 DisplayText.Clean(host.FiscalBefore), DisplayText.Clean(host.Fiscal), DisplayText.DotNet48Description(host.DotNet48Installed),
+                DisplayText.Clean(host.ServerSuiteBefore), DisplayText.Clean(host.ServerSuite), DisplayText.ServiceInstances(host.Services.Where(s => s.Kind == "serversuite"), host.ServerSuite),
                 DisplayText.Clean(host.PosVersion), DisplayText.Clean(host.Phase),
                 host.Result, DisplayText.Clean(host.Error) }).ToLowerInvariant();
             sb.Append("<tr data-kind=\"").Append(kind).Append("\" data-search=\"").Append(E(search)).AppendLine("\">");
@@ -123,6 +125,12 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
                 .Append("\">").Append(DisplayText.DotNet48(host.DotNet48Installed)).AppendLine("</span></td>");
             VersionCell(sb, host.PaymentBefore, host.Payment);
             VersionCell(sb, host.FiscalBefore, host.Fiscal);
+            sb.Append("<td class=\"ver\" title=\"").Append(E(DisplayText.ServiceInstances(host.Services.Where(s => s.Kind == "serversuite"), host.ServerSuite))).Append("\">");
+            sb.Append("<span class=\"before\">").Append(E(DisplayText.Clean(host.ServerSuiteBefore))).Append("</span><span class=\"after\">")
+                .Append(E(DisplayText.Clean(host.ServerSuite))).Append("</span>");
+            foreach (ServiceInfo instance in host.Services.Where(s => s.Kind == "serversuite").OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
+                sb.Append("<div class=\"dim\">").Append(E(instance.Name)).Append(": ").Append(E(DisplayText.ServiceVersions([instance]))).Append("</div>");
+            sb.AppendLine("</td>");
             sb.Append("<td class=\"pos-ver\">").Append(E(DisplayText.Clean(host.PosVersion))).AppendLine("</td>");
             // Der aktuelle Schritt und die bisherigen Fehler-/Informationstexte teilen sich eine Spalte.
             sb.Append("<td class=\"info-cell\">");

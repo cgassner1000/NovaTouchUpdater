@@ -10,10 +10,16 @@ static void Assert(bool condition, string message)
 }
 
 var now = DateTimeOffset.Now.AddMinutes(1);
+Assert(UpdatePackageNames.TryServerSuiteVersion(@"C:\updates\nt.server.suite-2026.4.9792.zip", out string suiteTarget) && suiteTarget == "2026.4.9792",
+    "server-suite target version is read from the ZIP filename");
+Assert(UpdatePackageNames.TryServerSuiteVersion("NT.SERVER.SUITE-2026.4.9792.1-release.zip", out string suiteRevision) && suiteRevision == "2026.4.9792.1" &&
+    !UpdatePackageNames.TryServerSuiteVersion("nt.server.suite-2026.4.zip", out _) && !UpdatePackageNames.TryServerSuiteVersion("nt.server.suite-2026.4.9792.exe", out _) &&
+    !UpdatePackageNames.TryServerSuiteVersion("other-2026.4.9792.zip", out _), "server-suite file selection requires the expected prefix, ZIP extension and a complete version");
 Assert(DisplayText.ServiceVersions([]) == "Nicht installiert", "a successfully read empty service inventory is shown as not installed");
 Assert(DisplayText.ServiceVersions([new ServiceInfo { ProductVersion="1.2.3.4" }]) == "1.2.3.4" &&
     DisplayText.ServiceVersions([new ServiceInfo { FileVersion="2.3.4.5" }]) == "2.3.4.5", "installed services keep product versions and file-version fallback");
 Assert(DisplayText.ServiceVersions([new ServiceInfo()]) == "–", "an installed service without readable version metadata is not falsely reported as absent");
+Assert(DisplayText.ServiceInstances([], "–") == "–", "unknown suite inventory does not claim an absent installation in its tooltip");
 var host = new HostState
 {
     Host = "reboot.invalid", Result = "Fehler", Error = "Earlier update failed",
@@ -150,3 +156,15 @@ string optionalReport = WebUtility.HtmlDecode(HtmlReport.Create([optionalService
 Assert(optionalReport.Contains("Nicht installiert") && optionalReport.Contains("2.5.1") &&
     optionalReport.Contains("Fehler</div><div class=\"num\">0</div>") && optionalReport.Contains(">Bereit</span>"),
     "HTML shows absent optional services alongside POS inventory without counting a scan error");
+var suiteServices = new[] {
+    new ServiceInfo { Name="nt3_server_suite_A", Kind="serversuite", ProductVersion="2026.4.9792", State="Running", InstallDir=@"C:\SuiteA" },
+    new ServiceInfo { Name="nt3_server_suite_B", Kind="serversuite", ProductVersion="2026.3.9700", State="Running", InstallDir=@"D:\SuiteB" }
+};
+Assert(DisplayText.ServiceVersions(suiteServices) == "2026.4.9792, 2026.3.9700" && DisplayText.ServiceInstances(suiteServices).Contains("nt3_server_suite_A") &&
+    DisplayText.ServiceInstances(suiteServices).Contains(@"D:\SuiteB"), "multiple suite instances retain their distinct versions and paths");
+var suiteHost = new HostState { Host="suite.invalid", Services=suiteServices.ToList(), ServerSuiteBefore="2026.3.9700", ServerSuite=DisplayText.ServiceVersions(suiteServices) };
+string suiteReport = WebUtility.HtmlDecode(HtmlReport.Create([suiteHost], "", "", now.LocalDateTime, false, suiteTarget));
+var suiteHeaders = Regex.Matches(suiteReport, "<th(?: [^>]*)?>(.*?)</th>").Select(m => m.Groups[1].Value).ToArray();
+Assert(Array.IndexOf(suiteHeaders, "Server Suite (vorher → nachher)") == Array.IndexOf(suiteHeaders, "Fiscal (vorher → nachher)") + 1 &&
+    suiteReport.Contains("Server Suite Target: <strong>2026.4.9792</strong>") && suiteReport.Contains("nt3_server_suite_A") && suiteReport.Contains("nt3_server_suite_B"),
+    "HTML places server suite after fiscal and includes target version plus every installed instance");

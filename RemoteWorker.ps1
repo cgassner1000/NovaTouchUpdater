@@ -14,24 +14,62 @@ function Progress([string]$phase, [string]$message) {
 }
 
 function ReadInventory {
-    $services = @(Get-Service -ErrorAction Stop | Where-Object { $_.Name -match '^nt\.(payment|fiscal)' })
+    function SuiteDirectory([string]$exe, [string]$imagePath) {
+        # A Python service may reference the suite in its arguments, or live in
+        # a portable Python directory beside apps\nt3-server-suite.
+        $roots = @([regex]::Matches($imagePath, '(?i)[A-Z]:[\\/][^":\r\n]*?[\\/]nt3-server-suite(?=[\\/\s"]|$)') |
+            ForEach-Object { [IO.Path]::GetFullPath($_.Value).TrimEnd('\') } | Sort-Object -Unique)
+        if ($roots.Count -eq 1) { return $roots[0] }
+        if ($roots.Count -gt 1) { throw "Mehrere Server-Suite-Ordner im Dienstpfad; keine eindeutige Zuordnung: $imagePath" }
+        $cursor = [IO.Path]::GetDirectoryName($exe)
+        while ($cursor) {
+            $candidate = if ([IO.Path]::GetFileName($cursor.TrimEnd('\')) -ieq 'apps') {
+                [IO.Path]::Combine($cursor, 'nt3-server-suite')
+            } else { [IO.Path]::Combine($cursor, 'apps\nt3-server-suite') }
+            if (Test-Path -LiteralPath $candidate -PathType Container -ErrorAction Stop) {
+                return [IO.Path]::GetFullPath($candidate).TrimEnd('\')
+            }
+            $cursor = [IO.Path]::GetDirectoryName($cursor.TrimEnd('\'))
+        }
+        throw "Kein eindeutiger Ordner apps\nt3-server-suite zum Dienstpfad: $imagePath"
+    }
+    $services = @(Get-Service -ErrorAction Stop | Where-Object {
+        $_.Name -match '^nt\.(payment|fiscal)' -or $_.Name -match '^nt3_server_suite_.+$'
+    })
     $inventory = @()
     foreach ($svc in $services) {
-        $kind = if ($svc.Name -match '^nt\.payment') { 'payment' } else { 'fiscal' }
+        $kind = if ($svc.Name -match '^nt\.payment') { 'payment' }
+            elseif ($svc.Name -match '^nt\.fiscal') { 'fiscal' } else { 'serversuite' }
         $imagePath = (Get-ItemProperty -LiteralPath ("HKLM:\SYSTEM\CurrentControlSet\Services\" + $svc.Name) -Name ImagePath -ErrorAction Stop).ImagePath
         if ($imagePath -match '^\s*"([^"]+?\.exe)"') { $exe = $Matches[1] }
         elseif ($imagePath -match '^\s*(.+?\.exe)(?:\s|$)') { $exe = $Matches[1] }
         else { throw "Executable-Pfad für $($svc.Name) nicht lesbar: $imagePath" }
-        $version = (Get-Item -LiteralPath $exe -ErrorAction Stop).VersionInfo
+        $installDir = [IO.Path]::GetDirectoryName($exe)
+        if ($kind -eq 'serversuite') {
+            $installDir = SuiteDirectory $exe $imagePath
+            $versionFile = [IO.Path]::Combine($installDir, 'version.txt')
+            try {
+                $text = [string](Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8 -ErrorAction Stop)
+                $productVersion = [regex]::Match($text, '\d+\.\d+\.\d+(?:\.\d+)?').Value
+                if (-not $productVersion) { throw 'Keine gültige Server-Suite-Version enthalten.' }
+            }
+            catch { throw "Server-Suite-Version für '$($svc.Name)' aus '$versionFile' nicht lesbar: $($_.Exception.Message)" }
+            # Never use the Python/service executable's version as a fallback.
+            $fileVersion = ''
+        } else {
+            $version = (Get-Item -LiteralPath $exe -ErrorAction Stop).VersionInfo
+            $productVersion = [string]$version.ProductVersion
+            $fileVersion = [string]$version.FileVersion
+        }
         $inventory += [pscustomobject]@{
             Name = $svc.Name
             Kind = $kind
             State = [string]$svc.Status
             StartType = [string]$svc.StartType
             ExePath = $exe
-            InstallDir = [IO.Path]::GetDirectoryName($exe)
-            ProductVersion = [string]$version.ProductVersion
-            FileVersion = [string]$version.FileVersion
+            InstallDir = $installDir
+            ProductVersion = $productVersion
+            FileVersion = $fileVersion
         }
     }
     return $inventory
@@ -87,13 +125,33 @@ function Normalize-Version([string]$version) {
 function IsTargetVersion($svc, [string]$expected) {
     if ([string]::IsNullOrWhiteSpace($expected)) { throw 'Zielversion fehlt.' }
     $target = Normalize-Version $expected
-    # Dieselbe IST-Versionsquelle wie in der GUI: ProductVersion, ersatzweise FileVersion.
+    # Suite ProductVersion comes exclusively from version.txt; FileVersion stays
+    # empty. Payment/fiscal still use EXE ProductVersion, then FileVersion.
     $installed = if (-not [string]::IsNullOrWhiteSpace([string]$svc.ProductVersion)) {
         [string]$svc.ProductVersion
     } else {
         [string]$svc.FileVersion
     }
-    return ($target -eq (Normalize-Version $installed))
+    $installedVersion = Normalize-Version $installed
+    if ($svc.Kind -eq 'serversuite' -and $target -match '^\d+\.\d+\.\d+$') {
+        return ($installedVersion -match ('^' + [regex]::Escape($target) + '(?:\.\d+)?$'))
+    }
+    return ($target -eq $installedVersion)
+}
+
+function SelectUpdateServices($services, $targets, [bool]$forceUpdate) {
+    $pending = @()
+    foreach ($svc in $services) {
+        if (-not $targets.ContainsKey($svc.Kind)) { continue }
+        if (-not $forceUpdate -and (IsTargetVersion $svc $targets[$svc.Kind])) { continue }
+        $pending += $svc
+    }
+    # An instance already on target may share its directory with an older one.
+    # Stop and verify ALL suite services whenever any suite instance needs update.
+    if (@($pending | Where-Object Kind -eq 'serversuite').Count -gt 0) {
+        $pending = @($pending | Where-Object Kind -ne 'serversuite') + @($services | Where-Object Kind -eq 'serversuite')
+    }
+    $pending
 }
 
 $software = $null
@@ -191,7 +249,6 @@ try {
                 DotNet48Installed=$software.DotNet48Installed; PosVersion=$software.PosVersion }
             exit 0
         }
-        if ($services.Count -eq 0) { throw 'Keine nt.payment-/nt.fiscal-Dienste gefunden.' }
         if ($req.Action -ne 'update') { throw ('Unbekannte Aktion: ' + $req.Action) }
 
         # Nur Komponenten mit explizit gewaehlter ZIP und Zielversion koennen aktualisiert werden.
@@ -203,6 +260,10 @@ try {
         if (-not [string]::IsNullOrWhiteSpace([string]$req.FiscalZip)) {
             if ([string]::IsNullOrWhiteSpace([string]$req.FiscalVersion)) { throw 'Fiscal-ZIP ausgewählt, aber Fiscal-Zielversion fehlt.' }
             $targets.fiscal = [string]$req.FiscalVersion
+        }
+        if ($null -ne $req.PSObject.Properties['ServerSuiteZip'] -and -not [string]::IsNullOrWhiteSpace([string]$req.ServerSuiteZip)) {
+            if ([string]::IsNullOrWhiteSpace([string]$req.ServerSuiteVersion)) { throw 'Server-Suite-ZIP ausgewählt, aber Zielversion fehlt.' }
+            $targets.serversuite = [string]$req.ServerSuiteVersion
         }
         if ($targets.Count -eq 0) { throw 'Keine Update-ZIP ausgewählt.' }
 
@@ -217,14 +278,10 @@ try {
         }
 
         # Filter VOR ZIP-Uebertragung, Entpacken und jeglichem Dienst-Stopp.
-        $pending = @()
-        foreach ($svc in $services) {
-            if (-not $targets.ContainsKey($svc.Kind)) { continue }
-            if (-not $forceUpdate -and (IsTargetVersion $svc $targets[$svc.Kind])) { continue }
-            $pending += $svc
-        }
+        $pending = @(SelectUpdateServices $services $targets $forceUpdate)
         if ($pending.Count -eq 0) {
-            Emit @{ Event='result'; Success=$true; Message='Bereits auf Zielversion / keine ausgewählten Dienste vorhanden'; Services=$services; Changed=$false }
+            $noneInstalled = @($services | Where-Object { $targets.ContainsKey($_.Kind) }).Count -eq 0
+            Emit @{ Event='result'; Success=$true; Message=$(if ($noneInstalled) { 'Keine ausgewählten Dienste installiert - übersprungen' } else { 'Bereits auf Zielversion' }); Services=$services; Changed=$false; Skipped=$noneInstalled }
             exit 0
         }
 
@@ -265,11 +322,11 @@ try {
         Progress 'Übertragung' ("Remote-Ordner vorhanden auf $remoteHost als $($remoteInfo.Account): $remotePath")
 
         # Die exakten, auf dem Remote-Host verifizierten Pfade fuer das Entpacken merken.
-        $remoteZipFiles = @{ payment = ''; fiscal = '' }
-        foreach ($kind in @('payment','fiscal')) {
+        $remoteZipFiles = @{ payment = ''; fiscal = ''; serversuite = '' }
+        foreach ($kind in @('payment','fiscal','serversuite')) {
             if (-not @($pending | Where-Object Kind -eq $kind).Count) { continue }
-            $zip = if ($kind -eq 'payment') { [string]$req.PaymentZip } else { [string]$req.FiscalZip }
-            $expectedHash = if ($kind -eq 'payment') { [string]$req.PaymentSha256 } else { [string]$req.FiscalSha256 }
+            $zip = if ($kind -eq 'payment') { [string]$req.PaymentZip } elseif ($kind -eq 'fiscal') { [string]$req.FiscalZip } else { [string]$req.ServerSuiteZip }
+            $expectedHash = if ($kind -eq 'payment') { [string]$req.PaymentSha256 } elseif ($kind -eq 'fiscal') { [string]$req.FiscalSha256 } else { [string]$req.ServerSuiteSha256 }
             if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Lokale ZIP fehlt auf dem Updater-PC: $zip" }
             if ([string]::IsNullOrWhiteSpace($expectedHash)) { throw "Lokale SHA256-Pruefsumme fehlt fuer $kind" }
             $remoteFile = Join-Path $remotePath (Split-Path -Path $zip -Leaf)
@@ -311,127 +368,29 @@ try {
         # Die Werte kommen direkt aus der erfolgreichen Remote-SHA256-Pruefung.
         $paymentRemoteZip = [string]$remoteZipFiles['payment']
         $fiscalRemoteZip = [string]$remoteZipFiles['fiscal']
-        $stageArgs = @($remotePath, $kindsCsv, $paymentRemoteZip, $fiscalRemoteZip)
-        $stage = Invoke-Command -Session $session -ArgumentList $stageArgs -ErrorAction Stop -ScriptBlock {
-            param([string]$base, [string]$kindsCsv, [string]$pZip, [string]$fZip)
-            $dir = Join-Path $base ('.novatouch-updater-stage-' + [guid]::NewGuid().ToString('N'))
-            New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
-            try {
-                foreach ($kind in ($kindsCsv -split ',')) {
-                    $zipOnHost = if ($kind -eq 'payment') { $pZip } else { $fZip }
-                    if ([string]::IsNullOrWhiteSpace($zipOnHost)) {
-                        throw "Kein verifizierter Remote-ZIP-Pfad fuer $kind uebergeben."
-                    }
-                    $dest = Join-Path $dir $kind
-                    New-Item -ItemType Directory -Path $dest -Force -ErrorAction Stop | Out-Null
-                    if (-not (Test-Path -LiteralPath $zipOnHost -PathType Leaf)) {
-                        throw "Remote-ZIP fehlt vor dem Entpacken auf ${env:COMPUTERNAME}: '$zipOnHost'"
-                    }
-                    Expand-Archive -LiteralPath $zipOnHost -DestinationPath $dest -Force -ErrorAction Stop
-                    if (-not @(Get-ChildItem -LiteralPath $dest -Force).Count) { throw "ZIP ist leer: $zipOnHost" }
-                }
-                $dir
-            }
-            catch {
-                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
-                throw
-            }
-        }
+        $serverSuiteRemoteZip = [string]$remoteZipFiles['serversuite']
+        $stageArgs = @($remotePath, $kindsCsv, $paymentRemoteZip, $fiscalRemoteZip, $serverSuiteRemoteZip)
+        $stage = Invoke-Command -Session $session -ArgumentList $stageArgs -ErrorAction Stop -ScriptBlock ${function:PrepareUpdatePackages}
 
         $updateError = $null
         try {
             $pendingNames = (@($pending | ForEach-Object { [string]$_.Name }) -join ', ')
             Progress 'Dienste stoppen' ("Betroffene Dienste: " + $pendingNames)
             $wantedJson = ConvertTo-Json -InputObject @($pending) -Depth 12 -Compress
-            $installResult = Invoke-Command -Session $session -ArgumentList $wantedJson, $stage -ScriptBlock {
-                param($wantedJson,$stageDir)
-                # PowerShell 5.1 kann ein JSON-Array als EIN verschachteltes
-                # Array-Objekt zurueckgeben. Vor jedem Dienstzugriff aufloesen
-                # und jeden Datensatz validieren (insb. Eigenschaft Name).
-                $decoded = ConvertFrom-Json -InputObject $wantedJson -ErrorAction Stop
-                $wanted = @()
-                foreach ($entry in $decoded) {
-                    if ($entry -is [array]) {
-                        foreach ($item in $entry) { $wanted += $item }
-                    } else {
-                        $wanted += $entry
-                    }
-                }
-                if ($wanted.Count -eq 0) { throw 'Keine Dienste an den Installationsschritt uebergeben.' }
-
-                $servicesToStart = @()
-                foreach ($svc in $wanted) {
-                    if ($null -eq $svc) { throw 'Leerer Dienst-Datensatz beim Installieren.' }
-                    foreach ($property in @('Name', 'Kind', 'InstallDir', 'StartType')) {
-                        if ($null -eq $svc.PSObject.Properties[$property]) {
-                            throw "Ungueltiger Dienst-Datensatz: Eigenschaft '$property' fehlt (Typ: $($svc.GetType().FullName))."
-                        }
-                    }
-                    $name = [string]$svc.Name
-                    $kind = [string]$svc.Kind
-                    if ([string]::IsNullOrWhiteSpace($name) -or $kind -notin @('payment', 'fiscal') -or
-                        $name -notmatch ('(?i)^nt\.' + [regex]::Escape($kind) + '(?:\.|$)')) {
-                        throw "Ungueltige Dienst-Zuordnung: Name='$name', Kind='$kind'."
-                    }
-                    if ([string]::IsNullOrWhiteSpace([string]$svc.InstallDir)) {
-                        throw "Installationsverzeichnis fuer '$name' fehlt."
-                    }
-                    if ([string]$svc.StartType -ne 'Disabled') { $servicesToStart += $name }
-                }
-                $changed = @()
-                try {
-                    foreach ($svc in $wanted) {
-                        $service = Get-Service -Name $svc.Name -ErrorAction Stop
-                        if ($service.Status -ne 'Stopped') {
-                            Stop-Service -Name $svc.Name -Force -ErrorAction Stop
-                            $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
-                        }
-                    }
-                    $installPaths = @($wanted | Group-Object -Property Kind,InstallDir)
-                    foreach ($group in $installPaths) {
-                        $svc = $group.Group[0]
-                        $src = Join-Path $stageDir $svc.Kind
-                        if (-not (Test-Path -LiteralPath $svc.InstallDir -PathType Container)) { throw "Installationsverzeichnis fehlt: $($svc.InstallDir)" }
-                        $items = @(Get-ChildItem -LiteralPath $src -Force)
-                        if ($items.Count -eq 0) { throw "Leeres Archiv für $($svc.Kind)" }
-                        # Copy by relative path so ZIP structures behave exactly like Expand-Archive -DestinationPath.
-                        foreach ($folder in @(Get-ChildItem -LiteralPath $src -Directory -Recurse -Force)) {
-                            $relative = $folder.FullName.Substring($src.Length).TrimStart('\')
-                            $destination = Join-Path $svc.InstallDir $relative
-                            New-Item -ItemType Directory -Path $destination -Force -ErrorAction Stop | Out-Null
-                        }
-                        foreach ($file in @(Get-ChildItem -LiteralPath $src -File -Recurse -Force)) {
-                            $relative = $file.FullName.Substring($src.Length).TrimStart('\')
-                            $destination = Join-Path $svc.InstallDir $relative
-                            $parent = Split-Path $destination -Parent
-                            if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
-                                New-Item -ItemType Directory -Path $parent -Force -ErrorAction Stop | Out-Null
-                            }
-                            Copy-Item -LiteralPath $file.FullName -Destination $destination -Force -ErrorAction Stop
-                        }
-                        $changed += ($svc.Kind + ' => ' + $svc.InstallDir)
-                    }
-                }
-                finally {
-                    $restartErrors = @()
-                    foreach ($name in $servicesToStart) {
-                        try {
-                            Start-Service -Name $name -ErrorAction Stop
-                            (Get-Service -Name $name).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
-                        } catch { $restartErrors += "Dienst ${name} konnte nicht wieder gestartet werden: $($_.Exception.Message)" }
-                    }
-                    if ($restartErrors.Count -gt 0) { throw ($restartErrors -join ' | ') }
-                }
-                return ,$changed
-            }
+            $suiteTarget = if ($targets.ContainsKey('serversuite')) { [string]$targets.serversuite } else { '' }
+            $installResult = Invoke-Command -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget -ErrorAction Stop -ScriptBlock ${function:InstallUpdatePackages}
             Progress 'Verifikation' 'Versionen und Dienststatus werden erneut kontrolliert'
-            $after = @(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory})
+            $after = @(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
             $mistakes = @()
             foreach ($oldSvc in $pending) {
                 $current = @($after | Where-Object Name -eq $oldSvc.Name | Select-Object -First 1)
                 if ($current.Count -ne 1) { $mistakes += "Dienst verschwunden: $($oldSvc.Name)"; continue }
                 if (-not (IsTargetVersion $current[0] $targets[$oldSvc.Kind])) {
-                    $mistakes += "Falsche Version $($oldSvc.Name): Product=$($current[0].ProductVersion), File=$($current[0].FileVersion), erwartet $($targets[$oldSvc.Kind])"
+                    if ($oldSvc.Kind -eq 'serversuite') {
+                        $mistakes += "Falsche Version $($oldSvc.Name): version.txt=$($current[0].ProductVersion), erwartet $($targets[$oldSvc.Kind])"
+                    } else {
+                        $mistakes += "Falsche Version $($oldSvc.Name): Product=$($current[0].ProductVersion), File=$($current[0].FileVersion), erwartet $($targets[$oldSvc.Kind])"
+                    }
                 }
                 if ($oldSvc.StartType -ne 'Disabled' -and $current[0].State -ne 'Running') {
                     $mistakes += "Dienst läuft nicht: $($oldSvc.Name)"
@@ -442,10 +401,7 @@ try {
         }
         catch { $updateError = $_.Exception.Message; throw }
         finally {
-            Invoke-Command -Session $session -ArgumentList $stage -ScriptBlock {
-                param($dir)
-                Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
-            } -ErrorAction SilentlyContinue | Out-Null
+            Invoke-Command -Session $session -ArgumentList $stage, $remotePath -ScriptBlock ${function:RemoveUpdateStage} -ErrorAction SilentlyContinue | Out-Null
         }
     }
     finally { if ($null -ne $session) { Remove-PSSession -Session $session -ErrorAction SilentlyContinue } }

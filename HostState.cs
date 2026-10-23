@@ -12,9 +12,11 @@ internal sealed class HostState
     public bool? DotNet48Installed { get; set; }
     public string Payment { get; set; } = "–";
     public string Fiscal { get; set; } = "–";
+    public string ServerSuite { get; set; } = "–";
     public string PosVersion { get; set; } = "–";
     public string PaymentBefore { get; set; } = "–";
     public string FiscalBefore { get; set; } = "–";
+    public string ServerSuiteBefore { get; set; } = "–";
     public string Phase { get; set; } = "Bereit";
     public string Result
     {
