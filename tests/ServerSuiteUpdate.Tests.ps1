@@ -3,6 +3,12 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 function Assert($condition, [string]$message) { if (-not $condition) { throw $message } }
+function AssertLivePhase([string]$phase) {
+    if (-not $script:checkLiveProgress) { return }
+    $lastLine=@($script:workerOutput.ToString() -split '\r?\n' | Where-Object { $_.Trim() })[-1]
+    $lastMessage=$lastLine | ConvertFrom-Json
+    Assert ($lastMessage.Event -eq 'progress' -and $lastMessage.Phase -eq $phase) "Phase '$phase' must reach the UI before the operation starts, not after the remote call returns"
+}
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:fixture = Join-Path $workspace ('obj\su-' + [guid]::NewGuid().ToString('N').Substring(0,8))
 Assert ($script:fixture.StartsWith($workspace + '\obj\', [StringComparison]::OrdinalIgnoreCase)) 'Fixture must remain below workspace obj'
@@ -44,6 +50,7 @@ function Get-Service {
 }
 function Stop-Service {
     [CmdletBinding()] param([string]$Name, [switch]$Force)
+    AssertLivePhase 'Dienste stoppen'
     $service = Get-Service -Name $Name
     $script:events.Add('stop:' + $service.Name)
     if ($script:stopFailure -eq $service.Name) { throw 'Simulated stop failure' }
@@ -51,6 +58,7 @@ function Stop-Service {
 }
 function Start-Service {
     [CmdletBinding()] param([string]$Name)
+    AssertLivePhase 'Dienste starten'
     $service = Get-Service -Name $Name
     $script:events.Add('start:' + $service.Name)
     if ($script:startFailure -eq $service.Name) { throw 'Simulated start failure' }
@@ -64,6 +72,7 @@ function Remove-Item {
 }
 function Copy-Item {
     [CmdletBinding()] param([string]$LiteralPath, [string]$Destination, [switch]$Recurse, [switch]$Force, $ToSession)
+    if ($null -eq $ToSession) { AssertLivePhase 'Update installieren' }
     $source = FixturePath $LiteralPath
     $target = FixturePath $Destination
     $script:events.Add($(if ($null -ne $ToSession) { 'transfer:' } else { 'copy:' }) + $target)
@@ -84,10 +93,20 @@ $source = Get-Content -LiteralPath (Join-Path $workspace 'RemoteWorker.ps1') -Ra
 $tokens = $null; $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$parseErrors)
 Assert ($parseErrors.Count -eq 0) ($parseErrors | Out-String)
+$script:realInventory = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'ReadInventory' }, $true).Body.GetScriptBlock()
+function Get-ItemProperty {
+    param($LiteralPath, $Name, $ErrorAction)
+    $prefix='HKLM:\SYSTEM\CurrentControlSet\Services\'
+    Assert ($LiteralPath.StartsWith($prefix) -and $Name -eq 'ImagePath') 'Unexpected registry query in integration test'
+    $svc=@($script:installed | Where-Object Name -eq $LiteralPath.Substring($prefix.Length))
+    Assert ($svc.Count -eq 1) 'Expected one registry ImagePath per service'
+    [pscustomobject]@{ ImagePath=('"' + $svc[0].ExePath + '" --service') }
+}
 $readers = @{
     ReadInventory = @'
 function ReadInventory {
     $script:inventoryReads++
+    if ($script:useRealInventory) { & $script:realInventory; return }
     foreach ($svc in $script:installed) {
         if ($script:inventoryReads -gt 1 -and $script:missingAfter -eq $svc.Name) { continue }
         $version = if ($svc.Kind -eq 'serversuite') { [IO.File]::ReadAllText((Join-Path $svc.InstallDir 'version.txt')).Trim() }
@@ -118,21 +137,23 @@ function ResetCase([string]$name) {
     $script:stopFailure=''; $script:startFailure=''; $script:copyFailure=''; $script:reparsePath=''
     $script:staleAfter=''; $script:stoppedAfter=''; $script:missingAfter=''
     $script:inventoryReads=0; $script:sessionRemoved=0; $script:changedServiceSet=$false
+    $script:useRealInventory=$false
+    $script:checkLiveProgress=$false; $script:workerOutput=$null
     $script:request = @{ Host='example.invalid'; Action='update'; Username=''; Password=''; UseSsl=$false;
         PaymentZip=''; PaymentVersion=''; PaymentSha256=''; FiscalZip=''; FiscalVersion=''; FiscalSha256='';
         ServerSuiteZip=''; ServerSuiteVersion='2026.4.9792'; ServerSuiteSha256='';
         RemoteInstallPath=(Join-Path $script:case 'remote'); SkipZipTransfer=$false; ForceUpdate=$false }
 }
-function Service([string]$suffix, [string]$instance, [string]$version='2026.3.9700', [string]$startType='Automatic', [string]$relativeExe='suite.exe') {
-    $name = 'nt3_server_suite_' + $suffix
+function Service([string]$suffix, [string]$instance, [string]$version='2026.3.9700', [string]$startType='Automatic', [string]$relativeExe='python.exe', [string]$fullName='') {
+    $name = if ($fullName) { $fullName } else { 'nt3_server_suite_' + $suffix }
     $root = Join-Path $script:case ($instance + '\apps\nt3-server-suite')
-    $exe = Join-Path $root $relativeExe
+    $exe = Join-Path $script:case ($instance + '\portable_python\' + $relativeExe)
     WriteFixture $exe '3.13.2'
     WriteFixture (Join-Path $root 'version.txt') $version
-    WriteFixture (Join-Path $root 'obsolete.txt') 'must be removed'
+    WriteFixture (Join-Path $root 'obsolete.txt') 'keep local suite file'
     WriteFixture (Join-Path $script:case ($instance + '\apps\outside.txt')) 'must survive'
     WriteFixture (Join-Path $script:case ($instance + '\portable_python\python.exe')) '3.13.2'
-    WriteFixture (Join-Path $script:case ($instance + '\portable_python\obsolete-python.txt')) 'remove old Python files'
+    WriteFixture (Join-Path $script:case ($instance + '\portable_python\obsolete-python.txt')) 'keep local Python file'
     $script:pythonRoots=@($script:pythonRoots + (Join-Path $script:case ($instance + '\portable_python')) | Select-Object -Unique)
     WriteFixture (Join-Path $script:case ($instance + '\outside-root.txt')) 'must survive'
     $status = if ($startType -eq 'Disabled') { 'Stopped' } else { 'Running' }
@@ -188,8 +209,10 @@ function RunWorker([bool]$success=$true, [string]$errorPattern='') {
     $script:requestJson = $script:request | ConvertTo-Json -Compress
     $writer = [IO.StringWriter]::new()
     $original = [Console]::Out
-    try { [Console]::SetOut($writer); & $worker } finally { [Console]::SetOut($original) }
+    $script:workerOutput=$writer
+    try { [Console]::SetOut($writer); & $worker } finally { [Console]::SetOut($original); $script:workerOutput=$null }
     $messages = @($writer.ToString() -split '\r?\n' | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+    $script:lastWorkerMessages=$messages
     $results = @($messages | Where-Object Event -eq 'result')
     Assert ($results.Count -eq 1) "Expected exactly one result: $($writer.ToString())"
     $result = $results[0]
@@ -214,36 +237,63 @@ function Passed([string]$message) { Write-Output ('PASS ' + $message) }
 
 try {
     ResetCase 'multiple'
-    Service 'a' 'one'; Service 'b' 'two' '2026.4.9792.0'; Service 'c' 'one'; Service 'disabled' 'three' '2026.3.9700' 'Disabled' 'bin\suite.exe'
-    Package @{ 'apps/nt3-server-suite/suite.exe'='3.13.2'; 'apps/nt3-server-suite/bin/suite.exe'='3.13.2'; 'apps/nt3-server-suite/version.txt'='2026.4.9792.0'; 'apps/nt3-server-suite/new.txt'='new'; 'apps/unrelated/no.txt'='never deploy' }
+    $script:checkLiveProgress=$true
+    Service 'a' 'one'; Service 'b' 'two' '2026.4.9792.0'; Service 'c' 'one'; Service 'disabled' 'three' '2026.3.9700' 'Disabled' 'Lib\site-packages\win32\PythonService.exe'
+    Package @{ 'apps/nt3-server-suite/version.txt'='2026.4.9792.0'; 'apps/nt3-server-suite/new.txt'='new'; 'apps/unrelated/no.txt'='never deploy';
+        'installer/python/portable_python/python.exe'='3.14.0'; 'installer/python/portable_python/Lib/runtime.py'='new Python library';
+        'installer/python/portable_python/Lib/site-packages/win32/PythonService.exe'='3.14.0' }
     $result = RunWorker
     Assert ($result.Changed -and $result.Services.Count -eq 4) 'All suite instances must be returned and verified'
-    $targetDeletes = @($script:events | Where-Object { $_ -match '^delete:.*\\nt3-server-suite$' })
-    Assert ($targetDeletes.Count -eq 3) 'Shared suite directory must be replaced once'
-    $pythonDeletes = @($script:events | Where-Object { $_ -match '^delete:.*\\portable_python$' })
-    Assert ($pythonDeletes.Count -eq 3) 'Shared Python directory must be replaced once'
-    $firstDelete = $script:events.IndexOf(@($script:events | Where-Object { $_ -match '^delete:.*\\(nt3-server-suite|portable_python)$' })[0])
+    Assert (@($script:events | Where-Object { $_ -match '^delete:.*\\(nt3-server-suite|portable_python)$' }).Count -eq 0) 'Client folders must never be deleted'
+    $firstCopy = $script:events.IndexOf(@($script:events | Where-Object { $_ -like 'copy:*' })[0])
     $stops = @($script:events | Where-Object { $_ -like 'stop:*' })
     Assert ($stops.Count -eq 3) 'Every non-stopped suite instance, including current ones, must stop'
-    foreach ($stop in $stops) { Assert ($script:events.IndexOf($stop) -lt $firstDelete) 'All services must stop before the first deletion' }
+    foreach ($stop in $stops) { Assert ($script:events.IndexOf($stop) -lt $firstCopy) 'All services must stop before the first copy' }
     $lastCopy = @($script:events | Where-Object { $_ -like 'copy:*' })[-1]
     foreach ($start in @($script:events | Where-Object { $_ -like 'start:*' })) { Assert ($script:events.IndexOf($start) -gt $script:events.IndexOf($lastCopy)) 'All folders must be copied before any restart' }
     Assert ('start:nt3_server_suite_disabled' -notin $script:events -and $script:serviceStates['nt3_server_suite_disabled'].Status -eq 'Stopped') 'Disabled service must remain stopped'
     foreach ($instance in @('one','two','three')) {
         $apps = Join-Path $script:case ($instance + '\apps')
-        Assert (-not (Test-Path -LiteralPath (Join-Path $apps 'nt3-server-suite\obsolete.txt'))) 'Old suite files must be removed'
+        Assert ([IO.File]::ReadAllText((Join-Path $apps 'nt3-server-suite\obsolete.txt')) -eq 'keep local suite file') 'Additional local suite files must be retained'
         Assert (Test-Path -LiteralPath (Join-Path $apps 'nt3-server-suite\new.txt')) 'New suite content must be deployed'
         Assert ([IO.File]::ReadAllText((Join-Path $apps 'outside.txt')) -eq 'must survive') 'Files outside the suite directory must survive'
         Assert (-not (Test-Path -LiteralPath (Join-Path $apps 'unrelated'))) 'Other ZIP apps must not be deployed'
         $installRoot = [IO.Path]::GetDirectoryName($apps)
         Assert ([IO.File]::ReadAllText((Join-Path $installRoot 'portable_python\python.exe')) -eq '3.14.0') 'Python must be replaced beside apps'
-        Assert (-not (Test-Path -LiteralPath (Join-Path $installRoot 'portable_python\obsolete-python.txt'))) 'Old Python files must be removed'
+        Assert ([IO.File]::ReadAllText((Join-Path $installRoot 'portable_python\obsolete-python.txt')) -eq 'keep local Python file') 'Additional local Python files must be retained'
         Assert ([IO.File]::ReadAllText((Join-Path $installRoot 'portable_python\Lib\runtime.py')) -eq 'new Python library') 'New Python subdirectories must be copied'
         Assert (-not (Test-Path -LiteralPath (Join-Path $apps 'nt3-server-suite\portable_python'))) 'Python must not be copied inside the suite directory'
         Assert ([IO.File]::ReadAllText((Join-Path $installRoot 'outside-root.txt')) -eq 'must survive') 'Files beside apps and portable_python must survive'
         Assert (-not (Test-Path -LiteralPath (Join-Path $installRoot 'installer'))) 'Other installer content must not be deployed'
     }
-    Passed 'suite and sibling portable_python replaced for all instances; shared paths once; all stops before deletion and starts after copying'
+    $versionCopies=@($script:events | Where-Object { $_ -match '^copy:.*\\nt3-server-suite\\version.txt$' })
+    $pythonCopies=@($script:events | Where-Object { $_ -match '^copy:.*\\portable_python\\python.exe$' })
+    Assert ($versionCopies.Count -eq 3 -and $pythonCopies.Count -eq 3) 'Shared suite and Python folders must receive each file once'
+    Assert (@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Instanz vorgesehen' }).Count -eq 4 -and
+        @($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Instanz gepr' + [char]0x00FC + 'ft' }).Count -eq 4) 'Every suite instance must appear in planning and verification logs'
+    Assert (@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Update installieren' }).Count -eq 6) 'Every distinct suite and Python destination must be reported live during installation'
+    Passed 'all instances copied and verified without deleting client folders or extra files; shared paths once'
+    Passed 'stop, installation and start phases reach the UI before their operations execute'
+
+    ResetCase 'real-inventory'; Service 'a' 'one' -fullName 'nt3_server_suite'; Service 'b' 'two' -fullName 'nt3_server_suiteRetail'; Service 'c' 'one' -fullName 'NT3_SERVER_SUITE_C'
+    $script:useRealInventory=$true; Package; $result=RunWorker
+    Assert ($result.Services.Count -eq 3 -and @($script:events | Where-Object { $_ -like 'stop:*' }).Count -eq 3 -and
+        @($script:events | Where-Object { $_ -like 'start:*' }).Count -eq 3) 'Real inventory must route every prefix-matching service through stop/copy/start'
+    foreach ($svc in $result.Services) {
+        Assert ($svc.ProductVersion -eq '2026.4.9792.0' -and $svc.State -eq 'Running' -and
+            [IO.File]::ReadAllText($svc.ExePath) -eq '3.14.0') 'Every EXE-derived installation must receive both payloads and be verified'
+    }
+    Passed 'real service-registry inventory through update: all nt3_server_suite prefixes and distinct EXE roots'
+
+    ResetCase 'new-targets'; Service 'a' 'one'; Package; $script:useRealInventory=$true
+    Remove-Item -LiteralPath (Join-Path $script:case 'one\apps') -Recurse -Force
+    Remove-Item -LiteralPath (Join-Path $script:case 'one\portable_python') -Recurse -Force
+    $script:events.Clear()
+    $result=RunWorker
+    Assert ($result.Services[0].ProductVersion -eq '2026.4.9792.0' -and
+        [IO.File]::ReadAllText((Join-Path $script:case 'one\portable_python\python.exe')) -eq '3.14.0') 'Registered service with missing target folders must create suite and Python directories'
+    Assert (@($script:events | Where-Object { $_ -match '^delete:.*\\(nt3-server-suite|portable_python)$' }).Count -eq 0) 'Creating missing target folders must not delete client folders'
+    Passed 'real inventory with missing version.txt and target folders creates both targets and verifies the service'
 
     ResetCase 'external-python'; Service 'a' 'one'; Service 'b' 'two'
     foreach ($svc in $script:installed) {
@@ -267,16 +317,67 @@ try {
     Assert ([IO.File]::ReadAllText((Join-Path $pythonRoot 'python.exe')) -eq '3.14.0') 'Missing client runtime must be created at the sibling path'
     Passed 'missing client portable_python is installed from the ZIP'
 
-    foreach ($badPython in @('missing','empty','missing-service-exe')) {
+    ResetCase 'file-folder-conflict'; Service 'a' 'one'; Package
+    $pythonExe=Join-Path $script:case 'one\portable_python\python.exe'
+    Remove-Item -LiteralPath $pythonExe -Force
+    [void][IO.Directory]::CreateDirectory($pythonExe)
+    $script:events.Clear()
+    $null=RunWorker $false 'Datei kann keinen vorhandenen Ordner ersetzen'
+    Assert ([IO.Directory]::Exists($pythonExe) -and -not [IO.File]::Exists((Join-Path $pythonExe 'python.exe'))) 'Conflicting directory must remain intact and must not receive a wrongly nested file'
+    Passed 'file-versus-folder conflict reports an error and preserves the existing directory'
+
+    ResetCase 'local-service-exes'
+    Service 'HKS' 'one' -relativeExe 'nt3_server_suite_HKS.exe'
+    Service 'Retail' 'two' -relativeExe 'Services\nt3_server_suite_Retail.exe'
+    Service 'Shared' 'one' -relativeExe 'nt3_server_suite_Shared.exe'
+    $script:useRealInventory=$true
+    $serviceHashes=@{}
+    foreach ($svc in $script:installed) { $serviceHashes[$svc.ExePath]=(Get-FileHash -LiteralPath $svc.ExePath -Algorithm SHA256).Hash }
+    Package
+    $result=RunWorker
+    Assert ($result.Changed -and $result.Services.Count -eq 3) 'All instances must update without instance-specific service EXEs in the ZIP'
+    foreach ($svc in $script:installed) {
+        Assert ((Get-FileHash -LiteralPath $svc.ExePath -Algorithm SHA256).Hash -eq $serviceHashes[$svc.ExePath]) 'Service EXE absent from the ZIP must remain byte-identical'
+        Assert (('copy:' + $svc.ExePath) -notin $script:events) 'Instance-specific EXE must not be overwritten without a matching ZIP file'
+        Assert ([IO.File]::ReadAllText((Join-Path $svc.InstallDir 'version.txt')) -eq '2026.4.9792.0') 'Every suite root must receive the new version'
+        Assert (('stop:' + $svc.Name) -in $script:events -and ('start:' + $svc.Name) -in $script:events) 'Each instance must stop and restart'
+    }
+    foreach ($root in $script:pythonRoots) {
+        Assert ([IO.File]::ReadAllText((Join-Path $root 'python.exe')) -eq '3.14.0') 'Generic Python EXE must still be overwritten from the ZIP'
+        Assert ([IO.File]::ReadAllText((Join-Path $root 'obsolete-python.txt')) -eq 'keep local Python file') 'Additional local runtime files must remain intact'
+    }
+    Assert (@($script:events | Where-Object { $_ -match '^delete:' -and $_ -notmatch '\.novatouch-updater-stage-' }).Count -eq 0) 'No installed client files or folders may be deleted'
+    Passed 'installation-generated service EXEs absent from the ZIP survive updates of all separate and shared instances'
+
+    foreach ($missingClientExe in @($false,$true)) {
+        ResetCase ('payload-service-exe-' + $missingClientExe)
+        Service 'HKS' 'one' -relativeExe 'nt3_server_suite_HKS.exe'
+        $serviceExe=$script:installed[0].ExePath
+        if ($missingClientExe) { Remove-Item -LiteralPath $serviceExe -Force; $script:events.Clear() }
+        $script:useRealInventory=$true
+        Package @{ 'apps/nt3-server-suite/version.txt'='2026.4.9792';
+            'installer/python/portable_python/nt3_server_suite_HKS.exe'='updated service EXE' }
+        $null=RunWorker
+        Assert ([IO.File]::ReadAllText($serviceExe) -eq 'updated service EXE') 'A matching ZIP file must replace or create the service EXE'
+        Assert (('copy:' + $serviceExe) -in $script:events) 'A matching service EXE must be copied from the ZIP'
+        Passed ('matching ZIP service EXE is copied; missing client EXE: ' + $missingClientExe)
+    }
+
+    ResetCase 'service-exe-missing-both'
+    Service 'HKS' 'one' -relativeExe 'nt3_server_suite_HKS.exe'
+    Remove-Item -LiteralPath $script:installed[0].ExePath -Force
+    $script:events.Clear()
+    $script:useRealInventory=$true
+    Package
+    $null=RunWorker $false 'Dienst-EXE.*nt3_server_suite_HKS.*Client.*ZIP'
+    NoServiceOrTargetChanges
+    Passed 'service EXE missing from both client and ZIP fails before any service or installation changes'
+
+    foreach ($badPython in @('missing','empty')) {
         ResetCase ('bad-python-' + $badPython); Service 'a' 'one'
         switch ($badPython) {
             'missing' { Package -WithoutPython; $pattern='installer.*python.*portable_python' }
             'empty' { Package @{ 'apps/nt3-server-suite/suite.exe'='3.13.2'; 'apps/nt3-server-suite/version.txt'='2026.4.9792'; 'installer/python/portable_python/'='' } -WithoutPython; $pattern='installer.*python.*portable_python' }
-            'missing-service-exe' {
-                $script:installed[0].ExePath=Join-Path $script:case 'one\portable_python\python.exe'
-                Package @{ 'apps/nt3-server-suite/version.txt'='2026.4.9792'; 'installer/python/portable_python/helper.txt'='incomplete runtime' }
-                $pattern='Dienst-EXE.*python.exe'
-            }
         }
         $null=RunWorker $false $pattern; NoServiceOrTargetChanges
         Passed ('invalid Python payload rejected before any service or installation changes: ' + $badPython)
@@ -327,7 +428,7 @@ try {
                 $pythonRoot = Join-Path $script:case ($instance + '\portable_python')
                 $expectedPython = if ($selectedKind -eq 'serversuite') { '3.14.0' } else { '3.13.2' }
                 Assert ([IO.File]::ReadAllText((Join-Path $pythonRoot 'python.exe')) -eq $expectedPython) 'Python must update only with a selected suite ZIP, including Force mode'
-                Assert ((Test-Path -LiteralPath (Join-Path $pythonRoot 'obsolete-python.txt')) -eq ($selectedKind -ne 'serversuite')) 'Unselected Python files must remain untouched'
+                Assert (Test-Path -LiteralPath (Join-Path $pythonRoot 'obsolete-python.txt')) 'Additional Python files must remain present for every update selection'
             }
             Passed ("single ZIP updates only $selectedKind (Force=$force), leaving other services and files untouched")
         }
@@ -352,11 +453,10 @@ try {
     Assert ('stop:nt3_server_suite_a' -in $script:events) 'Force must reinstall a selected current suite'
     Passed 'force update reinstalls current selected suite'
 
-    foreach ($bad in @('missing-folder','missing-exe','missing-version','empty-version','version','traversal','empty')) {
+    foreach ($bad in @('missing-folder','missing-version','empty-version','version','traversal','empty')) {
         ResetCase $bad; Service 'a' 'one'
         switch ($bad) {
             'missing-folder' { Package @{ 'suite.exe'='2026.4.9792' }; $pattern='apps.*nt3-server-suite' }
-            'missing-exe' { Package @{ 'apps/nt3-server-suite/other.exe'='3.13.2'; 'apps/nt3-server-suite/version.txt'='2026.4.9792' }; $pattern='Dienst-EXE' }
             'missing-version' { Package @{ 'apps/nt3-server-suite/suite.exe'='2026.4.9792' }; $pattern='keine.*version.txt' }
             'empty-version' { Package @{ 'apps/nt3-server-suite/suite.exe'='2026.4.9792'; 'apps/nt3-server-suite/version.txt'=" `r`n" }; $pattern='version.txt.*erwartet' }
             'version' { Package @{ 'apps/nt3-server-suite/suite.exe'='2026.4.9792'; 'apps/nt3-server-suite/version.txt'='2025.1.1' }; $pattern='2025.1.1.*2026.4.9792' }
@@ -374,6 +474,11 @@ try {
     $script:installed[0].ExePath=$wrong; $script:installed[0].InstallDir=[IO.Path]::GetDirectoryName($wrong)
     $null = RunWorker $false 'Kein eindeutiger Ordner'; NoServiceOrTargetChanges
     Passed 'unrecognized installation path fails before stopping or deleting'
+    ResetCase 'mismatched-inventory'; Service 'a' 'one'; Package
+    $script:installed[0].ExePath=Join-Path $script:case 'other\portable_python\python.exe'
+    WriteFixture $script:installed[0].ExePath '3.13.2'
+    $null=RunWorker $false 'Dienstpfad und Server-Suite-Installationspfad'; NoServiceOrTargetChanges
+    Passed 'inventory cannot redirect copies away from the registered service EXE installation'
     ResetCase 'wrong-apps-parent'; Service 'a' 'one'; Package
     $wrong=Join-Path $script:case 'one\other\nt3-server-suite'
     WriteFixture (Join-Path $wrong 'version.txt') '2026.3.9700'

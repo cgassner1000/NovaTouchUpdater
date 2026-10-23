@@ -14,44 +14,44 @@ function Progress([string]$phase, [string]$message) {
 }
 
 function ReadInventory {
-    function SuiteDirectory([string]$exe, [string]$imagePath) {
-        # A Python service may reference the suite in its arguments, or live in
-        # a portable Python directory beside apps\nt3-server-suite.
-        $roots = @([regex]::Matches($imagePath, '(?i)[A-Z]:[\\/][^":\r\n]*?[\\/]nt3-server-suite(?=[\\/\s"]|$)') |
-            ForEach-Object { [IO.Path]::GetFullPath($_.Value).TrimEnd('\') } | Sort-Object -Unique)
-        if ($roots.Count -eq 1) { return $roots[0] }
-        if ($roots.Count -gt 1) { throw "Mehrere Server-Suite-Ordner im Dienstpfad; keine eindeutige Zuordnung: $imagePath" }
-        $cursor = [IO.Path]::GetDirectoryName($exe)
+    function SuiteDirectory([string]$exe) {
+        # The registered service EXE is authoritative. Do not infer an instance
+        # from command-line arguments or search other installations on disk.
+        if ($exe -notmatch '^[A-Za-z]:\\') { throw "Kein absoluter Windows-Dienstpfad: $exe" }
+        $cursor = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($exe))
         while ($cursor) {
-            $candidate = if ([IO.Path]::GetFileName($cursor.TrimEnd('\')) -ieq 'apps') {
-                [IO.Path]::Combine($cursor, 'nt3-server-suite')
-            } else { [IO.Path]::Combine($cursor, 'apps\nt3-server-suite') }
-            if (Test-Path -LiteralPath $candidate -PathType Container -ErrorAction Stop) {
-                return [IO.Path]::GetFullPath($candidate).TrimEnd('\')
+            if ([IO.Path]::GetFileName($cursor.TrimEnd('\')) -ieq 'portable_python') {
+                return [IO.Path]::Combine([IO.Path]::GetDirectoryName($cursor), 'apps\nt3-server-suite')
             }
             $cursor = [IO.Path]::GetDirectoryName($cursor.TrimEnd('\'))
         }
-        throw "Kein eindeutiger Ordner apps\nt3-server-suite zum Dienstpfad: $imagePath"
+        throw "Kein Ordner portable_python im registrierten Dienst-EXE-Pfad: $exe"
     }
     $services = @(Get-Service -ErrorAction Stop | Where-Object {
-        $_.Name -match '^nt\.(payment|fiscal)' -or $_.Name -match '^nt3_server_suite_.+$'
+        $_.Name -match '^nt\.(payment|fiscal)' -or $_.Name -match '^nt3_server_suite'
     })
     $inventory = @()
     foreach ($svc in $services) {
         $kind = if ($svc.Name -match '^nt\.payment') { 'payment' }
             elseif ($svc.Name -match '^nt\.fiscal') { 'fiscal' } else { 'serversuite' }
-        $imagePath = (Get-ItemProperty -LiteralPath ("HKLM:\SYSTEM\CurrentControlSet\Services\" + $svc.Name) -Name ImagePath -ErrorAction Stop).ImagePath
+        $imagePath = [Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath ("HKLM:\SYSTEM\CurrentControlSet\Services\" + $svc.Name) -Name ImagePath -ErrorAction Stop).ImagePath)
         if ($imagePath -match '^\s*"([^"]+?\.exe)"') { $exe = $Matches[1] }
         elseif ($imagePath -match '^\s*(.+?\.exe)(?:\s|$)') { $exe = $Matches[1] }
         else { throw "Executable-Pfad für $($svc.Name) nicht lesbar: $imagePath" }
         $installDir = [IO.Path]::GetDirectoryName($exe)
         if ($kind -eq 'serversuite') {
-            $installDir = SuiteDirectory $exe $imagePath
+            $installDir = SuiteDirectory $exe
             $versionFile = [IO.Path]::Combine($installDir, 'version.txt')
             try {
-                $text = [string](Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8 -ErrorAction Stop)
-                $productVersion = [regex]::Match($text, '\d+\.\d+\.\d+(?:\.\d+)?').Value
-                if (-not $productVersion) { throw 'Keine gültige Server-Suite-Version enthalten.' }
+                if (Test-Path -LiteralPath $versionFile -PathType Leaf -ErrorAction Stop) {
+                    $text = [string](Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8 -ErrorAction Stop)
+                    $productVersion = [regex]::Match($text, '\d+\.\d+\.\d+(?:\.\d+)?').Value
+                    if (-not $productVersion) { throw 'Keine gültige Server-Suite-Version enthalten.' }
+                } else {
+                    # A registered service can outlive its files. Keep it eligible
+                    # for an update that creates the missing target directories.
+                    $productVersion = 'Version unbekannt'
+                }
             }
             catch { throw "Server-Suite-Version für '$($svc.Name)' aus '$versionFile' nicht lesbar: $($_.Exception.Message)" }
             # Never use the Python/service executable's version as a fallback.
@@ -286,6 +286,13 @@ try {
 
         # Filter VOR ZIP-Uebertragung, Entpacken und jeglichem Dienst-Stopp.
         $pending = @(SelectUpdateServices $services $targets $forceUpdate)
+        $suiteInstances = @($pending | Where-Object Kind -eq 'serversuite')
+        if ($suiteInstances.Count -gt 0) {
+            Progress 'Server-Suite-Instanzen' ("Alle $($suiteInstances.Count) erkannten Instanzen werden berücksichtigt.")
+            foreach ($instance in $suiteInstances) {
+                Progress 'Instanz vorgesehen' ("$($instance.Name): Dienst-EXE=$($instance.ExePath); Suite=$($instance.InstallDir)")
+            }
+        }
         if ($pending.Count -eq 0) {
             $noneInstalled = @($services | Where-Object { $targets.ContainsKey($_.Kind) }).Count -eq 0
             Emit @{ Event='result'; Success=$true; Message=$(if ($noneInstalled) { 'Keine ausgewählten Dienste installiert - übersprungen' } else { 'Bereits auf Zielversion' }); Services=$services; Changed=$false; Skipped=$noneInstalled }
@@ -382,14 +389,20 @@ try {
         $updateError = $null
         try {
             $pendingNames = (@($pending | ForEach-Object { [string]$_.Name }) -join ', ')
-            Progress 'Dienste stoppen' ("Betroffene Dienste: " + $pendingNames)
+            Progress 'Update vorbereiten' ("Prüfe Dateien und Installationsziele für: " + $pendingNames)
             $wantedJson = ConvertTo-Json -InputObject @($pending) -Depth 12 -Compress
             $suiteTarget = if ($targets.ContainsKey('serversuite')) { [string]$targets.serversuite } else { '' }
-            $installResult = Invoke-Command -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget -ErrorAction Stop -ScriptBlock ${function:InstallUpdatePackages}
+            Invoke-Command -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget -ErrorAction Stop -ScriptBlock ${function:InstallUpdatePackages} |
+                ForEach-Object {
+                    if ($null -ne $_ -and $null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') {
+                        Progress ([string]$_.Phase) ([string]$_.Message)
+                    }
+                }
             Progress 'Verifikation' 'Versionen und Dienststatus werden erneut kontrolliert'
             $after = @(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
             $mistakes = @()
             foreach ($oldSvc in $pending) {
+                $previousErrors = $mistakes.Count
                 $current = @($after | Where-Object Name -eq $oldSvc.Name | Select-Object -First 1)
                 if ($current.Count -ne 1) { $mistakes += "Dienst verschwunden: $($oldSvc.Name)"; continue }
                 if (-not (IsTargetVersion $current[0] $targets[$oldSvc.Kind])) {
@@ -401,6 +414,9 @@ try {
                 }
                 if ($oldSvc.StartType -ne 'Disabled' -and $current[0].State -ne 'Running') {
                     $mistakes += "Dienst läuft nicht: $($oldSvc.Name)"
+                }
+                if ($oldSvc.Kind -eq 'serversuite' -and $mistakes.Count -eq $previousErrors) {
+                    Progress 'Instanz geprüft' ("$($oldSvc.Name): version.txt=$($current[0].ProductVersion); Status=$($current[0].State); Suite=$($current[0].InstallDir)")
                 }
             }
             if ($mistakes.Count -gt 0) { throw ($mistakes -join ' | ') }
