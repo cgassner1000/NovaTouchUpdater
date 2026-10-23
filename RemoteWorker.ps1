@@ -67,6 +67,23 @@ function CopyRemoteFileWithProgress($session, [string]$localFile, [string]$remot
     }
 }
 
+function GetUpdateTargets($request) {
+    $targets=@{}
+    foreach ($component in @(
+        @{ Kind='payment'; Prefix='Payment'; Label='Payment' },
+        @{ Kind='fiscal'; Prefix='Fiscal'; Label='Fiscal' },
+        @{ Kind='serversuite'; Prefix='ServerSuite'; Label='Server-Suite' }
+    )) {
+        $zipProperty=$request.PSObject.Properties[$component.Prefix + 'Zip']
+        if ($null -eq $zipProperty -or [string]::IsNullOrWhiteSpace([string]$zipProperty.Value)) { continue }
+        $versionProperty=$request.PSObject.Properties[$component.Prefix + 'Version']
+        if ($null -eq $versionProperty -or [string]::IsNullOrWhiteSpace([string]$versionProperty.Value)) { throw "$($component.Label)-ZIP ausgewählt, aber Zielversion fehlt." }
+        $targets[$component.Kind]=[string]$versionProperty.Value
+    }
+    if ($targets.Count -eq 0) { throw 'Keine Update-ZIP ausgewählt.' }
+    return $targets
+}
+
 function ReadInventory {
     function SuiteDirectory([string]$exe) {
         # The registered service EXE is authoritative. Do not infer an instance
@@ -240,6 +257,30 @@ try {
             Emit @{ Event='result'; Success=$true; Message='WinRM erreichbar und Anmeldung erfolgreich'; Services=@() }
             exit 0
         }
+        if ($req.Action -in @('check-upload-directory','clean-upload-directory')) {
+            $clean=$req.Action -eq 'clean-upload-directory'
+            $forUpdate=$null -ne $req.PSObject.Properties['CheckUpdateUpload'] -and [bool]$req.CheckUpdateUpload
+            if ($forUpdate) {
+                $uploadRequired=$false
+                if (-not [bool]$req.SkipZipTransfer) {
+                    $inventory=@(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
+                    $checkTargets=GetUpdateTargets $req
+                    $force=$null -ne $req.PSObject.Properties['ForceUpdate'] -and [bool]$req.ForceUpdate
+                    $uploadRequired=@(SelectUpdateServices $inventory $checkTargets $force).Count -gt 0
+                }
+                if (-not $uploadRequired) {
+                    Emit @{ Event='result'; Success=$true; UploadRequired=$false; Changed=$false; Message='Kein Update-Upload erforderlich'; Services=@() }
+                    exit 0
+                }
+            }
+            $snapshot=''
+            if ($null -ne $req.PSObject.Properties['ExpectedDirectorySnapshot']) { $snapshot=[string]$req.ExpectedDirectorySnapshot }
+            Progress 'Uploadziel' $(if ($clean) { 'Bestätigten Uploadordner bereinigen' } else { 'Inhalt des Uploadordners prüfen' })
+            $directory=Invoke-Command -Session $session -ArgumentList ([string]$req.RemoteInstallPath), $clean, $snapshot -ErrorAction Stop -ScriptBlock ${function:ManageUploadDirectory}
+            Emit @{ Event='result'; Success=$true; UploadRequired=$true; UploadDirectory=$directory; Changed=$directory.Cleaned;
+                Message=$(if ($clean) { 'Uploadordner bereinigt' } else { 'Uploadordner geprüft' }); Services=@() }
+            exit 0
+        }
         if ($req.Action -eq 'transfer') {
             $remotePath = [string]$req.RemoteInstallPath
             if ([string]::IsNullOrWhiteSpace($remotePath)) { throw 'RemoteInstallPath wurde nicht übergeben.' }
@@ -316,20 +357,7 @@ try {
         if ($req.Action -ne 'update') { throw ('Unbekannte Aktion: ' + $req.Action) }
 
         # Nur Komponenten mit explizit gewaehlter ZIP und Zielversion koennen aktualisiert werden.
-        $targets = @{}
-        if (-not [string]::IsNullOrWhiteSpace([string]$req.PaymentZip)) {
-            if ([string]::IsNullOrWhiteSpace([string]$req.PaymentVersion)) { throw 'Payment-ZIP ausgewählt, aber Payment-Zielversion fehlt.' }
-            $targets.payment = [string]$req.PaymentVersion
-        }
-        if (-not [string]::IsNullOrWhiteSpace([string]$req.FiscalZip)) {
-            if ([string]::IsNullOrWhiteSpace([string]$req.FiscalVersion)) { throw 'Fiscal-ZIP ausgewählt, aber Fiscal-Zielversion fehlt.' }
-            $targets.fiscal = [string]$req.FiscalVersion
-        }
-        if ($null -ne $req.PSObject.Properties['ServerSuiteZip'] -and -not [string]::IsNullOrWhiteSpace([string]$req.ServerSuiteZip)) {
-            if ([string]::IsNullOrWhiteSpace([string]$req.ServerSuiteVersion)) { throw 'Server-Suite-ZIP ausgewählt, aber Zielversion fehlt.' }
-            $targets.serversuite = [string]$req.ServerSuiteVersion
-        }
-        if ($targets.Count -eq 0) { throw 'Keine Update-ZIP ausgewählt.' }
+        $targets = GetUpdateTargets $req
 
         # Force Update setzt ausschliesslich den IST-/Zielversionsvergleich ausser Kraft.
         # Komponenten ohne ausgewaehltes ZIP bleiben IMMER unangetastet.

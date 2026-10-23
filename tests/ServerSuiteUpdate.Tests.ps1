@@ -14,6 +14,7 @@ $script:fixture = Join-Path $workspace ('obj\su-' + [guid]::NewGuid().ToString('
 Assert ($script:fixture.StartsWith($workspace + '\obj\', [StringComparison]::OrdinalIgnoreCase)) 'Fixture must remain below workspace obj'
 [void][IO.Directory]::CreateDirectory($script:fixture)
 . ([scriptblock]::Create((Get-Content -LiteralPath (Join-Path $workspace 'UpdateSteps.ps1') -Raw -Encoding UTF8)))
+. ([scriptblock]::Create((Get-Content -LiteralPath (Join-Path $workspace 'UploadDirectory.ps1') -Raw -Encoding UTF8)))
 
 function FixturePath([string]$path) {
     $full = [IO.Path]::GetFullPath($path)
@@ -581,6 +582,34 @@ try {
         Assert (@($script:events | Where-Object { $_ -like 'transfer:*' }).Count -eq 0) 'Disabled ZIP transfer must never upload files'
         Passed ('reuse ZIP with SHA256 validation: ' + $existing)
     }
+
+    ResetCase 'cleanup-handshake'
+    WriteFixture (Join-Path $script:request.RemoteInstallPath 'old.zip') 'old upload'
+    WriteFixture (Join-Path $script:request.RemoteInstallPath 'nested\keep.txt') 'local folder'
+    $script:request.Action='check-upload-directory'
+    $check=RunWorker
+    Assert ($check.UploadDirectory.EntryCount -eq 2 -and $check.UploadDirectory.CanClean -and $script:events.Count -eq 0) 'Upload inspection must be read-only and return a confirmation snapshot'
+    $firstSnapshot=$check.UploadDirectory.Snapshot
+    $local=Join-Path $script:case 'new.zip'; WriteFixture $local 'new upload'
+    $script:request.TransferFiles=@(@{LocalPath=$local;Sha256=(Get-FileHash -LiteralPath $local).Hash})
+    $script:request.Action='transfer'; $script:sessionRemoved=0; $null=RunWorker
+    Assert ([IO.File]::ReadAllText((Join-Path $script:request.RemoteInstallPath 'old.zip')) -eq 'old upload') 'Declining cleanup keeps existing files during upload'
+    $script:request.Action='clean-upload-directory'; $script:request.ExpectedDirectorySnapshot=$firstSnapshot; $script:sessionRemoved=0
+    $null=RunWorker $false 'seit der Abfrage'
+    Assert ([IO.File]::Exists((Join-Path $script:request.RemoteInstallPath 'old.zip'))) 'Changed folders require a fresh confirmation'
+    $script:request.Action='check-upload-directory'; $script:sessionRemoved=0; $check=RunWorker
+    $script:request.Action='clean-upload-directory'; $script:request.ExpectedDirectorySnapshot=$check.UploadDirectory.Snapshot; $script:sessionRemoved=0
+    $cleaned=RunWorker
+    Assert ($cleaned.Changed -and $cleaned.UploadDirectory.EntryCount -eq 0 -and [IO.Directory]::Exists($script:request.RemoteInstallPath)) 'Explicitly confirmed cleanup empties the exact folder and preserves the directory'
+    Passed 'upload directory check, keep, stale confirmation rejection and confirmed cleanup'
+
+    foreach ($skipTransfer in @($false,$true)) {
+        ResetCase ('no-cleanup-needed-' + $skipTransfer); Service 'a' 'one' '2026.4.9792.0'; Package
+        $script:request.Action='check-upload-directory'; $script:request.CheckUpdateUpload=$true; $script:request.SkipZipTransfer=$skipTransfer
+        $check=RunWorker
+        Assert (-not $check.UploadRequired -and $script:events.Count -eq 0 -and -not [IO.Directory]::Exists($script:request.RemoteInstallPath)) 'Current updates and disabled transfers must never prepare or clean an upload folder'
+    }
+    Passed 'already current updates and disabled ZIP transfers bypass upload cleanup'
 
     foreach ($reuse in @($false,$true)) {
         ResetCase ('transfer-progress-' + $reuse)

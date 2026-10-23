@@ -779,7 +779,14 @@ public sealed class MainForm : Form
                 };
             }
 
-            await Parallel.ForEachAsync(targets,
+            var ready = await PrepareUploadDirectoriesAsync(targets, false, (host, error) =>
+            {
+                failures.Add(host.Host + ": " + error);
+                Mark(host, h => { h.Phase = "Uploadvorbereitung fehlgeschlagen"; h.Error = error; });
+                CountCompleted();
+            }, ct);
+            if (ready is null) return;
+            await Parallel.ForEachAsync(ready,
                 new ParallelOptions { MaxDegreeOfParallelism = (int)nUpdate.Value, CancellationToken = ct },
                 async (host, token) =>
                 {
@@ -1068,7 +1075,18 @@ public sealed class MainForm : Form
             fiscalHash = await WorkerRunner.Sha256Async(fiscalZip, ct);
             serverSuiteHash = await WorkerRunner.Sha256Async(serverSuiteZip, ct);
             Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; Zielpfad: {activeRemoteInstallPath}; ZIP-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
-            await ParallelPhaseAsync(selected, (int)nUpdate.Value, async (host, token) =>
+            ResetProgress(selected.Length);
+            var ready = selected;
+            if (!activeSkipZipTransfer)
+            {
+                ready = await PrepareUploadDirectoriesAsync(selected, true, (host, error) =>
+                {
+                    Mark(host, h => { h.Phase = "Uploadvorbereitung fehlgeschlagen"; h.Error = error; h.Result = "Fehler"; h.UpdateFailed = true; });
+                    CountCompleted();
+                }, ct);
+                if (ready is null) return;
+            }
+            await ParallelPhaseAsync(ready, (int)nUpdate.Value, async (host, token) =>
             {
                 bool succeeded = false;
                 for (int attempt = 1; attempt <= 3; attempt++)
@@ -1204,6 +1222,81 @@ public sealed class MainForm : Form
             (previousResult != host.Result && statusFilter.SelectedIndex is 1 or 2)) RebuildRows();
         PaintRow(host);
         UpdateSummary();
+    }
+
+    private async Task<HostState[]?> PrepareUploadDirectoriesAsync(HostState[] targets, bool forUpdate,
+        Action<HostState, string> failed, CancellationToken ct)
+    {
+        var checks = new ConcurrentDictionary<HostState, WorkerResult>();
+        void Progress(HostState host, WorkerEvent ev)
+        {
+            Log(host.Host, ev.Phase + ": " + ev.Message);
+            Mark(host, h => h.ApplyProgress(ev));
+        }
+        await Parallel.ForEachAsync(targets,
+            new ParallelOptions { MaxDegreeOfParallelism=(int)nUpdate.Value, CancellationToken=ct }, async (host, token) =>
+        {
+            try
+            {
+                var request=Request("check-upload-directory",host);
+                request.CheckUpdateUpload=forUpdate;
+                WorkerResult result=new();
+                for (int attempt=1; attempt <= (forUpdate ? 3 : 1); attempt++)
+                {
+                    result=await runner.RunAsync(request, ev => Progress(host,ev), token);
+                    if (result.Success) break;
+                    if (forUpdate && attempt < 3) await Task.Delay(TimeSpan.FromSeconds(attempt*3),token);
+                }
+                if (!result.Success) throw new InvalidOperationException(FriendlyError(result));
+                if (result.UploadRequired && result.UploadDirectory is null) throw new InvalidOperationException("Keine gültige Uploadordner-Prüfung erhalten.");
+                checks[host]=result;
+                if (result.UploadDirectory is { } directory)
+                    Log(host.Host,$"Uploadziel geprüft: {directory.Path}; {directory.EntryCount} Einträge" +
+                        (directory.CanClean ? "" : "; Bereinigung gesperrt: " + directory.ProtectionReason));
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { Log(host.Host,"UPLOADZIEL => FEHLER " + ex.Message); failed(host,ex.Message); }
+        });
+        var nonempty=targets.Where(h => checks.TryGetValue(h,out var check) && check.UploadRequired && check.UploadDirectory is { EntryCount: > 0 })
+            .Select(h => (Host:h.Host, Directory:checks[h].UploadDirectory!)).ToArray();
+        if (nonempty.Length > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            using var dialog=new UploadDirectoryDialog(nonempty);
+            DialogResult choice=dialog.ShowDialog(this);
+            if (choice is not DialogResult.Yes and not DialogResult.No)
+            {
+                foreach (var host in checks.Keys) Mark(host,h => h.Phase="Upload abgebrochen");
+                Log("SYSTEM","Upload vor der Bereinigung abgebrochen.");
+                return null;
+            }
+            if (choice == DialogResult.Yes)
+            {
+                var cleanTargets=targets.Where(h => checks.TryGetValue(h,out var check) && check.UploadDirectory is { EntryCount: > 0, CanClean:true }).ToArray();
+                await Parallel.ForEachAsync(cleanTargets,
+                    new ParallelOptions { MaxDegreeOfParallelism=(int)nUpdate.Value, CancellationToken=ct }, async (host,token) =>
+                {
+                    try
+                    {
+                        var request=Request("clean-upload-directory",host);
+                        request.ExpectedDirectorySnapshot=checks[host].UploadDirectory!.Snapshot;
+                        var result=await runner.RunAsync(request, ev => Progress(host,ev), token);
+                        if (!result.Success) throw new InvalidOperationException(FriendlyError(result));
+                        Log(host.Host,"UPLOADZIEL BEREINIGT: " + checks[host].UploadDirectory!.Path);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        checks.TryRemove(host,out _);
+                        Log(host.Host,"UPLOADZIEL => FEHLER " + ex.Message);
+                        failed(host,ex.Message);
+                    }
+                });
+            }
+            else foreach (var host in checks.Keys) Log(host.Host,"Upload ohne Bereinigung bestätigt.");
+        }
+        ct.ThrowIfCancellationRequested();
+        return targets.Where(checks.ContainsKey).ToArray();
     }
 
     private async Task<WorkerResult> DoWorkerAsync(HostState host, string action, CancellationToken ct)

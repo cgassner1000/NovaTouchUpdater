@@ -19,6 +19,8 @@ public sealed class WorkerRequest
     public bool ForceUpdate { get; set; }
     public string RemoteInstallPath { get; set; } = "C:\\install\\Novacom";
     public bool SkipZipTransfer { get; set; }
+    public bool CheckUpdateUpload { get; set; }
+    public string ExpectedDirectorySnapshot { get; set; } = "";
     public string PaymentZip { get; set; } = "";
     public string FiscalZip { get; set; } = "";
     public string PaymentVersion { get; set; } = "";
@@ -78,6 +80,18 @@ public sealed class WorkerResult
     public bool? DotNet48Installed { get; set; }
     public string PosVersion { get; set; } = "";
     public ServiceInfo[] Services { get; set; } = [];
+    public bool UploadRequired { get; set; } = true;
+    public UploadDirectoryInfo? UploadDirectory { get; set; }
+}
+
+public sealed class UploadDirectoryInfo
+{
+    public string Path { get; set; } = "";
+    public int EntryCount { get; set; }
+    public string Snapshot { get; set; } = "";
+    public bool CanClean { get; set; }
+    public string ProtectionReason { get; set; } = "";
+    public bool Cleaned { get; set; }
 }
 
 public sealed class WorkerRunner : IDisposable
@@ -96,10 +110,13 @@ public sealed class WorkerRunner : IDisposable
         string script = reader.ReadToEnd();
         if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
         {
-            using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream("NovaTouchUpdater.UpdateSteps.ps1")
-                ?? throw new InvalidOperationException("Die eingebetteten Update-Schritte fehlen.");
-            using var stepsReader = new StreamReader(steps, Encoding.UTF8);
-            script = stepsReader.ReadToEnd() + Environment.NewLine + script;
+            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory" })
+            {
+                using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream($"NovaTouchUpdater.{helper}.ps1")
+                    ?? throw new InvalidOperationException($"Die eingebetteten Schritte {helper} fehlen.");
+                using var stepsReader = new StreamReader(steps, Encoding.UTF8);
+                script = stepsReader.ReadToEnd() + Environment.NewLine + script;
+            }
         }
         File.WriteAllText(scriptFile, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
     }

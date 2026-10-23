@@ -9,6 +9,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../CommandDialog.cs" Link="CommandDialog.cs" />
+    <Compile Include="../../UploadDirectoryDialog.cs" Link="UploadDirectoryDialog.cs" />
+    <Compile Include="../../WorkerRunner.cs" Link="WorkerRunner.cs" />
     <Compile Include="../../WindowLayout.cs" Link="WindowLayout.cs" />
     <Compile Include="../../WrappingFlowLayoutPanel.cs" Link="WrappingFlowLayoutPanel.cs" />
   </ItemGroup>

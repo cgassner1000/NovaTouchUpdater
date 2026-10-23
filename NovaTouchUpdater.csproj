@@ -15,6 +15,7 @@
     <Compile Remove="tests\**\*.cs" />
     <EmbeddedResource Include="RemoteWorker.ps1" LogicalName="NovaTouchUpdater.RemoteWorker.ps1" />
     <EmbeddedResource Include="UpdateSteps.ps1" LogicalName="NovaTouchUpdater.UpdateSteps.ps1" />
+    <EmbeddedResource Include="UploadDirectory.ps1" LogicalName="NovaTouchUpdater.UploadDirectory.ps1" />
     <EmbeddedResource Include="RemoteCommand.ps1" LogicalName="NovaTouchUpdater.RemoteCommand.ps1" />
     <EmbeddedResource Include="WinRmWorker.ps1" LogicalName="NovaTouchUpdater.WinRmWorker.ps1" />
     <EmbeddedResource Include="ConnectionWorker.ps1" LogicalName="NovaTouchUpdater.ConnectionWorker.ps1" />

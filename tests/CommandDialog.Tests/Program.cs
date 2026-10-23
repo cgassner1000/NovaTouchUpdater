@@ -29,6 +29,29 @@ internal static class Program
     {
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
+        foreach (bool protectedOnly in new[] { false, true })
+        {
+            using var cleanup=new UploadDirectoryDialog([
+                ("KASSE-01",new UploadDirectoryInfo { Path=@"C:\install\Novacom", EntryCount=4, CanClean=!protectedOnly, Snapshot="snapshot" }),
+                ("KASSE-02",new UploadDirectoryInfo { Path=@"D:\NovaTouch\apps\nt3-server-suite", EntryCount=50, CanClean=false, ProtectionReason="Installationsverzeichnis" })
+            ]);
+            _=cleanup.Handle;
+            for (int pass=0; pass<5; pass++) Layout(cleanup);
+            var controls=All(cleanup).Where(c => c.Name.Length>0).ToDictionary(c => c.Name);
+            var clean=(Button)controls["clean"];
+            var keep=(Button)controls["keep"];
+            var cancel=(Button)controls["cancel"];
+            var directories=(DataGridView)controls["directories"];
+            Assert(clean.Enabled==!protectedOnly && clean.DialogResult==DialogResult.Yes,
+                "cleanup requires an explicit Yes and is disabled when all destinations are protected");
+            Assert(cleanup.AcceptButton==keep && keep.DialogResult==DialogResult.No && cleanup.CancelButton==cancel && cancel.DialogResult==DialogResult.Cancel,
+                "the default keeps files and cancel remains a separate outcome");
+            Assert(directories.Rows.Count==2 && Convert.ToString(directories.Rows[0].Cells["path"].Value)==@"C:\install\Novacom" &&
+                Convert.ToString(directories.Rows[1].Cells["status"].Value)!.Contains("Geschützt"),
+                "confirmation lists the actual host paths and marks protected installations");
+            Assert(All(cleanup).OfType<Button>().All(b => b.Size.Width>=b.GetPreferredSize(Size.Empty).Width && b.Size.Height>=b.GetPreferredSize(Size.Empty).Height),
+                "cleanup choices have room for their complete action text");
+        }
         using (var dialog = new CommandDialog(24))
         {
             var controls = All(dialog).Where(c => c.Name.Length > 0).ToDictionary(c => c.Name);
