@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../AppReleaseClient.cs" Link="AppReleaseClient.cs" />
+    <Compile Include="../../AppSelfUpdate.cs" Link="AppSelfUpdate.cs" />
+    <EmbeddedResource Include="../../SelfUpdate.ps1" LogicalName="NovaTouchUpdater.SelfUpdate.ps1" />
+    <Compile Include="../../UpdaterHeader.cs" Link="UpdaterHeader.cs" />
+    <Compile Include="../../WrappingFlowLayoutPanel.cs" Link="WrappingFlowLayoutPanel.cs" />
+  </ItemGroup>
+</Project>

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -23,6 +24,14 @@ public sealed class MainForm : Form
     private readonly string logFile;
     private CancellationTokenSource? cancellation;
     private bool busy;
+    private bool selfUpdating;
+    private bool checkingRelease;
+    private AppRelease? availableRelease;
+    private readonly HttpClient releaseHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly CancellationTokenSource appLifetime = new();
+    private readonly System.Windows.Forms.Timer releaseTimer = new() { Interval = 30 * 60 * 1000 };
+    private readonly LinkLabel updateNotice = new() { Name = "updateNotice", Text = "Neue Version verfügbar", Visible = false, LinkColor = Color.FromArgb(22, 125, 65) };
+    private readonly ToolTip updateToolTip = new();
 
     private readonly DataGridView table = new();
     private readonly ComboBox statusFilter = new();
@@ -94,6 +103,8 @@ public sealed class MainForm : Form
         LoadStartupConfig();
         // Erst nach dem ersten Layout die endgültigen Fill-Spalten aktivieren.
         connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
+        releaseTimer.Tick += async (_, _) => await CheckAppReleaseAsync();
+        updateNotice.LinkClicked += async (_, _) => await UpdateApplicationAsync();
         txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
         txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
         chkSsl.CheckedChanged += (_, _) => { InvalidateConnectionChecks(); UpdateButtons(); };
@@ -102,26 +113,35 @@ public sealed class MainForm : Form
         {
             ApplyColumnWeights();
             connectionTimer.Start();
+            releaseTimer.Start();
+            _ = CheckAppReleaseAsync();
             await RefreshConnectionsAsync();
         };
         UpdateButtons();
         FormClosing += (_, e) =>
         {
-            if (busy)
+            if (busy || selfUpdating)
             {
                 e.Cancel = true;
-                MessageBox.Show(this, "Ein Update-/Prüfdurchlauf ist noch aktiv. Bitte zuerst 'Abbrechen' klicken und den Abschluss der aktiven Hosts abwarten.",
+                MessageBox.Show(this, selfUpdating ? "Die neue Updater-Version wird vorbereitet. Bitte den Abschluss abwarten oder 'Abbrechen' klicken." : "Ein Update-/Prüfdurchlauf ist noch aktiv. Bitte zuerst 'Abbrechen' klicken und den Abschluss der aktiven Hosts abwarten.",
                     "Aktive Verarbeitung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
             connectionClosing = true;
+            appLifetime.Cancel();
             connectionTimer.Stop();
+            releaseTimer.Stop();
             InvalidateConnectionChecks();
         };
         Disposed += (_, _) =>
         {
             connectionClosing = true;
             connectionTimer.Dispose();
+            releaseTimer.Dispose();
+            appLifetime.Cancel();
+            appLifetime.Dispose();
+            releaseHttp.Dispose();
+            updateToolTip.Dispose();
             connectionCancellation?.Cancel();
             connectionRunner.Dispose();
             runner.Dispose();
@@ -258,19 +278,7 @@ public sealed class MainForm : Form
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        var header = FlowRow();
-        header.Margin = new Padding(3, 0, 3, 12);
-        header.Controls.Add(new Label
-        {
-            Text = "NovaTouch 2.5 Updater", Font = new Font(Font.FontFamily, 19F, FontStyle.Bold),
-            AutoSize = true, Anchor = AnchorStyles.Left
-        });
-        header.Controls.Add(new Label
-        {
-            Text = "nt.payment / nt.fiscal / nt3 Server Suite    ·    parallele Remote-Updates",
-            AutoSize = true, Anchor = AnchorStyles.Left, TextAlign = ContentAlignment.MiddleLeft,
-            ForeColor = Color.FromArgb(95, 110, 130)
-        });
+        var header = new UpdaterHeader(updateNotice);
         main.Controls.Add(header, 0, 0);
 
         // Hostliste und die drei Update-Dateien immer untereinander anzeigen.
@@ -1486,23 +1494,91 @@ public sealed class MainForm : Form
         if (IsDisposed || !IsHandleCreated) return;
         try { BeginInvoke(action); } catch (InvalidOperationException) { /* form is closing */ }
     }
+
+    private async Task CheckAppReleaseAsync()
+    {
+        if (checkingRelease || selfUpdating || connectionClosing) return;
+        checkingRelease = true;
+        try
+        {
+            var release = await new AppReleaseClient(releaseHttp).CheckAsync(AppReleaseClient.CurrentVersion, appLifetime.Token);
+            if (connectionClosing || IsDisposed || selfUpdating) return;
+            availableRelease = release;
+            updateNotice.Visible = release is not null;
+            if (release is not null)
+                updateToolTip.SetToolTip(updateNotice, $"Version {AppReleaseClient.DisplayVersion(release.Version)} verfügbar. Zum Aktualisieren anklicken.");
+            UpdateButtons();
+        }
+        catch (OperationCanceledException) { /* closing or request timeout; no startup dialog */ }
+        catch (Exception ex) { if (!connectionClosing) Log("SYSTEM", "GitHub-Versionsprüfung nicht möglich: " + ex.Message); }
+        finally { checkingRelease = false; }
+    }
+
+    private async Task UpdateApplicationAsync()
+    {
+        if (busy || selfUpdating || availableRelease is not { } release) return;
+        if (MessageBox.Show(this,
+            $"NovaTouch Updater {AppReleaseClient.DisplayVersion(release.Version)} ist verfügbar.\n" +
+            $"Aktuelle Version: {AppReleaseClient.DisplayVersion(AppReleaseClient.CurrentVersion)}\n\n" +
+            "Neue Version von GitHub herunterladen und jetzt verwenden?\n" +
+            "Der Updater wird geschlossen, die bisherige EXE ersetzt und die neue Version geöffnet.\n\n" +
+            "Die gespeicherte config.json bleibt erhalten. Nicht gespeicherte Änderungen gehen beim Neustart verloren.",
+            "Neue Version verfügbar", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+
+        selfUpdating = true;
+        cancellation = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
+        UpdateButtons();
+        try
+        {
+            using var update = new AppSelfUpdate();
+            var downloadProgress = new Progress<int>(percent =>
+            {
+                if (!IsDisposed && selfUpdating) updateNotice.Text = $"Download: {percent} %";
+            });
+            await new AppReleaseClient(releaseHttp).DownloadAsync(release, update.DownloadPath, downloadProgress, cancellation.Token);
+            updateNotice.Text = "Neustart wird vorbereitet …";
+            await update.StartHelperAsync(release, cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();
+            Log("SYSTEM", $"Updater-Version {AppReleaseClient.DisplayVersion(release.Version)} geprüft; EXE-Austausch nach Programmende.");
+            selfUpdating = false;
+            Close();
+            if (IsDisposed) update.HandOff();
+            else throw new InvalidOperationException("Das Fenster konnte nicht geschlossen werden. Die bisherige EXE bleibt erhalten.");
+        }
+        catch (OperationCanceledException) { Log("SYSTEM", "Aktualisierung des Updaters abgebrochen; bisherige EXE unverändert."); }
+        catch (Exception ex)
+        {
+            Log("SYSTEM", "Aktualisierung des Updaters fehlgeschlagen: " + ex.Message);
+            if (!IsDisposed) MessageBox.Show(this, ex.Message, "Aktualisierung nicht möglich", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            cancellation.Dispose();
+            cancellation = null;
+            selfUpdating = false;
+            if (!IsDisposed) { updateNotice.Text = "Neue Version verfügbar"; UpdateButtons(); }
+        }
+    }
+
     private void UpdateButtons()
     {
-        btnImport.Enabled = !busy; btnAddHost.Enabled = !busy; btnSaveConfig.Enabled = !busy;
-        btnRemoveHost.Enabled = !busy && table.CurrentRow?.Tag is HostState;
-        btnPayment.Enabled = !busy; btnFiscal.Enabled = !busy; btnServerSuite.Enabled = !busy;
-        btnWinRm.Enabled = !busy && hosts.Count > 0;
-        btnScan.Enabled = !busy && hosts.Count > 0;
-        btnUpdate.Enabled = !busy && hosts.Any(h => h.Scanned);
-        btnTransfer.Enabled = !busy && hosts.Count > 0;
-        btnSendCommand.Enabled = !busy && hosts.Count > 0;
-        btnRetry.Enabled = !busy && hosts.Any(h => h.CanRetryUpdate);
-        btnExport.Enabled = !busy && hosts.Count > 0;
-        btnCancel.Enabled = busy;
-        nScan.Enabled = !busy; nUpdate.Enabled = !busy; chkSsl.Enabled = !busy; chkForceUpdate.Enabled = !busy;
-        nHttpsPort.Enabled = !busy && chkSsl.Checked;
-        txtRemotePath.Enabled = !busy; chkSkipZipTransfer.Enabled = !busy;
-        txtUser.Enabled = !busy; txtPassword.Enabled = !busy; statusFilter.Enabled = !busy;
+        bool idle = !busy && !selfUpdating;
+        updateNotice.Enabled = idle;
+        btnImport.Enabled = idle; btnAddHost.Enabled = idle; btnSaveConfig.Enabled = idle;
+        btnRemoveHost.Enabled = idle && table.CurrentRow?.Tag is HostState;
+        btnPayment.Enabled = idle; btnFiscal.Enabled = idle; btnServerSuite.Enabled = idle;
+        btnWinRm.Enabled = idle && hosts.Count > 0;
+        btnScan.Enabled = idle && hosts.Count > 0;
+        btnUpdate.Enabled = idle && hosts.Any(h => h.Scanned);
+        btnTransfer.Enabled = idle && hosts.Count > 0;
+        btnSendCommand.Enabled = idle && hosts.Count > 0;
+        btnRetry.Enabled = idle && hosts.Any(h => h.CanRetryUpdate);
+        btnExport.Enabled = idle && hosts.Count > 0;
+        btnCancel.Enabled = busy || selfUpdating;
+        nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle; chkForceUpdate.Enabled = idle;
+        nHttpsPort.Enabled = idle && chkSsl.Checked;
+        txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle;
+        txtUser.Enabled = idle; txtPassword.Enabled = idle; statusFilter.Enabled = idle;
     }
 
     private void Log(string host, string msg)

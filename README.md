@@ -52,6 +52,19 @@ Build und lokale Tests sind unter Windows ausführbar. Die automatisierten Updat
 
 ## Bedienung
 
+Rechts neben **parallele Remote-Updates** erscheint **Neue Version verfügbar**, wenn ein neueres stabiles [GitHub-Release](https://github.com/cgassner1000/NovaTouchUpdater/releases/latest) mit passender EXE und SHA256-Prüfsumme vorliegt. Der Hinweis steht ganz rechts; bei wenig Platz erhält er eine eigene rechtsbündige Zeile. Die Prüfung läuft beim Start und anschließend alle 30 Minuten im Hintergrund. Ohne Internet oder bei einer fehlgeschlagenen GitHub-Abfrage erscheint kein störender Startdialog.
+
+Ein Klick fragt mit **Ja/Nein**, ob die neue Updater-Version verwendet werden soll. Nach **Ja** wird die eigenständige EXE mit Fortschrittsanzeige heruntergeladen und anhand von Größe und SHA256 geprüft. **Abbrechen** beendet die Vorbereitung, ohne die bisherige EXE zu verändern. Erst nach einem erfolgreichen Download und einem bereiten lokalen Updatehelfer schließt sich das Fenster. Der Helfer wartet auf das Programmende, ersetzt die EXE am bisherigen Pfad und öffnet die neue Version. Der Dateiname bleibt erhalten, damit Verknüpfungen weiter funktionieren. Die alte EXE wird bis zum erfolgreichen Startaufruf als Sicherung behalten und danach entfernt; schlägt der Austausch oder Startaufruf fehl, bleibt die bisherige EXE erhalten bzw. wird wiederhergestellt. `config.json` und andere Dateien im Programmordner bleiben unverändert. Nicht gespeicherte Einstellungen gehen beim Neustart verloren, worauf die Bestätigung hinweist.
+
+Das automatische Aktualisieren setzt die **eigenständige Release-EXE** und Schreibzugriff auf ihren Ordner voraus. Ein Visual-Studio-/DLL-Build wird nicht durch eine einzelne EXE ersetzt. Während eines Remote-Durchlaufs ist der Hinweis deaktiviert; während der Vorbereitung des Updater-Neustarts können keine neuen Remote-Aktionen gestartet werden. Fehler nach dem Schließen werden vom Helfer mit Meldung und Protokollpfad angezeigt.
+
+Lokale Tests verwenden simulierte HTTP-Antworten, Testdateien und simulierte Programmstarts; sie aktualisieren weder den laufenden Updater noch Remote-Clients:
+
+```powershell
+dotnet run --project tests\AppRelease.Tests\AppRelease.Tests.csproj -c Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\SelfUpdate.Tests.ps1
+```
+
 Die Oberfläche berücksichtigt die Windows-Anzeigeskalierung pro Monitor (PerMonitorV2). Buttonleisten und Optionen brechen bei wenig Platz um; Zeilenhöhen richten sich nach dem Inhalt. Bei großen Schriften oder schmalen Fenstern stehen Dateiauswahl und Einstellungen untereinander. Reicht die Bildschirmfläche nicht aus, lassen sich die Inhalte im Haupt- und WinRM-Fenster scrollen.
 
 Zur Prüfung der Darstellung die Anwendung bei 100 %, 125 %, 150 % und 200 % Windows-Skalierung öffnen, das Fenster verkleinern und wieder vergrößern sowie bei mehreren Monitoren zwischen den Bildschirmen verschieben.

@@ -19,6 +19,7 @@
     <EmbeddedResource Include="RemoteCommand.ps1" LogicalName="NovaTouchUpdater.RemoteCommand.ps1" />
     <EmbeddedResource Include="WinRmWorker.ps1" LogicalName="NovaTouchUpdater.WinRmWorker.ps1" />
     <EmbeddedResource Include="ConnectionWorker.ps1" LogicalName="NovaTouchUpdater.ConnectionWorker.ps1" />
+    <EmbeddedResource Include="SelfUpdate.ps1" LogicalName="NovaTouchUpdater.SelfUpdate.ps1" />
     <None Update="config.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('config.json')" />
   </ItemGroup>
 </Project>
