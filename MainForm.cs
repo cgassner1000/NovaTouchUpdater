@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -43,6 +44,7 @@ public sealed class MainForm : Form
     private readonly Button btnImport = Button("Hostliste laden");
     private readonly Button btnAddHost = Button("Host hinzufügen");
     private readonly Button btnRemoveHost = Button("Entfernen");
+    private readonly Button btnSaveConfig = Button("Config speichern");
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
     private readonly Button btnServerSuite = Button("Server-Suite-ZIP wählen");
@@ -133,22 +135,17 @@ public sealed class MainForm : Form
 
         try
         {
-            var config = JsonSerializer.Deserialize<UpdaterConfig>(File.ReadAllText(configPath));
-            if (config is null) return;
-            if (config.HttpsPort is < 1 or > 65535) throw new JsonException("HttpsPort muss zwischen 1 und 65535 liegen.");
+            var loaded = AppConfigStore.Load(configPath);
+            var config = loaded.Settings;
 
             txtRemotePath.Text = string.IsNullOrWhiteSpace(config.RemotePath) ? activeRemoteInstallPath : config.RemotePath;
             txtUser.Text = config.Username ?? "";
             chkSsl.Checked = config.UseSsl;
             nHttpsPort.Value = config.HttpsPort;
 
-            txtPassword.Text = config.Password ?? "";
+            txtPassword.Text = loaded.Password;
 
-            string[] configuredHosts = (config.Hosts ?? [])
-                .Select(host => host.Trim())
-                .Where(host => host.Length > 0 && !host.StartsWith('#') && !host.StartsWith(';') && !host.Any(char.IsWhiteSpace))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            string[] configuredHosts = config.Hosts ?? [];
             if (configuredHosts.Length > 0)
             {
                 hosts.Clear();
@@ -157,6 +154,8 @@ public sealed class MainForm : Form
                 RebuildRows();
                 UpdateSummary();
             }
+            if (loaded.PasswordWarning is not null)
+                MessageBox.Show(this, loaded.PasswordWarning, "Passwort neu eingeben", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -166,14 +165,35 @@ public sealed class MainForm : Form
         }
     }
 
-    private sealed class UpdaterConfig
+    private void SaveConfig()
     {
-        public string[]? Hosts { get; set; }
-        public string? RemotePath { get; set; }
-        public string? Username { get; set; }
-        public string? Password { get; set; }
-        public bool UseSsl { get; set; }
-        public int HttpsPort { get; set; } = 5986;
+        if (busy) return;
+        using var dialog = new SaveFileDialog
+        {
+            Title = "Config speichern", Filter = "JSON-Konfiguration (*.json)|*.json",
+            DefaultExt = "json", AddExtension = true, FileName = "config.json",
+            InitialDirectory = AppContext.BaseDirectory, OverwritePrompt = true
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            AppConfigStore.Save(dialog.FileName, new UpdaterConfig
+            {
+                // Save every loaded host, including rows hidden by a filter.
+                Hosts = hosts.Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
+                Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value
+            }, txtPassword.Text);
+            Log("SYSTEM", $"Config gespeichert: {dialog.FileName} ({hosts.Count} Hosts)");
+            MessageBox.Show(this, $"Config gespeichert:\n{dialog.FileName}\n\nDas Passwort wurde für diesen Rechner verschlüsselt. " +
+                "Alle Windows-Benutzer mit Lesezugriff auf die Config können es auf diesem Rechner verwenden.\n" +
+                "Beim Programmstart wird config.json neben der EXE automatisch geladen.",
+                "Config gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or CryptographicException)
+        {
+            MessageBox.Show(this, "Die Config konnte nicht gespeichert werden. Eine vorhandene Datei bleibt erhalten.\n" + ex.Message,
+                "Config speichern", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private static Button Button(string text) => new()
@@ -265,7 +285,7 @@ public sealed class MainForm : Form
         main.Controls.Add(configuration, 0, 1);
 
         var hostList = FlowRow();
-        foreach (Button btn in new[] { btnImport, btnAddHost, btnRemoveHost })
+        foreach (Button btn in new[] { btnImport, btnAddHost, btnRemoveHost, btnSaveConfig })
         {
             btn.Margin = new Padding(0, 0, 5, 0);
             hostList.Controls.Add(btn);
@@ -340,6 +360,7 @@ public sealed class MainForm : Form
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts (WinRM und Versionsprüfung).");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
+        tips.SetToolTip(btnSaveConfig, "Aktuell geladene Hosts, Zielpfad, Benutzer, Passwort und HTTPS speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
         tips.SetToolTip(chkSkipZipTransfer, "Lokale ZIPs bestimmen weiterhin die Zielversion. ZIPs auf den Clients werden bei Updates nicht übertragen.");
@@ -455,6 +476,7 @@ public sealed class MainForm : Form
         main.Controls.Add(Stack(lblSummary, progress), 0, 4);
 
         btnImport.Click += (_, _) => LoadHosts();
+        btnSaveConfig.Click += (_, _) => SaveConfig();
         btnAddHost.Click += (_, _) => AddHost();
         btnRemoveHost.Click += (_, _) => RemoveSelectedHost();
         btnPayment.Click += (_, _) => ChooseZip("payment");
@@ -1466,7 +1488,7 @@ public sealed class MainForm : Form
     }
     private void UpdateButtons()
     {
-        btnImport.Enabled = !busy; btnAddHost.Enabled = !busy;
+        btnImport.Enabled = !busy; btnAddHost.Enabled = !busy; btnSaveConfig.Enabled = !busy;
         btnRemoveHost.Enabled = !busy && table.CurrentRow?.Tag is HostState;
         btnPayment.Enabled = !busy; btnFiscal.Enabled = !busy; btnServerSuite.Enabled = !busy;
         btnWinRm.Enabled = !busy && hosts.Count > 0;

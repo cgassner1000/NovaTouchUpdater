@@ -12,20 +12,29 @@ Quellcode für eine eigenständige Windows-GUI zur parallelen Verwaltung von Upd
 
 Der GUI-Updater selbst nutzt **.NET 8** und startet Windows PowerShell 5.1 als Hintergrundprozess. Der darin eingebettete Worker verwendet `New-PSSession`, `Invoke-Command` und `Copy-Item -ToSession`, analog zur ursprünglichen Lösung. Es wird **kein zusätzlicher Agent** auf den Zielrechnern installiert.
 
-Optional kann neben der EXE eine lokale `config.json` liegen. Sie füllt beim Start Hosts, Zielpfad, WinRM-Benutzer, HTTPS-Option und Passwort vor. Die Datei wird nicht automatisch erstellt und ist in Git ignoriert. Das Passwort wird direkt als Klartext in `Password` eingetragen:
+Mit **Config speichern** bei der Hostliste können die aktuell geladenen Hosts, der Client-Zielpfad, WinRM-Benutzer, Passwort sowie HTTPS-Option und HTTPS-Port als JSON gespeichert werden. Auch durch den Tabellenfilter ausgeblendete Hosts gehören zur gespeicherten Liste. Der Speicherdialog schlägt `config.json` neben der EXE vor. Diese Datei wird beim nächsten Start automatisch geladen und ist in Git ignoriert. Andere Dateinamen und Ordner können für Sicherungskopien gewählt werden; für das automatische Laden muss die Datei `config.json` neben der EXE liegen.
+
+Das Passwort wird beim Speichern mit **Windows DPAPI / LocalMachine** verschlüsselt und als `EncryptedPassword` abgelegt; `PasswordProtectionScope` kennzeichnet den Schutz. **Alle Windows-Benutzer mit Lesezugriff auf die Config können das Passwort auf demselben Rechner verwenden.** Die Config muss dafür in einem für diese Benutzer lesbaren Ordner liegen. Auf einem anderen Rechner muss das Passwort neu eingegeben und dort gespeichert werden. Das folgende Beispiel enthält noch kein Passwort: Passwort in der Anwendung eingeben und anschließend **Config speichern** verwenden.
 
 ```json
 {
   "Hosts": ["POS01", "POS02"],
   "RemotePath": "C:\\install\\Novacom",
   "Username": "DOMAIN\\support",
-	"Password": "mein-passwort",
+  "PasswordProtectionScope": "LocalMachine",
+  "EncryptedPassword": "",
   "UseSsl": false,
   "HttpsPort": 5986
 }
 ```
 
-`config.json` enthält das Passwort unverschlüsselt. Schütze die Datei entsprechend (z. B. Zugriff nur für den Support-Benutzer gewähren) und teile sie nicht über unsichere Kanäle. Fehlt `config.json`, startet die Anwendung wie bisher mit leerer Hostliste und ohne vorausgefüllte Zugangsdaten.
+Alte Configs mit dem Klartextfeld `Password` bleiben lesbar. Beim Speichern wird dieses Feld entfernt und durch das verschlüsselte Passwort ersetzt. Auch die bisherige benutzergebundene DPAPI-Config bleibt unter dem ursprünglichen Benutzer lesbar: **Einmal mit diesem Benutzer öffnen und erneut speichern**, damit sie anschließend von den anderen Benutzern desselben Rechners verwendet werden kann. Ist ein vorhandenes verschlüsseltes Passwort beschädigt oder nicht entschlüsselbar, werden die anderen Einstellungen trotzdem geladen und eine erneute Passworteingabe angefordert. Eine fehlgeschlagene Speicherung lässt eine vorhandene Datei unverändert. Fehlt `config.json`, startet die Anwendung mit leerer Hostliste und ohne vorausgefüllte Zugangsdaten.
+
+Lokale Tests für Speicherung, DPAPI-Verschlüsselung, Migration und Schreibfehler (nur künstliche Zugangsdaten und Testdateien unter `obj`, keine vorhandene `config.json` wird verändert):
+
+```powershell
+dotnet run --project tests\ConfigStore.Tests\ConfigStore.Tests.csproj -c Release
+```
 
 Windows 10 Enterprise LTSC 2019 (1809) und Windows Server 2019 unterstützen .NET 8. Der .NET-8-Support endet am 10. November 2026. Die Windows-Desktopanwendung kann self-contained veröffentlicht werden.
 
@@ -168,6 +177,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\UploadDirectory.Te
 - `Program.cs` — WinForms-Einstieg
 - `MainForm.cs` — GUI, Phasen- und Parallelitätssteuerung, Retry, Export
 - `WorkerRunner.cs` — PowerShell-Prozessausführung / JSON-Protokoll
+- `AppConfigStore.cs` — Config laden und atomar speichern, Passwortschutz über Windows DPAPI
 - `RemoteWorker.ps1` — WinRM-Probe, Service-Inventar, ZIP-Verteilung, Update und Verifikation
 - `UpdateSteps.ps1` — entpackte Pakete prüfen, Dienste gemeinsam stoppen, Installationsordner aktualisieren und Dienste wieder starten
 - `UploadDirectory.ps1` — Uploadordner prüfen und nach Bestätigung ausschließlich ihren Inhalt bereinigen
