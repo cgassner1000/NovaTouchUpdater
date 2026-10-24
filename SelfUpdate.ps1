@@ -18,16 +18,23 @@ function Invoke-AppSelfUpdate {
     $ErrorActionPreference = 'Stop'
     $directory = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($ManifestPath))
     $settings = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    $original = [IO.Path]::GetFullPath($settings.OriginalExecutablePath)
     $target = [IO.Path]::GetFullPath($settings.ExecutablePath)
     $staged = [IO.Path]::GetFullPath($settings.StagedPath)
     $backup = Join-Path $directory 'previous.exe'
+    $targetBackup = Join-Path $directory 'previous-target.exe'
     $ready = Join-Path $directory 'ready'
-    $replaced = $false
+    $samePath = [string]::Equals($original, $target, [StringComparison]::OrdinalIgnoreCase)
+    $originalMoved = $false
+    $installed = $false
     # Validate every final absolute path before moving or deleting files.
     if ([IO.Path]::GetDirectoryName($directory) -ne [IO.Path]::GetDirectoryName($target) -or
+        [IO.Path]::GetDirectoryName($original) -ne [IO.Path]::GetDirectoryName($target) -or
         [IO.Path]::GetFileName($directory) -notmatch '^\.NovaTouchUpdater-update-[a-f0-9]{32}$' -or
         $staged -ne (Join-Path $directory 'new.exe') -or
-        [IO.Path]::GetExtension($target) -ne '.exe' -or -not [IO.File]::Exists($target) -or [IO.File]::Exists($backup)) {
+        [IO.Path]::GetFileName($target) -ne 'NovaTouchUpdater.exe' -or [IO.Directory]::Exists($target) -or
+        [IO.Path]::GetExtension($original) -ne '.exe' -or -not [IO.File]::Exists($original) -or
+        [IO.File]::Exists($backup) -or [IO.File]::Exists($targetBackup)) {
         throw 'Die Pfade für den EXE-Austausch sind ungültig.'
     }
     try {
@@ -37,28 +44,52 @@ function Invoke-AppSelfUpdate {
         }
         [IO.File]::WriteAllText($ready, 'ready')
         & $WaitForApplication $settings
-        # File.Replace is atomic and retains a backup until starting succeeds.
+        # Retain both the running EXE and any existing fixed-name EXE until
+        # starting succeeds. Subsequent updates replace the fixed path atomically.
         $lastError = $null
         for ($attempt = 0; $attempt -lt 30; $attempt++) {
             try {
-                [IO.File]::Replace($staged, $target, $backup, $true)
-                $replaced = $true
+                if ($samePath) {
+                    [IO.File]::Replace($staged, $target, $backup, $true)
+                } else {
+                    if (-not $originalMoved) {
+                        [IO.File]::Move($original, $backup)
+                        $originalMoved = $true
+                    }
+                    if ([IO.File]::Exists($target)) {
+                        [IO.File]::Replace($staged, $target, $targetBackup, $true)
+                    } else {
+                        [IO.File]::Move($staged, $target)
+                    }
+                }
+                $installed = $true
                 break
             } catch [IO.IOException] {
                 $lastError = $_
                 Start-Sleep -Milliseconds 500
             }
         }
-        if (-not $replaced) { throw $lastError }
+        if (-not $installed) { throw $lastError }
         & $StartApplication $target
     } catch {
         $failure = $_
-        if ($replaced) {
+        if ($installed -or $originalMoved) {
             try {
                 # PowerShell 5.1 converts $null to an empty string for this
                 # overload. Use an explicit backup path for the rejected EXE.
-                [IO.File]::Replace($backup, $target, (Join-Path $directory 'failed.exe'), $true)
-                & $StartApplication $target
+                if ($samePath) {
+                    [IO.File]::Replace($backup, $target, (Join-Path $directory 'failed.exe'), $true)
+                } else {
+                    if ($installed) {
+                        if ([IO.File]::Exists($targetBackup)) {
+                            [IO.File]::Replace($targetBackup, $target, (Join-Path $directory 'failed.exe'), $true)
+                        } else {
+                            [IO.File]::Move($target, (Join-Path $directory 'failed.exe'))
+                        }
+                    }
+                    if ($originalMoved) { [IO.File]::Move($backup, $original) }
+                }
+                & $StartApplication $original
             } catch {
                 throw "Update fehlgeschlagen: $failure | Wiederherstellung/Neustart: $_ | Sicherungsordner: $directory"
             }
@@ -66,7 +97,7 @@ function Invoke-AppSelfUpdate {
         throw $failure
     }
     # Delete only our own files; never recurse through the application directory.
-    foreach ($file in @($backup, $ready, (Join-Path $directory 'SelfUpdate.ps1'), $ManifestPath)) {
+    foreach ($file in @($backup, $targetBackup, $ready, (Join-Path $directory 'SelfUpdate.ps1'), $ManifestPath)) {
         try { [IO.File]::Delete($file) } catch { }
     }
     try { [IO.Directory]::Delete($directory) } catch { }

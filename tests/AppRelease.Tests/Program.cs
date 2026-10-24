@@ -118,6 +118,10 @@ internal static class Program
             var release = new AppRelease(new Version(9, 9, 9), new Uri("https://example.invalid/unused"), payload.Length, Convert.ToHexString(SHA256.HashData(payload)));
             await update.StartHelperAsync(release, CancellationToken.None);
             Assert(File.Exists(Path.Combine(Path.GetDirectoryName(download)!, "ready")), "published single-file test starts its embedded PowerShell helper and receives readiness");
+            using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(Path.GetDirectoryName(download)!, "update.json")));
+            Assert(manifest.RootElement.GetProperty("OriginalExecutablePath").GetString() == target &&
+                manifest.RootElement.GetProperty("ExecutablePath").GetString() == Path.Combine(Path.GetDirectoryName(target)!, "NovaTouchUpdater.exe"),
+                "helper receives the original path and the fixed NovaTouchUpdater.exe destination in the same folder");
             using var input = File.OpenRead(target);
             Assert(SHA256.HashData(input).SequenceEqual(originalHash), "real helper waits for the test parent and does not replace a running EXE");
         }

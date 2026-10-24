@@ -187,26 +187,18 @@ public sealed class MainForm : Form
 
     private void SaveConfig()
     {
-        if (busy) return;
-        using var dialog = new SaveFileDialog
-        {
-            Title = "Config speichern", Filter = "JSON-Konfiguration (*.json)|*.json",
-            DefaultExt = "json", AddExtension = true, FileName = "config.json",
-            InitialDirectory = AppContext.BaseDirectory, OverwritePrompt = true
-        };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (busy || selfUpdating) return;
+        string configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
         try
         {
-            AppConfigStore.Save(dialog.FileName, new UpdaterConfig
+            AppConfigStore.Save(configPath, new UpdaterConfig
             {
                 // Save every loaded host, including rows hidden by a filter.
                 Hosts = hosts.Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
                 Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value
             }, txtPassword.Text);
-            Log("SYSTEM", $"Config gespeichert: {dialog.FileName} ({hosts.Count} Hosts)");
-            MessageBox.Show(this, $"Config gespeichert:\n{dialog.FileName}\n\nDas Passwort wurde für diesen Rechner verschlüsselt. " +
-                "Alle Windows-Benutzer mit Lesezugriff auf die Config können es auf diesem Rechner verwenden.\n" +
-                "Beim Programmstart wird config.json neben der EXE automatisch geladen.",
+            Log("SYSTEM", $"Config gespeichert: {configPath} ({hosts.Count} Hosts)");
+            MessageBox.Show(this, "Config gespeichert",
                 "Config gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or CryptographicException)
@@ -1521,7 +1513,7 @@ public sealed class MainForm : Form
             $"NovaTouch Updater {AppReleaseClient.DisplayVersion(release.Version)} ist verfügbar.\n" +
             $"Aktuelle Version: {AppReleaseClient.DisplayVersion(AppReleaseClient.CurrentVersion)}\n\n" +
             "Neue Version von GitHub herunterladen und jetzt verwenden?\n" +
-            "Der Updater wird geschlossen, die bisherige EXE ersetzt und die neue Version geöffnet.\n\n" +
+            "Der Updater wird geschlossen und die neue Version im selben Ordner als NovaTouchUpdater.exe geöffnet. Die bisherige EXE wird ersetzt.\n\n" +
             "Die gespeicherte config.json bleibt erhalten. Nicht gespeicherte Änderungen gehen beim Neustart verloren.",
             "Neue Version verfügbar", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
 

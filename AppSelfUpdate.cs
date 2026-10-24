@@ -5,10 +5,11 @@ using System.Text.Json;
 namespace NovaTouchUpdater;
 
 // The helper is outside the running EXE. Only its own staged files and the exact
-// executable path are touched; config.json and all other neighbouring files stay put.
+// executable paths are touched; config.json and all other neighbouring files stay put.
 internal sealed class AppSelfUpdate : IDisposable
 {
     private readonly string directory;
+    private readonly string original;
     private readonly string target;
     private Process? helper;
     private bool handedOff;
@@ -16,7 +17,8 @@ internal sealed class AppSelfUpdate : IDisposable
 
     internal AppSelfUpdate()
     {
-        target = Environment.ProcessPath ?? throw new InvalidOperationException("Der Pfad der laufenden EXE ist unbekannt.");
+        original = Environment.ProcessPath ?? throw new InvalidOperationException("Der Pfad der laufenden EXE ist unbekannt.");
+        target = Path.Combine(Path.GetDirectoryName(original)!, "NovaTouchUpdater.exe");
         // A framework-dependent apphost also needs matching DLLs. Releases are
         // single-file EXEs; never replace a development apphost on its own.
 #pragma warning disable IL3000
@@ -41,6 +43,7 @@ internal sealed class AppSelfUpdate : IDisposable
         {
             ProcessId = current.Id,
             ProcessStartTimeTicks = current.StartTime.ToUniversalTime().Ticks,
+            OriginalExecutablePath = original,
             ExecutablePath = target,
             StagedPath = DownloadPath,
             Sha256 = release.Sha256,
