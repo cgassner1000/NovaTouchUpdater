@@ -18,13 +18,13 @@ Das Passwort wird beim Speichern mit **Windows DPAPI / LocalMachine** verschlüs
 
 ```json
 {
-  "Hosts": ["POS01", "POS02"],
   "RemotePath": "C:\\install\\Novacom",
   "Username": "DOMAIN\\support",
   "PasswordProtectionScope": "LocalMachine",
   "EncryptedPassword": "",
   "UseSsl": false,
-  "HttpsPort": 5986
+  "HttpsPort": 5986,
+  "Hosts": ["POS01", "POS02"]
 }
 ```
 

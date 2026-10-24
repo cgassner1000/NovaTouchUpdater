@@ -7,6 +7,7 @@ namespace NovaTouchUpdater;
 
 internal sealed class UpdaterConfig
 {
+    [JsonPropertyOrder(int.MaxValue)]
     public string[]? Hosts { get; set; } = [];
     public string? RemotePath { get; set; }
     public string? Username { get; set; }
