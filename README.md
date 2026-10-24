@@ -58,11 +58,20 @@ Ein Klick fragt mit **Ja/Nein**, ob die neue Updater-Version verwendet werden so
 
 Das automatische Aktualisieren setzt die **eigenständige Release-EXE** und Schreibzugriff auf ihren Ordner voraus. Ein Visual-Studio-/DLL-Build wird nicht durch eine einzelne EXE ersetzt. Während eines Remote-Durchlaufs ist der Hinweis deaktiviert; während der Vorbereitung des Updater-Neustarts können keine neuen Remote-Aktionen gestartet werden. Fehler nach dem Schließen werden vom Helfer mit Meldung und Protokollpfad angezeigt.
 
+Beim Wechsel von einer älteren Updater-Version kann deren eingebetteter Updatehelfer die neue EXE noch unter dem bisherigen Versionsnamen starten. Deshalb korrigiert die neue eigenständige EXE ihren Dateinamen zusätzlich beim Start: Sie bereitet eine identische Kopie vor, beendet sich und öffnet sich im selben Ordner als `NovaTouchUpdater.exe`, bevor das Hauptfenster geöffnet oder eine Hostverbindung aufgebaut wird. Das funktioniert auch beim direkten Start einer versionierten Release-EXE. Bereits korrekt benannte EXEs benötigen keinen weiteren Neustart. Bei einer Wiederherstellung nach einem Fehler wird die Umbenennung einmalig übersprungen, damit keine Neustartschleife entsteht.
+
 Lokale Tests verwenden simulierte HTTP-Antworten, Testdateien und simulierte Programmstarts; sie aktualisieren weder den laufenden Updater noch Remote-Clients:
 
 ```powershell
 dotnet run --project tests\AppRelease.Tests\AppRelease.Tests.csproj -c Release
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\SelfUpdate.Tests.ps1
+```
+
+Der vollständige Umbenennungstest startet ausschließlich eine separat veröffentlichte **Test-EXE** in neuen Testordnern unter `obj`. Er prüft den tatsächlichen Neustart von einem Versionsnamen auf `NovaTouchUpdater.exe`, eine bereits vorhandene Zieldatei, unveränderte Config-Dateien und das Ausbleiben wiederholter Neustarts. Die Anwendung selbst und Remote-Clients werden dabei nicht gestartet:
+
+```powershell
+dotnet publish tests\AppRelease.Tests\AppRelease.Tests.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:PublishReadyToRun=false -p:OutputType=WinExe -o "obj\app rename test"
+dotnet run --project tests\AppRelease.Tests\AppRelease.Tests.csproj -c Release -- --rename-integration "obj\app rename test\AppRelease.Tests.exe"
 ```
 
 Die Oberfläche berücksichtigt die Windows-Anzeigeskalierung pro Monitor (PerMonitorV2). Buttonleisten und Optionen brechen bei wenig Platz um; Zeilenhöhen richten sich nach dem Inhalt. Bei großen Schriften oder schmalen Fenstern stehen Dateiauswahl und Einstellungen untereinander. Reicht die Bildschirmfläche nicht aus, lassen sich die Inhalte im Haupt- und WinRM-Fenster scrollen.

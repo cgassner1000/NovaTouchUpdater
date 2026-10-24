@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -8,6 +9,7 @@ namespace NovaTouchUpdater;
 // executable paths are touched; config.json and all other neighbouring files stay put.
 internal sealed class AppSelfUpdate : IDisposable
 {
+    internal const string SkipRenameArgument = "--skip-executable-rename";
     private readonly string directory;
     private readonly string original;
     private readonly string target;
@@ -21,15 +23,47 @@ internal sealed class AppSelfUpdate : IDisposable
         target = Path.Combine(Path.GetDirectoryName(original)!, "NovaTouchUpdater.exe");
         // A framework-dependent apphost also needs matching DLLs. Releases are
         // single-file EXEs; never replace a development apphost on its own.
-#pragma warning disable IL3000
-        if (typeof(AppSelfUpdate).Assembly.Location.Length != 0)
-#pragma warning restore IL3000
+        if (!IsSingleFile)
             throw new InvalidOperationException("Automatisches Aktualisieren ist nur mit der eigenständigen Release-EXE möglich. Bitte die EXE aus den GitHub-Releases verwenden.");
         directory = Path.Combine(Path.GetDirectoryName(target)!, ".NovaTouchUpdater-update-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
     }
 
-    internal async Task StartHelperAsync(AppRelease release, CancellationToken cancellationToken)
+    private static bool IsSingleFile
+    {
+#pragma warning disable IL3000
+        get => typeof(AppSelfUpdate).Assembly.Location.Length == 0;
+#pragma warning restore IL3000
+    }
+
+    // Older installed versions use their own embedded helper and may start this
+    // release under the old, versioned name. Repair that before opening any UI
+    // or connecting to hosts, without requiring a second GitHub update.
+    internal static async Task<bool> NormalizeExecutableNameAsync(CancellationToken cancellationToken)
+    {
+        if (!IsSingleFile || string.Equals(Path.GetFileName(Environment.ProcessPath), "NovaTouchUpdater.exe", StringComparison.OrdinalIgnoreCase))
+            return false;
+        using var update = new AppSelfUpdate();
+        await using (var input = new FileStream(update.original, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, true))
+        await using (var output = new FileStream(update.DownloadPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, true))
+            await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+        string sha256;
+        long size;
+        await using (var staged = File.OpenRead(update.DownloadPath))
+        {
+            size = staged.Length;
+            sha256 = Convert.ToHexString(await SHA256.HashDataAsync(staged, cancellationToken).ConfigureAwait(false));
+        }
+        await update.StartHelperAsync(sha256, size, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        update.HandOff();
+        return true;
+    }
+
+    internal Task StartHelperAsync(AppRelease release, CancellationToken cancellationToken) =>
+        StartHelperAsync(release.Sha256, release.Size, cancellationToken);
+
+    private async Task StartHelperAsync(string sha256, long size, CancellationToken cancellationToken)
     {
         string script = Path.Combine(directory, "SelfUpdate.ps1");
         using (var resource = typeof(AppSelfUpdate).Assembly.GetManifestResourceStream("NovaTouchUpdater.SelfUpdate.ps1")
@@ -46,8 +80,8 @@ internal sealed class AppSelfUpdate : IDisposable
             OriginalExecutablePath = original,
             ExecutablePath = target,
             StagedPath = DownloadPath,
-            Sha256 = release.Sha256,
-            Size = release.Size
+            Sha256 = sha256,
+            Size = size
         }), new UTF8Encoding(true), cancellationToken);
         var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"))
         { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(target)! };

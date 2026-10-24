@@ -11,7 +11,11 @@ internal static class Program
     {
         try
         {
-            if (args.SequenceEqual(new[] { "--helper-handshake" })) HelperHandshake().GetAwaiter().GetResult();
+            if (File.Exists(Path.Combine(AppContext.BaseDirectory, ExecutableRenameTests.MarkerName)))
+                return ExecutableRenameTests.RunFixtureAsync(args).GetAwaiter().GetResult();
+            if (args.Length == 2 && args[0] == "--rename-integration")
+                ExecutableRenameTests.RunAsync(args[1]).GetAwaiter().GetResult();
+            else if (args.SequenceEqual(new[] { "--helper-handshake" })) HelperHandshake().GetAwaiter().GetResult();
             else { ReleaseTests().GetAwaiter().GetResult(); LayoutTests(); }
             return 0;
         }

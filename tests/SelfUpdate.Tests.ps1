@@ -51,9 +51,10 @@ try {
     $failed = $false
     try {
         Invoke-AppSelfUpdate -ManifestPath $fixture.Manifest -WaitForApplication {} -StartApplication {
-            param($path)
+            param($path, [bool]$SkipRename)
             $script:starts++
             if ($script:starts -eq 1) { throw 'simulated start failure' }
+            Assert $SkipRename 'rollback suppresses startup renaming to avoid an endless retry loop'
             Assert ($path -eq $fixture.Original) 'rollback starts the original EXE with its original filename'
             Assert ([IO.File]::ReadAllText($path).StartsWith('old')) 'old EXE is restored before restarting after failure'
         }

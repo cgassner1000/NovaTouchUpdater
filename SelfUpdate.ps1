@@ -11,8 +11,17 @@ function Invoke-AppSelfUpdate {
             }
         },
         [scriptblock]$StartApplication = {
-            param($path)
-            Start-Process -FilePath $path -WorkingDirectory ([IO.Path]::GetDirectoryName($path)) -WindowStyle Normal -ErrorAction Stop | Out-Null
+            param($path, [bool]$SkipRename = $false)
+            $startOptions = @{
+                FilePath = $path
+                WorkingDirectory = [IO.Path]::GetDirectoryName($path)
+                WindowStyle = 'Normal'
+                ErrorAction = 'Stop'
+            }
+            # A restored executable must not immediately retry the same failed
+            # startup rename and create an endless restart loop.
+            if ($SkipRename) { $startOptions.ArgumentList = '--skip-executable-rename' }
+            Start-Process @startOptions | Out-Null
         }
     )
     $ErrorActionPreference = 'Stop'
@@ -89,7 +98,7 @@ function Invoke-AppSelfUpdate {
                     }
                     if ($originalMoved) { [IO.File]::Move($backup, $original) }
                 }
-                & $StartApplication $original
+                & $StartApplication $original $true
             } catch {
                 throw "Update fehlgeschlagen: $failure | Wiederherstellung/Neustart: $_ | Sicherungsordner: $directory"
             }
