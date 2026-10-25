@@ -582,12 +582,17 @@ public sealed class MainForm : Form
     {
         using var dialog = new Form
         {
-            Text = "Computer hinzufügen oder bearbeiten", Width = 560, Height = 350,
-            FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+            Text = "Computer hinzufügen oder bearbeiten", Width = 720, Height = 420, MinimumSize = new Size(560, 350),
+            FormBorderStyle = FormBorderStyle.Sizable, StartPosition = FormStartPosition.CenterParent,
             MinimizeBox = false, MaximizeBox = false, Font = new Font("Segoe UI", 9F)
         };
         dialog.SuspendLayout();
-        var label = new Label { Text = "Computernamen (ein Computer pro Zeile):", AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
+        var label = new Label
+        {
+            Text = "Computernamen (ein Computer pro Zeile). Über „Durchsuchen“ können mehrere Computer ausgewählt werden.\n" +
+                "Im Windows-Dialog: „Erweitert …“ → „Jetzt suchen“. Die Domäne lässt sich über den Suchpfad auswählen.",
+            AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(3, 3, 3, 8)
+        };
         var hostNames = new TextBox
         {
             Dock = DockStyle.Fill, Multiline = true, AcceptsReturn = true,
@@ -599,7 +604,7 @@ public sealed class MainForm : Form
         buttons.Padding = new Padding(8);
         var add = new Button { Text = "OK", AutoSize = true };
         var cancel = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, AutoSize = true };
-        var browse = new Button { Text = "Durchsuchen...", AutoSize = true };
+        var browse = new Button { Text = "Durchsuchen", AutoSize = true };
         browse.Click += (_, _) =>
         {
             try
@@ -612,7 +617,9 @@ public sealed class MainForm : Form
             catch (Exception ex)
             {
                 MessageBox.Show(dialog,
-                    "Der Active-Directory-Browser ist nicht verfügbar. Du kannst Computernamen unten manuell eingeben.\n\n" + ex.Message,
+                    "Die Domänensuche konnte nicht geöffnet oder die Auswahl nicht übernommen werden. " +
+                    "Bitte die Verbindung zur Domäne und die Berechtigungen der aktuellen Windows-Anmeldung prüfen. " +
+                    "Computernamen können weiterhin manuell eingegeben werden.\n\n" + ex.Message,
                     "Computer durchsuchen", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         };

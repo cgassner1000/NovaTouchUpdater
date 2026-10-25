@@ -78,6 +78,14 @@ Die Oberfläche berücksichtigt die Windows-Anzeigeskalierung pro Monitor (PerMo
 
 Zur Prüfung der Darstellung die Anwendung bei 100 %, 125 %, 150 % und 200 % Windows-Skalierung öffnen, das Fenster verkleinern und wieder vergrößern sowie bei mehreren Monitoren zwischen den Bildschirmen verschieben.
 
+**Host hinzufügen** öffnet die bearbeitbare Hostliste. Über **Durchsuchen** lässt sich der Windows-Dialog zur Computerauswahl öffnen: **Erweitert … → Jetzt suchen** zeigt die Treffer; über den Suchpfad kann die Domäne gewählt werden. Mehrere Computer können gemeinsam übernommen werden. Angeboten werden die verbundene Domäne sowie weitere verfügbare Domänen und manuell eingegebene Domänenpfade. Die Suche verwendet die **aktuelle Windows-Anmeldung** und benötigt Zugriff auf die betreffende Domäne; die separat eingetragenen WinRM-Zugangsdaten werden dafür nicht verwendet. Verfügbare DNS-Computernamen werden vollständig übernommen, andernfalls der Computername. Doppelte Einträge werden beim Bestätigen mit **OK** entfernt. Manuelle Eingabe und TXT-Import bleiben möglich.
+
+Die Windows-Anbindung folgt den dokumentierten [Computerfiltern](https://learn.microsoft.com/en-us/windows/win32/api/objsel/ns-objsel-dsop_uplevel_filter_flags), [Suchbereichen](https://learn.microsoft.com/en-us/windows/win32/api/objsel/ns-objsel-dsop_scope_init_info) und [16-Bit-Formatkennungen](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerclipboardformatw). Lokale Schnittstellentests prüfen die nativen Speicherlayouts und die Übernahme mehrerer Computer mit simulierten Windows-Auswahldaten. Sie öffnen keinen Dialog und fragen keine echte Domäne ab:
+
+```powershell
+dotnet run --project tests\DirectoryPicker.Tests\DirectoryPicker.Tests.csproj -c Release
+```
+
 1. Hostnamen-TXT laden: ein Hostname/IP pro Zeile; Leerzeilen und Zeilen mit `#`/`;` werden ignoriert, Duplikate entfernt.
 2. `nt.payment_VERSION*.zip`, `nt.fiscal_VERSION*.zip` und/oder `nt.server.suite-VERSION.zip` wählen (die Auswahlfelder stehen direkt untereinander). Beispiele: `nt.payment_2026.2.9546.5587.zip`, `nt.server.suite-2026.4.9792.zip`. Die Server-Suite-Auswahl steht unter Fiscal; ihre ZIP muss die gefüllten Ordner `apps\nt3-server-suite` und `installer\python\portable_python` enthalten.
    **Eine einzige ZIP genügt:** Nur Payment, nur Fiscal oder nur Server Suite können unabhängig aktualisiert werden. Dienste und Installationsdateien der nicht ausgewählten Komponenten bleiben auch bei Force unverändert. Bei einer ausgewählten Server-Suite-ZIP werden alle zugehörigen Instanzen des Hosts berücksichtigt.
