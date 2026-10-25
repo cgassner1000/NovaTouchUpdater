@@ -590,7 +590,7 @@ public sealed class MainForm : Form
         var label = new Label
         {
             Text = "Computernamen (ein Computer pro Zeile). Über „Durchsuchen“ können mehrere Computer ausgewählt werden.\n" +
-                "Im Windows-Dialog: „Erweitert …“ → „Jetzt suchen“. Die Domäne lässt sich über den Suchpfad auswählen.",
+                "Die Suche unterstützt frei wählbare Namensmuster und eigene LDAP-Filter über „Erweiterte Suche“.",
             AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(3, 3, 3, 8)
         };
         var hostNames = new TextBox
@@ -609,7 +609,9 @@ public sealed class MainForm : Form
         {
             try
             {
-                string[] selected = ActiveDirectoryComputerPicker.SelectComputers(dialog.Handle);
+                using var search = new LdapComputerSearchDialog();
+                if (search.ShowDialog(dialog) != DialogResult.OK) return;
+                string[] selected = search.SelectedHosts;
                 if (selected.Length > 0)
                     hostNames.AppendText((hostNames.TextLength == 0 || hostNames.Text.EndsWith(Environment.NewLine) ? "" : Environment.NewLine)
                         + string.Join(Environment.NewLine, selected));

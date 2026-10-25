@@ -78,12 +78,22 @@ Die Oberfläche berücksichtigt die Windows-Anzeigeskalierung pro Monitor (PerMo
 
 Zur Prüfung der Darstellung die Anwendung bei 100 %, 125 %, 150 % und 200 % Windows-Skalierung öffnen, das Fenster verkleinern und wieder vergrößern sowie bei mehreren Monitoren zwischen den Bildschirmen verschieben.
 
-**Host hinzufügen** öffnet die bearbeitbare Hostliste. Über **Durchsuchen** lässt sich der Windows-Dialog zur Computerauswahl öffnen: **Erweitert … → Jetzt suchen** zeigt die Treffer; über den Suchpfad kann die Domäne gewählt werden. Mehrere Computer können gemeinsam übernommen werden. Angeboten werden die verbundene Domäne sowie weitere verfügbare Domänen und manuell eingegebene Domänenpfade. Die Suche verwendet die **aktuelle Windows-Anmeldung** und benötigt Zugriff auf die betreffende Domäne; die separat eingetragenen WinRM-Zugangsdaten werden dafür nicht verwendet. Verfügbare DNS-Computernamen werden vollständig übernommen, andernfalls der Computername. Doppelte Einträge werden beim Bestätigen mit **OK** entfernt. Manuelle Eingabe und TXT-Import bleiben möglich.
+**Host hinzufügen → Durchsuchen** öffnet den eigenen Dialog **Computer in der Domäne suchen**. Er bietet zwei Suchmodi:
 
-Die Windows-Anbindung folgt den dokumentierten [Computerfiltern](https://learn.microsoft.com/en-us/windows/win32/api/objsel/ns-objsel-dsop_uplevel_filter_flags), [Suchbereichen](https://learn.microsoft.com/en-us/windows/win32/api/objsel/ns-objsel-dsop_scope_init_info) und [16-Bit-Formatkennungen](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-registerclipboardformatw). Lokale Schnittstellentests prüfen die nativen Speicherlayouts und die Übernahme mehrerer Computer mit simulierten Windows-Auswahldaten. Sie öffnen keinen Dialog und fragen keine echte Domäne ab:
+- **Namensmuster:** ein frei wählbares Muster, beispielsweise `PC*-RST-POS-*`, `SERVER-*` oder `*-KASSE-*`. `*` steht für beliebig viele Zeichen; mit `*` allein werden alle Computer gesucht. Es ist kein Namensschema fest vorgegeben. Die Abfrage wird als LDAP-Filter direkt an das Verzeichnis gesendet.
+- **Erweiterte Suche (LDAP):** ein eigener LDAP-Filter, beispielsweise `(|(name=PC*-RST-POS-*)(name=SERVER-*))` oder `(&(name=SERVER-*)(operatingSystem=*Windows*))`. Zusätzlich wird immer `objectCategory=computer` eingeschränkt. AND/OR/NOT und LDAP-Matching-Regeln bleiben nutzbar; Sonderzeichen und Platzhalter folgen der [LDAP-Filtersyntax](https://learn.microsoft.com/en-us/windows/win32/adsi/search-filter-syntax).
+
+**Domäne / Domaincontroller** und **Suchbasis (DN)** sind optional. Ohne Angaben wird die aktuelle Domäne durchsucht; mit einer Suchbasis wie `OU=Kassen,DC=firma,DC=local` lässt sich die Abfrage auf einen Teilbaum begrenzen. Die Suche verwendet die **aktuelle Windows-Anmeldung** und benötigt Zugriff auf die betreffende Domäne; die separat eingetragenen WinRM-Zugangsdaten werden dafür nicht verwendet. Erst **Suchen** startet die Abfrage. Laufende Suchen können abgebrochen werden; beim Schließen wird der Suchprozess beendet. Es werden keine Computer oder Dienste verändert.
+
+Die Trefferliste zeigt Computername, DNS-Name, Betriebssystem und Beschreibung. Gewünschte Computer anhaken oder **Alle auswählen** verwenden und anschließend **Auswahl übernehmen** klicken. Verfügbare DNS-Computernamen werden vollständig übernommen, andernfalls der Computername. Doppelte Einträge werden beim Bestätigen der Hostliste mit **OK** entfernt. Geänderte Suchangaben erfordern eine neue Suche, bevor alte Treffer übernommen werden können. Manuelle Eingabe und TXT-Import bleiben möglich.
+
+Die LDAP-Suche verwendet Windows PowerShell 5.1 und die vorhandene .NET-Verzeichnisanbindung; das ActiveDirectory-PowerShell-Modul wird nicht benötigt. Die Ergebnisse werden seitenweise abgefragt, damit die übliche AD-Begrenzung auf 1000 Einträge nicht unbemerkt greift. Maximal 10.000 eindeutige Computer werden angezeigt; weitere Treffer werden ausdrücklich gemeldet und können durch ein engeres Muster oder eine Suchbasis eingegrenzt werden. Client, Server und Gesamtprozess haben Zeitlimits.
+
+Lokale Tests prüfen Filterbildung, frei wählbare Muster, eigene LDAP-Ausdrücke, Auswahl, Abbrechen, Darstellung und die echte JSON-Verbindung zum eingebetteten Suchprozess mit einer vor jeder Verzeichnisverbindung abgewiesenen Testeingabe. Die PowerShell-Tests simulieren Verzeichniseinträge und größere Trefferlisten. Beide Tests fragen keine echte Domäne ab und verändern keine vorhandene Config:
 
 ```powershell
-dotnet run --project tests\DirectoryPicker.Tests\DirectoryPicker.Tests.csproj -c Release
+dotnet run --project tests\LdapSearch.Tests\LdapSearch.Tests.csproj -c Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\DirectorySearch.Tests.ps1
 ```
 
 1. Hostnamen-TXT laden: ein Hostname/IP pro Zeile; Leerzeilen und Zeilen mit `#`/`;` werden ignoriert, Duplikate entfernt.
