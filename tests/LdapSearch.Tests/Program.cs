@@ -118,6 +118,16 @@ internal static class Program
         Complete(dialog.SearchAsync());
         Assert(searches == before && !import.Enabled && status.ForeColor == Color.Firebrick, "invalid custom filter is reported before a search starts");
 
+        const string directoryError = "Computer suchen [LDAP://dc.example.test/DC=example,DC=test]: simulated LDAP bind error (0x80072020)";
+        using var failed = new LdapComputerSearchDialog((_, _) => Task.FromException<LdapSearchResult>(new InvalidOperationException(directoryError)));
+        _ = failed.Handle;
+        var failedControls = All(failed).Where(c => c.Name.Length > 0).ToDictionary(c => c.Name);
+        ((TextBox)failedControls["pattern"]).Text = "TEST-*";
+        Complete(failed.SearchAsync());
+        Assert(failedControls["searchStatus"].Text == "Suche fehlgeschlagen: " + directoryError
+            && failedControls["find"].Enabled && !failedControls["stop"].Enabled && !failedControls["import"].Enabled,
+            "original LDAP diagnostics reach the dialog and a failed search remains retryable");
+
         using var waiting = new LdapComputerSearchDialog((_, token) =>
         {
             var completion = new TaskCompletionSource<LdapSearchResult>(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -1,5 +1,23 @@
 param([switch]$LibraryOnly)
 
+function New-DirectorySearchEntry([string]$path) {
+    # PowerShell converts $null arguments for string parameters to empty strings.
+    # The four-argument constructor would therefore use empty credentials instead
+    # of the logged-on Windows identity. Leave credentials unset entirely.
+    $entry = [DirectoryServices.DirectoryEntry]::new($path)
+    $entry.psbase.AuthenticationType = [DirectoryServices.AuthenticationTypes]::Secure -bor [DirectoryServices.AuthenticationTypes]::Signing -bor [DirectoryServices.AuthenticationTypes]::Sealing
+    return $entry
+}
+
+function Close-DirectorySearchResource($resource) {
+    if ($null -ne $resource) {
+        # The ADSI adapter can perform another bind when resolving Dispose, even
+        # after a failed search. psbase invokes the managed method directly.
+        # Cleanup must neither hide the search error nor invalidate its results.
+        try { $resource.psbase.Dispose() } catch { }
+    }
+}
+
 function ConvertTo-DirectorySearchPath([string]$distinguishedName) {
     $value = [Text.StringBuilder]::new()
     $slashes = 0
@@ -16,8 +34,7 @@ function Invoke-DirectoryComputerSearch {
         [Parameter(Mandatory=$true)]$Request,
         [scriptblock]$CreateEntry = {
             param($path)
-            $authentication = [DirectoryServices.AuthenticationTypes]::Secure -bor [DirectoryServices.AuthenticationTypes]::Signing -bor [DirectoryServices.AuthenticationTypes]::Sealing
-            [DirectoryServices.DirectoryEntry]::new($path, $null, $null, $authentication)
+            New-DirectorySearchEntry $path
         },
         [scriptblock]$CreateSearcher = { param($entry) [DirectoryServices.DirectorySearcher]::new($entry) },
         [ValidateRange(1,10000)][int]$MaximumResults = 10000
@@ -32,11 +49,20 @@ function Invoke-DirectoryComputerSearch {
     $prefix = 'LDAP://'
     if ($domain) { $prefix += $domain + '/' }
     $rootDse = $null; $entry = $null; $searcher = $null; $results = $null
+    $step = 'Domäne ermitteln'
+    $path = $prefix + 'RootDSE'
     try {
-        $rootDse = & $CreateEntry ($prefix + 'RootDSE')
-        if (-not $base) { $base = [string]$rootDse.Properties['defaultNamingContext'][0] }
+        if (-not $base) {
+            $rootDse = & $CreateEntry $path
+            # Bind explicitly: PowerShell can turn an exception from a property
+            # getter into $null, losing the real LDAP error during indexing.
+            $rootDse.psbase.RefreshCache(@('defaultNamingContext'))
+            $base = [string]$rootDse.psbase.Properties['defaultNamingContext'][0]
+        }
         if (-not $base) { throw 'Es wurde keine Domäne gefunden. Bitte eine erreichbare Domäne oder einen Domaincontroller eintragen.' }
-        $entry = & $CreateEntry ($prefix + (ConvertTo-DirectorySearchPath $base))
+        $step = 'Computer suchen'
+        $path = $prefix + (ConvertTo-DirectorySearchPath $base)
+        $entry = & $CreateEntry $path
         $searcher = & $CreateSearcher $entry
         $searcher.Filter = $filter
         $searcher.SearchScope = [DirectoryServices.SearchScope]::Subtree
@@ -49,6 +75,7 @@ function Invoke-DirectoryComputerSearch {
         $searcher.ReferralChasing = [DirectoryServices.ReferralChasingOption]::None
         foreach ($property in @('name','dnshostname','operatingsystem','description')) { [void]$searcher.PropertiesToLoad.Add($property) }
         $results = $searcher.FindAll()
+        $step = 'Suchergebnisse lesen'
         $computers = [Collections.Generic.List[object]]::new()
         $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         $truncated = $false
@@ -67,11 +94,21 @@ function Invoke-DirectoryComputerSearch {
             })
         }
         [pscustomobject]@{ Success=$true; Computers=@($computers | Sort-Object Name,DnsName); SearchBase=$base; Truncated=$truncated; Error='' }
+    } catch {
+        $failure = $_.Exception
+        while ($null -ne $failure.InnerException) { $failure = $failure.InnerException }
+        $detail = $failure.Message.Trim()
+        if ($failure -is [DirectoryServices.DirectoryServicesCOMException]) {
+            $extended = $failure.ExtendedErrorMessage
+            if ($extended -and -not $detail.Contains($extended.Trim())) { $detail += ' ' + $extended.Trim() }
+        }
+        if ($failure -is [Runtime.InteropServices.COMException]) { $detail += ' (0x{0:X8})' -f $failure.ErrorCode }
+        throw [InvalidOperationException]::new(($step + ' [' + $path + ']: ' + $detail), $failure)
     } finally {
-        if ($null -ne $results) { $results.Dispose() }
-        if ($null -ne $searcher) { $searcher.Dispose() }
-        if ($null -ne $entry) { $entry.Dispose() }
-        if ($null -ne $rootDse) { $rootDse.Dispose() }
+        Close-DirectorySearchResource $results
+        Close-DirectorySearchResource $searcher
+        Close-DirectorySearchResource $entry
+        Close-DirectorySearchResource $rootDse
     }
 }
 
