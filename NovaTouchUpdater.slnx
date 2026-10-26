@@ -11,6 +11,7 @@
     <Project Path="tests/dotnet/HostState.Tests/HostState.Tests.csproj" />
     <Project Path="tests/dotnet/InformationProgress.Tests/InformationProgress.Tests.csproj" />
     <Project Path="tests/dotnet/LdapSearch.Tests/LdapSearch.Tests.csproj" />
+    <Project Path="tests/dotnet/MainForm.Tests/MainForm.Tests.csproj" />
   </Folder>
   <Folder Name="/Project/">
     <File Path="README.md" />

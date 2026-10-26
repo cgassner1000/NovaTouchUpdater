@@ -16,7 +16,7 @@ internal static class LdapComputerQuery
     internal static string ForPattern(string pattern)
     {
         pattern = pattern.Trim();
-        if (pattern.Length == 0) throw new ArgumentException("Bitte ein Namensmuster eingeben. Mit * werden alle Computer gesucht.");
+        if (pattern.Length == 0) pattern = "*";
         var escaped = new StringBuilder();
         foreach (char value in pattern)
             escaped.Append(value switch { '\\' => @"\5c", '(' => @"\28", ')' => @"\29", '/' => @"\2f", '\0' => @"\00", _ => value.ToString() });

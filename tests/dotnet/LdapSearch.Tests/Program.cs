@@ -11,6 +11,7 @@ internal static class Program
             FilterTests();
             ProtocolTests().GetAwaiter().GetResult();
             DialogTests();
+            SelectionInteractionTests();
             LayoutTests();
             return 0;
         }
@@ -40,7 +41,9 @@ internal static class Program
         Assert(LdapComputerQuery.ForCustomFilter(custom) == $"(&(objectCategory=computer){custom})", "custom AND/OR/NOT filters and escaped literals remain available within the computer restriction");
         foreach (string invalid in new[] { "", "name=*", "()", "(name=*) (objectClass=*)", "(&(name=*)", @"(name=bad\zz)", "(name=bad\0)" })
             Rejects(() => LdapComputerQuery.ForCustomFilter(invalid), "malformed or multiple-root filter is rejected");
-        Rejects(() => LdapComputerQuery.ForPattern(" "), "blank pattern does not implicitly search every computer");
+        foreach (string blank in new[] { "", " ", "\t\r\n" })
+            Assert(LdapComputerQuery.ForPattern(blank) == "(&(objectCategory=computer)(name=*))",
+                "empty or whitespace-only name patterns search for all computers");
         foreach (string domain in new[] { "LDAP://example.test", "example.test/RootDSE", "dc.example.test:389", "invalid domain" })
             Rejects(() => LdapComputerQuery.Create(domain, "", "*", false), "domain field accepts a host name instead of an injected binding path");
         var request = LdapComputerQuery.Create(" example.test ", " OU=Kassen,DC=example,DC=test ", "SERVER-*", false);
@@ -98,6 +101,9 @@ internal static class Program
         var status = controls["searchStatus"];
         Assert(searches == 0 && pattern.TextLength == 0 && !import.Enabled && !controls["stop"].Enabled,
             "opening the dialog starts no search, hardcodes no pattern and selects no computers");
+        Complete(dialog.SearchAsync());
+        Assert(observed?.Filter == "(&(objectCategory=computer)(name=*))" && !import.Enabled,
+            "searching with an untouched pattern field requests all computers without selecting any");
         pattern.Text = "WHATEVER-*";
         Complete(dialog.SearchAsync());
         Assert(observed is not null, "pattern search starts: " + status.Text);
@@ -146,6 +152,91 @@ internal static class Program
         waiting.Close();
         Complete(closing);
         Assert(waiting.IsDisposed, "closing the dialog cancels and disposes an active search");
+    }
+
+    private static void ClickCell(DataGridView grid, int column, int row)
+    {
+        Rectangle bounds = grid.GetCellDisplayRectangle(column, row, false);
+        Assert(bounds.Width > 0 && bounds.Height > 0, "the requested result cell is visible in the test control");
+        grid.CurrentCell = grid[column, row];
+        // Hidden controls cannot receive ordinary mouse clicks. Exercise native
+        // checkbox editing/commit and dispatch the real row-click event instead.
+        if (column == 0)
+        {
+            Assert(grid.BeginEdit(false), "individual checkboxes remain editable after applying the theme");
+            var editing = (IDataGridViewEditingCell)grid.CurrentCell;
+            editing.EditingCellFormattedValue = editing.EditingCellFormattedValue is not true;
+            grid.NotifyCurrentCellDirty(true);
+        }
+        else
+            typeof(DataGridView).GetMethod("OnCellClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(grid, [new DataGridViewCellEventArgs(column, row)]);
+    }
+
+    private static void SelectionInteractionTests()
+    {
+        foreach (float scale in new[] { 1F, 1.25F, 1.5F, 2F })
+        {
+            using var dialog = new LdapComputerSearchDialog((_, _) => Task.FromResult(new LdapSearchResult(true, [
+                new("A", "a.example.test", "Windows", "Test"),
+                new("B", "b.example.test", "Windows", "Test"),
+                new("C", "c.example.test", "Windows", "Test")
+            ], "DC=example,DC=test", false, "")));
+            dialog.Scale(new SizeF(scale, scale));
+            dialog.Font = new Font("Segoe UI", 9.5F * scale);
+            _ = dialog.Handle;
+            var controls = All(dialog).Where(c => c.Name.Length > 0).ToDictionary(c => c.Name);
+            var grid = (DataGridView)controls["results"];
+            var import = (Button)controls["import"];
+            ((TextBox)controls["pattern"]).Text = "*";
+            Control content = dialog.Controls[0];
+            using var canvas = new Panel { Size = dialog.ClientSize, Font = dialog.Font };
+            canvas.Controls.Add(content);
+            canvas.CreateControl();
+            foreach (Control control in All(canvas)) _ = control.Handle;
+            for (int pass = 0; pass < 8; pass++) PerformLayout(canvas);
+            Complete(dialog.SearchAsync());
+            for (int pass = 0; pass < 3; pass++) PerformLayout(canvas);
+
+            Rectangle checkbox = grid[0, 0].ContentBounds;
+            Assert(!checkbox.IsEmpty, $"checkboxes remain visible after applying the theme at {scale * 100}%");
+            ClickCell(grid, 0, 0);
+            Assert(import.Enabled && dialog.GetSelectedHosts().SequenceEqual(new[] { "a.example.test" }),
+                $"one checkbox click selects exactly one computer at {scale * 100}%");
+            ClickCell(grid, 1, 2);
+            Assert(dialog.GetSelectedHosts().SequenceEqual(new[] { "a.example.test", "c.example.test" }) && controls["selectedCount"].Text == "2 ausgewählt",
+                $"clicking a different row adds that computer to the explicit selection at {scale * 100}%");
+            var key = new KeyEventArgs(Keys.Space);
+            typeof(DataGridView).GetMethod("OnKeyDown", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(grid, [key]);
+            Assert(key.Handled && key.SuppressKeyPress && dialog.GetSelectedHosts().SequenceEqual(new[] { "a.example.test" }),
+                "Space toggles the current text row without editing its computer name");
+            typeof(DataGridView).GetMethod("OnKeyDown", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(grid, [new KeyEventArgs(Keys.Space)]);
+            ClickCell(grid, 0, 0);
+            Assert(dialog.GetSelectedHosts().SequenceEqual(new[] { "c.example.test" }),
+                "clicking a selected checkbox again removes only that computer");
+            ClickCell(grid, 1, 2);
+            Assert(!import.Enabled && dialog.GetSelectedHosts().Length == 0,
+                "removing the last selection disables importing");
+            dialog.SetAllSelected(true);
+            grid.EndEdit();
+            Assert(dialog.GetSelectedHosts().Length == 3, "selecting all remains committed after editing an individual checkbox");
+            dialog.SetAllSelected(false);
+            ClickCell(grid, 1, 1);
+            if (scale > 1F) ClickCell(grid, 1, 2);
+            string[] expected = scale == 1F ? ["b.example.test"] : ["b.example.test", "c.example.test"];
+            if (scale == 1F)
+            {
+                using var bitmap = new Bitmap(canvas.Width, canvas.Height);
+                canvas.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "ldap-selection.png"));
+            }
+            import.PerformClick();
+            Assert(dialog.DialogResult == DialogResult.OK && dialog.SelectedHosts.SequenceEqual(expected),
+                "importing transfers exactly the single computer or chosen subset, never all unselected results");
+
+            canvas.Controls.Remove(content);
+            if (!dialog.IsDisposed) dialog.Controls.Add(content);
+        }
     }
 
     private static void LayoutTests()

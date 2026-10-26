@@ -94,7 +94,12 @@ public sealed class UploadDirectoryInfo
     public bool Cleaned { get; set; }
 }
 
-public sealed class WorkerRunner : IDisposable
+internal interface IWorkerRunner : IDisposable
+{
+    Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> onProgress, CancellationToken ct);
+}
+
+public sealed class WorkerRunner : IWorkerRunner
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly string scriptFile;

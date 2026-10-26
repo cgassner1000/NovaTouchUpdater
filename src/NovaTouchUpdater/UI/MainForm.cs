@@ -13,8 +13,8 @@ public sealed class MainForm : Form
 {
     private readonly List<HostState> hosts = [];
     private readonly object logLock = new();
-    private readonly WorkerRunner runner = new();
-    private readonly WorkerRunner connectionRunner = new("NovaTouchUpdater.ConnectionWorker.ps1");
+    private readonly IWorkerRunner runner;
+    private readonly IWorkerRunner connectionRunner;
     private readonly System.Windows.Forms.Timer connectionTimer = new() { Interval = 10000 };
     private CancellationTokenSource? connectionCancellation;
     private bool connectionCheckRunning;
@@ -25,6 +25,7 @@ public sealed class MainForm : Form
     private CancellationTokenSource? cancellation;
     private bool busy;
     private bool fittingColumns;
+    private bool changingHostSelection;
     private bool selfUpdating;
     private bool checkingRelease;
     private AppRelease? availableRelease;
@@ -38,6 +39,7 @@ public sealed class MainForm : Form
     private readonly ComboBox statusFilter = new();
     private readonly Label lblFile = new();
     private readonly Label lblSummary = new();
+    private readonly Label lblSelection = new() { Name = "hostSelection", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly Label lblPayment = new();
     private readonly Label lblFiscal = new();
     private readonly Label lblServerSuite = new();
@@ -66,6 +68,8 @@ public sealed class MainForm : Form
     private readonly Button btnRetry = Button("Fehler erneut versuchen");
     private readonly Button btnExport = Button("HTML-Bericht erstellen");
     private readonly Button btnCancel = Button("Abbrechen");
+    private readonly Button btnSelectAll = Button("Alle auswählen");
+    private readonly Button btnClearSelection = Button("Auswahl aufheben");
 
     private string paymentZip = "";
     private string fiscalZip = "";
@@ -91,13 +95,15 @@ public sealed class MainForm : Form
 
     // Off-screen design previews use synthetic rows and never load the user's
     // config, start monitoring, check releases or write an application log.
-    internal MainForm(bool preview)
+    internal MainForm(bool preview, IWorkerRunner? worker = null, IWorkerRunner? monitoringWorker = null)
     {
+        runner = worker ?? new WorkerRunner();
+        connectionRunner = monitoringWorker ?? new WorkerRunner("NovaTouchUpdater.ConnectionWorker.ps1");
         SuspendLayout();
         Text = $"NovaTouch Updater v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
         Font = UiTheme.BodyFont();
         BackColor = UiTheme.Background;
-        ClientSize = new Size(1440, 920);
+        ClientSize = new Size(1560, 920);
         MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterScreen;
         string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovaTouchUpdater", "Logs");
@@ -106,7 +112,7 @@ public sealed class MainForm : Form
         ConstructUi();
         WindowLayout.CompleteInitialization(this);
         if (!preview) LoadStartupConfig();
-        // Erst nach dem ersten Layout die endgültigen Fill-Spalten aktivieren.
+        // Erst nach dem ersten Layout die endgültigen Spaltenbreiten berechnen.
         connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
         releaseTimer.Tick += async (_, _) => await CheckAppReleaseAsync();
         updateNotice.LinkClicked += async (_, _) => await UpdateApplicationAsync();
@@ -445,6 +451,16 @@ public sealed class MainForm : Form
         statusFilter.SelectedIndex = 0;
         statusFilter.SelectedIndexChanged += (_, _) => { if (!busy) RebuildRows(); };
         filterBar.Controls.Add(statusFilter);
+        btnSelectAll.Name = "selectAllHosts";
+        btnClearSelection.Name = "clearHostSelection";
+        btnSelectAll.Margin = new Padding(18, 0, 6, 0);
+        btnClearSelection.Margin = new Padding(0, 0, 12, 0);
+        lblSelection.ForeColor = UiTheme.Muted;
+        btnSelectAll.Click += (_, _) => SetAllHostsSelected(true);
+        btnClearSelection.Click += (_, _) => SetAllHostsSelected(false);
+        filterBar.Controls.Add(btnSelectAll);
+        filterBar.Controls.Add(btnClearSelection);
+        filterBar.Controls.Add(lblSelection);
         main.Controls.Add(Stack(bar, filterBar), 0, 2);
 
         table.Name = "hosts";
@@ -452,11 +468,12 @@ public sealed class MainForm : Form
         table.MinimumSize = new Size(0, 160);
         table.AllowUserToAddRows = false;
         table.AllowUserToDeleteRows = false;
-        table.ReadOnly = true;
+        table.ReadOnly = false;
+        table.EditMode = DataGridViewEditMode.EditOnEnter;
         table.MultiSelect = false;
         table.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         table.ScrollBars = ScrollBars.Vertical;
-        // Fill erst nach dem fertigen Layout in ApplyColumnWeights aktivieren.
+        // Breiten erst nach dem fertigen Layout in ApplyColumnWeights berechnen.
         table.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
         table.RowHeadersVisible = false;
         table.BackgroundColor = Color.White;
@@ -467,24 +484,36 @@ public sealed class MainForm : Form
         table.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders;
         table.DefaultCellStyle.Padding = new Padding(0, 4, 0, 4);
         table.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
+        table.Columns.Add(new DataGridViewCheckBoxColumn
+        {
+            Name = "include", HeaderText = "", SortMode = DataGridViewColumnSortMode.NotSortable,
+            Resizable = DataGridViewTriState.False,
+            DefaultCellStyle = new DataGridViewCellStyle { Padding = new Padding(1, 0, 1, 0), Alignment = DataGridViewContentAlignment.MiddleCenter }
+        });
         table.Columns.Add("hostname", "Hostname");
         table.Columns.Add("connection", "Verbindung");
         table.Columns["connection"].CellTemplate = new StatusBadgeCell();
         table.Columns["connection"].ToolTipText = "Automatische WinRM-Prüfung ca. alle 10 Sekunden. Letzte Prüfung und Fehlerdetails stehen im Tooltip des Hosts.";
         table.Columns.Add("dotnet48", ".NET 4.8");
-        table.Columns.Add("payment", "Payment Ist");
-        table.Columns.Add("fiscal", "Fiscal Ist");
-        table.Columns.Add("serversuite", "Server Suite Ist");
+        table.Columns.Add("payment", "Payment");
+        table.Columns.Add("fiscal", "Fiscal");
+        table.Columns.Add("serversuite", "Server Suite");
         table.Columns.Add("pos", "NovaTouch POS");
         table.Columns.Add("information", "Information");
         table.Columns["information"].CellTemplate = new InformationProgressCell();
         table.Columns.Add("result", "Status");
         table.Columns["result"].CellTemplate = new StatusBadgeCell();
-        // Prozentwerte werden nach dem Anzeigen des Fensters in ApplyColumnWeights gesetzt.
-        // Dadurch verändern die späteren MinimumWidth-Einstellungen die FillWeight-Werte nicht.
+        foreach (DataGridViewColumn column in table.Columns)
+        {
+            column.HeaderCell = new SizingColumnHeaderCell { Value = column.HeaderText };
+            column.ReadOnly = column.Name != "include";
+        }
+        table.Columns["include"].ToolTipText = "Host für Remote-Aktionen auswählen";
+        // Die Basisbreiten und Gewichte werden nach dem ersten Layout auf die
+        // tatsächlich verfügbare Fensterbreite verteilt.
 
         // Mindestbreiten verhindern bei kleinen Fenstern unlesbare Spalten.
-        // Bei sehr schmalen Fenstern haben Mindestbreiten Vorrang vor Prozentwerten.
+        // ApplyColumnWeights verkleinert das gemeinsame Budget bei schmalen Fenstern.
         table.Columns["hostname"].MinimumWidth = 160;
         table.Columns["connection"].MinimumWidth = 112;
         table.Columns["connection"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
@@ -507,12 +536,34 @@ public sealed class MainForm : Form
         table.ShowCellToolTips = true;
         table.CellDoubleClick += (_, e) =>
         {
-            if (e.RowIndex < 0) return;
+            if (e.RowIndex < 0 || e.ColumnIndex == table.Columns["include"].Index) return;
             if (table.Rows[e.RowIndex].Tag is HostState host) ShowHostLog(host);
         };
         table.SelectionChanged += (_, _) => UpdateButtons();
+        table.CurrentCellDirtyStateChanged += (_, _) => { if (table.IsCurrentCellDirty) table.CommitEdit(DataGridViewDataErrorContexts.Commit); };
+        table.CellValueChanged += (_, e) =>
+        {
+            if (changingHostSelection || e.RowIndex < 0 || e.ColumnIndex != table.Columns["include"].Index || table.Rows[e.RowIndex].Tag is not HostState host) return;
+            bool selected = table.Rows[e.RowIndex].Cells["include"].Value is true;
+            if (host.IsSelected == selected) return;
+            host.IsSelected = selected;
+            HostSelectionChanged();
+        };
+        table.KeyDown += (_, e) =>
+        {
+            if (busy || selfUpdating || e.KeyCode != Keys.Space || table.CurrentCell?.ColumnIndex == table.Columns["include"].Index || table.CurrentRow?.Tag is not HostState host) return;
+            table.CurrentRow.Cells["include"].Value = !host.IsSelected;
+            e.Handled = e.SuppressKeyPress = true;
+        };
         table.ClientSizeChanged += (_, _) => { if (table.IsHandleCreated) ApplyColumnWeights(); };
         table.VisibleChanged += (_, _) => { if (table.Visible && table.IsHandleCreated) ApplyColumnWeights(); };
+        foreach (VScrollBar scrollbar in table.Controls.OfType<VScrollBar>())
+            scrollbar.VisibleChanged += (_, _) =>
+            {
+                if (!table.IsHandleCreated) return;
+                if (fittingColumns) table.BeginInvoke((Action)ApplyColumnWeights);
+                else ApplyColumnWeights();
+            };
         table.CellPainting += (_, e) =>
         {
             if (e.RowIndex != -1 || e.ColumnIndex < 0) return;
@@ -548,8 +599,9 @@ public sealed class MainForm : Form
         btnServerSuite.Click += (_, _) => ChooseServerSuite();
         btnWinRm.Click += (_, _) =>
         {
-            if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
-            using var dialog = new WinRmTestForm(hosts.Select(h => h.Host).ToArray(),
+            HostState[] targets = SelectedHosts();
+            if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
+            using var dialog = new WinRmTestForm(targets.Select(h => h.Host).ToArray(),
                 txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked, (int)nHttpsPort.Value);
             dialog.ShowDialog(this);
         };
@@ -606,33 +658,49 @@ public sealed class MainForm : Form
             table.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             // Minimum widths are a shared budget, not independent limits that
             // can push Status outside the viewport. Narrow windows wrap text.
-            int[] preferredMinimums = [140, 104, 50, 90, 90, 104, 104, 220, 94];
+            int[] preferredMinimums = [0, 140, 104, 76, 90, 90, 112, 128, 220, 94];
             float scale = table.DeviceDpi / 96F * table.Font.SizeInPoints / 9.5F;
-            int available = Math.Max(1, table.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 2);
-            float fit = Math.Min(1F, available / (preferredMinimums.Sum() * scale));
-            for (int index = 0; index < table.Columns.Count; index++)
-            {
-                var column = table.Columns[index];
-                column.AutoSizeMode = DataGridViewAutoSizeColumnMode.NotSet;
-                column.MinimumWidth = Math.Max(2, (int)(preferredMinimums[index] * scale * fit));
-            }
-            int horizontalPadding = Math.Max(1, (int)(5 * scale * fit));
+            int scrollbarWidth = table.Controls.OfType<VScrollBar>().Where(scrollbar => scrollbar.Visible).Sum(scrollbar => scrollbar.Width);
+            int borderWidth = table.BorderStyle == BorderStyle.None ? 0 : SystemInformation.BorderSize.Width * 2;
+            int available = Math.Max(1, table.ClientSize.Width - scrollbarWidth - borderWidth);
+            int checkboxWidth = (int)Math.Ceiling(26 * table.DeviceDpi / 96F);
+            int horizontalPadding = Math.Max(1, (int)(5 * scale));
+            var headerPadding = new Padding(horizontalPadding, (int)(11 * scale), horizontalPadding, (int)(11 * scale));
+            using var graphics = table.CreateGraphics();
+            var widths = table.Columns.Cast<DataGridViewColumn>()
+                .Select((column, index) => Math.Max(preferredMinimums[index] * scale,
+                    ((SizingColumnHeaderCell)column.HeaderCell).SingleLineWidth(graphics, headerPadding))).ToArray();
+            float textWidth = widths.Skip(1).Sum();
+            float fit = Math.Min(1F, Math.Max(0, available - checkboxWidth) / textWidth);
+            horizontalPadding = Math.Max(1, (int)(5 * scale * fit));
             table.ColumnHeadersDefaultCellStyle.Padding = new Padding(horizontalPadding, (int)(11 * scale), horizontalPadding, (int)(11 * scale));
-            table.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            table.ColumnHeadersDefaultCellStyle.WrapMode = fit < 1F ? DataGridViewTriState.True : DataGridViewTriState.False;
             table.DefaultCellStyle.Padding = new Padding(horizontalPadding, (int)(9 * scale), horizontalPadding, (int)(9 * scale));
 
             table.Columns["hostname"].FillWeight = 11;
             table.Columns["connection"].FillWeight = 9;
-            table.Columns["dotnet48"].FillWeight = 3;
+            table.Columns["dotnet48"].FillWeight = 5;
             table.Columns["payment"].FillWeight = 6;
             table.Columns["fiscal"].FillWeight = 6;
-            table.Columns["serversuite"].FillWeight = 8;
-            table.Columns["pos"].FillWeight = 9;
-            table.Columns["information"].FillWeight = 40;
+            table.Columns["serversuite"].FillWeight = 9;
+            table.Columns["pos"].FillWeight = 10;
+            table.Columns["information"].FillWeight = 32;
             table.Columns["result"].FillWeight = 8;
 
-            // Einmaliges Aktivieren nach der kompletten Gewichtung.
-            table.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            // Allocate a shared pixel budget explicitly. Native Fill can defer
+            // redistribution during layout and leave Status outside the viewport.
+            float remaining = Math.Max(0, available - checkboxWidth - textWidth * fit);
+            float weightSum = table.Columns.Cast<DataGridViewColumn>().Skip(1).Sum(column => column.FillWeight);
+            int allocated = 0;
+            for (int index = 0; index < table.Columns.Count; index++)
+            {
+                DataGridViewColumn column = table.Columns[index];
+                column.AutoSizeMode = DataGridViewAutoSizeColumnMode.NotSet;
+                column.MinimumWidth = index == 0 ? checkboxWidth : Math.Max(2, (int)(widths[index] * fit));
+                column.Width = index == 0 ? checkboxWidth : index == table.Columns.Count - 1 ? available - allocated
+                    : Math.Max(column.MinimumWidth, (int)(widths[index] * fit + remaining * column.FillWeight / weightSum));
+                allocated += column.Width;
+            }
             table.HorizontalScrollingOffset = 0;
         }
         finally
@@ -794,6 +862,35 @@ public sealed class MainForm : Form
         UpdateButtons();
     }
 
+    private HostState[] SelectedHosts() => hosts.Where(host => host.IsSelected).ToArray();
+
+    private HostState[] UpdateTargets(bool onlyFailed) => SelectedHosts()
+        .Where(host => onlyFailed ? host.CanRetryUpdate : host.Scanned).ToArray();
+
+    private void SetAllHostsSelected(bool selected)
+    {
+        if (busy || selfUpdating) return;
+        changingHostSelection = true;
+        try
+        {
+            table.EndEdit();
+            foreach (HostState host in hosts)
+            {
+                host.IsSelected = selected;
+                if (host.Row is not null) host.Row.Cells["include"].Value = selected;
+            }
+        }
+        finally { changingHostSelection = false; }
+        HostSelectionChanged();
+    }
+
+    private void HostSelectionChanged()
+    {
+        InvalidateConnectionChecks();
+        UpdateSummary();
+        UpdateButtons();
+    }
+
     private void RebuildRows()
     {
         table.Rows.Clear();
@@ -850,7 +947,8 @@ public sealed class MainForm : Form
 
     private async Task TransferFilesAsync()
     {
-        if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
+        HostState[] targets = SelectedHosts();
+        if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
         string remotePath = txtRemotePath.Text.Trim();
         if (!Regex.IsMatch(remotePath, @"^[A-Za-z]:\\"))
         {
@@ -892,15 +990,14 @@ public sealed class MainForm : Form
             return;
         }
         if (MessageBox.Show(this,
-            $"{files.Count} Datei(en) an alle {hosts.Count} Hosts nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'Installationsdateien nicht übertragen' aktiviert ist.",
+            $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'Installationsdateien nicht übertragen' aktiviert ist.",
             "Dateiübertragung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
         CaptureCredentials();
-        HostState[] targets = hosts.ToArray();
         var failures = new ConcurrentBag<string>();
         int succeeded = 0;
         bool completedTransfer = false;
-        await InBatchAsync(async ct =>
+        await InBatchAsync(targets, async ct =>
         {
             var transferFiles = new TransferFileRequest[files.Count];
             for (int i = 0; i < files.Count; i++)
@@ -973,9 +1070,10 @@ public sealed class MainForm : Form
 
     private async Task SendCommandAsync()
     {
-        if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
+        HostState[] targets = SelectedHosts();
+        if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
 
-        using var dialog = new CommandDialog(hosts.Count);
+        using var dialog = new CommandDialog(targets.Length);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         bool restartTerminals = dialog.RestartTerminals;
         bool restartPos = dialog.RestartPos;
@@ -987,14 +1085,13 @@ public sealed class MainForm : Form
             MessageBox.Show(this, "Bitte eine Aktion auswählen.", "Befehl senden", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        HostState[] targets = hosts.ToArray();
         if (restartTerminals && MessageBox.Show(this,
-            $"Windows auf allen {targets.Length} eingetragenen Hosts neu starten?\n\n" +
+            $"Windows-Neustart für die ausgewählten Hosts ({targets.Length}) anfordern?\n\n" +
             "Der Neustart wird je Host mit 30 Sekunden Vorlauf angefordert. Geöffnete Programme werden geschlossen; nicht gespeicherte Daten können verloren gehen.\n\n" +
             "Abbrechen im Updater stoppt weitere Aufträge. Bereits übermittelte Neustartaufträge bleiben bestehen.",
             "Terminal neu starten", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
         if (restartPos && MessageBox.Show(this,
-            $"KassaPreh auf allen {targets.Length} eingetragenen Hosts starten / neu starten?\n\n" +
+            $"KassaPreh auf den ausgewählten Hosts ({targets.Length}) starten / neu starten?\n\n" +
             "Läuft KassaPreh bereits, wird sie sofort per taskkill beendet und im selben Benutzerkonto neu gestartet. Nicht gespeicherte Eingaben können verloren gehen. Läuft sie nicht, wird sie als angemeldeter Benutzer aus dem Standardverzeichnis gestartet. Windows wird dabei nicht neu gestartet.\n\n" +
             "Pfad: C:\\Program Files (x86)\\novatouch\\bin\\KassaPreh.exe\n" +
             "Fehlt die Datei oder lässt sich keine eindeutige Benutzersitzung ermitteln, wird der Host übersprungen. Die temporäre Windows-Aufgabe wird nach der Startprüfung wieder gelöscht.\n\n" +
@@ -1009,7 +1106,7 @@ public sealed class MainForm : Form
         var skipped = new ConcurrentBag<string>();
         int succeeded = 0;
         bool completedRestart = false;
-        await InBatchAsync(async ct =>
+        await InBatchAsync(targets, async ct =>
         {
             await Parallel.ForEachAsync(targets,
                 new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct },
@@ -1126,10 +1223,11 @@ public sealed class MainForm : Form
 
     private async Task RunScansAsync()
     {
-        if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
+        HostState[] targets = SelectedHosts();
+        if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
         connectionScanPaused = true;
         InvalidateConnectionChecks();
-        try { await RunScanPhaseAsync(); }
+        try { await RunScanPhaseAsync(targets); }
         finally
         {
             connectionScanPaused = false;
@@ -1137,12 +1235,12 @@ public sealed class MainForm : Form
         }
     }
 
-    private async Task RunScanPhaseAsync()
+    private async Task RunScanPhaseAsync(HostState[] targets)
     {
         CaptureCredentials();
-        await InBatchAsync(async ct =>
+        await InBatchAsync(targets, async ct =>
         {
-            await ParallelPhaseAsync(hosts, (int)nScan.Value, async (host, token) =>
+            await ParallelPhaseAsync(targets, (int)nScan.Value, async (host, token) =>
             {
                 Mark(host, h =>
                 {
@@ -1160,8 +1258,8 @@ public sealed class MainForm : Form
                 CountCompleted();
             }, ct);
             if (ct.IsCancellationRequested) return;
-            ResetProgress(hosts.Count(h => h.Connection == "Verbunden"));
-            await ParallelPhaseAsync(hosts.Where(h => h.Connection == "Verbunden").ToArray(), (int)nScan.Value, async (host, token) =>
+            ResetProgress(targets.Count(h => h.Connection == "Verbunden"));
+            await ParallelPhaseAsync(targets.Where(h => h.Connection == "Verbunden").ToArray(), (int)nScan.Value, async (host, token) =>
             {
                 Mark(host, h => h.Phase = "Versionen werden gelesen");
                 var result = await DoWorkerAsync(host, "scan", token);
@@ -1181,7 +1279,7 @@ public sealed class MainForm : Form
 
     private async Task RunUpdatesAsync(bool onlyFailed)
     {
-        if (busy || hosts.Count == 0 || !ValidateCredentials()) return;
+        if (busy || selfUpdating || SelectedHosts().Length == 0 || !ValidateCredentials()) return;
         if (string.IsNullOrWhiteSpace(paymentZip) && string.IsNullOrWhiteSpace(fiscalZip) && string.IsNullOrWhiteSpace(serverSuiteZip))
         {
             MessageBox.Show(this, "Mindestens eine Update-ZIP auswählen."); return;
@@ -1192,17 +1290,17 @@ public sealed class MainForm : Form
                 "Zielpfad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        var selected = onlyFailed ? hosts.Where(h => h.CanRetryUpdate).ToArray() : hosts.Where(h => h.Scanned).ToArray();
+        var selected = UpdateTargets(onlyFailed);
         if (selected.Length == 0)
         {
-            MessageBox.Show(this, onlyFailed ? "Keine fehlerhaften Hosts vorhanden." : "Zuerst die Hosts prüfen und Versionen auslesen."); return;
+            MessageBox.Show(this, onlyFailed ? "Keine ausgewählten Hosts mit Prüf- oder Updatefehlern vorhanden." : "Zuerst die ausgewählten Hosts prüfen und Versionen auslesen."); return;
         }
         if (MessageBox.Show(this,
             $"Update für {selected.Length} Hosts starten?\n\nModus: {(chkForceUpdate.Checked ? "FORCE UPDATE (Versiongleichheit ignorieren)" : "Normal (gleiche Version überspringen)")}\nPayment Target: {(paymentVersion.Length == 0 ? "–" : paymentVersion)}\nFiscal Target: {(fiscalVersion.Length == 0 ? "–" : fiscalVersion)}\nServer Suite Target: {(serverSuiteVersion.Length == 0 ? "–" : serverSuiteVersion)}\nZielpfad: {txtRemotePath.Text.Trim()}\nZIP-Übertragung: {(chkSkipZipTransfer.Checked ? "deaktiviert (ZIPs auf Hosts werden geprüft)" : "aktiv")}\n\nNur Komponenten mit ausgewählter ZIP werden aktualisiert. Bei der Server Suite werden alle Instanzen angehalten und Dateien in apps\\nt3-server-suite sowie portable_python überschrieben oder neu angelegt. Zielordner und zusätzliche Client-Dateien bleiben erhalten. ZIP-Quellen: apps\\nt3-server-suite und installer\\python\\portable_python. Deaktivierte Dienste bleiben deaktiviert.",
             "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         CaptureCredentials();
         lastUpdateForce = activeForceUpdate;
-        await InBatchAsync(async ct =>
+        await InBatchAsync(selected, async ct =>
         {
             paymentHash = await WorkerRunner.Sha256Async(paymentZip, ct);
             fiscalHash = await WorkerRunner.Sha256Async(fiscalZip, ct);
@@ -1291,7 +1389,8 @@ public sealed class MainForm : Form
         // Do not repeatedly authenticate while credentials are being edited.
         if (txtUser.Focused || txtPassword.Focused || nHttpsPort.ContainsFocus || (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)) return;
 
-        var targets = hosts.ToDictionary(h => h.Host, h => (Host: h, Revision: h.ConnectionState.Revision), StringComparer.OrdinalIgnoreCase);
+        var targets = SelectedHosts().ToDictionary(h => h.Host, h => (Host: h, Revision: h.ConnectionState.Revision), StringComparer.OrdinalIgnoreCase);
+        if (targets.Count == 0) return;
         var received = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         int generation = connectionGeneration;
         int parallelism = Math.Clamp((int)nScan.Value, 1, 40);
@@ -1337,7 +1436,7 @@ public sealed class MainForm : Form
 
     private void ApplyConnectionResult(HostState host, int revision, int generation, bool? connected, string detail, DateTimeOffset checkedAt)
     {
-        if (connectionClosing || IsDisposed || connectionScanPaused || generation != connectionGeneration || !hosts.Contains(host)) return;
+        if (connectionClosing || IsDisposed || connectionScanPaused || generation != connectionGeneration || !host.IsSelected || !hosts.Contains(host)) return;
         string previous;
         string previousResult;
         lock (host)
@@ -1459,10 +1558,10 @@ public sealed class MainForm : Form
     private static string FriendlyError(WorkerResult r) => DisplayText.Clean(
         !string.IsNullOrWhiteSpace(r.Error) ? r.Error : (!string.IsNullOrWhiteSpace(r.Message) ? r.Message : "Unbekannter Fehler"));
 
-    private async Task InBatchAsync(Func<CancellationToken, Task> task)
+    private async Task InBatchAsync(IReadOnlyCollection<HostState> targets, Func<CancellationToken, Task> task)
     {
         busy = true; cancellation = new CancellationTokenSource();
-        ResetProgress(hosts.Count);
+        ResetProgress(targets.Count);
         UpdateButtons();
         try { await task(cancellation.Token); }
         catch (OperationCanceledException) { Log("SYSTEM", "Verarbeitung abgebrochen"); }
@@ -1534,6 +1633,7 @@ public sealed class MainForm : Form
             attempt = h.Attempt;
         }
         var cells = h.Row.Cells;
+        cells["include"].Value = h.IsSelected;
         cells["hostname"].Value = h.Host;
         cells["connection"].Value = connection;
         cells["connection"].ToolTipText = connectionToolTip;
@@ -1560,6 +1660,7 @@ public sealed class MainForm : Form
 
     private void UpdateSummary()
     {
+        lblSelection.Text = $"{hosts.Count(h => h.IsSelected)} von {hosts.Count} ausgewählt";
         lblSummary.Text = $"Hosts: {hosts.Count}    |    Verbunden: {hosts.Count(h => h.Connection == "Verbunden")}    |    " +
             $"Aktualisiert: {hosts.Count(h => h.Result == "Erfolgreich")}    |    " +
             $"Bereits aktuell: {hosts.Count(h => h.Result == "Bereits aktuell / übersprungen")}    |    " +
@@ -1651,16 +1752,20 @@ public sealed class MainForm : Form
     private void UpdateButtons()
     {
         bool idle = !busy && !selfUpdating;
+        HostState[] selected = SelectedHosts();
         updateNotice.Enabled = idle;
         btnImport.Enabled = idle; btnAddHost.Enabled = idle; btnSaveConfig.Enabled = idle;
         btnRemoveHost.Enabled = idle && table.CurrentRow?.Tag is HostState;
         btnPayment.Enabled = idle; btnFiscal.Enabled = idle; btnServerSuite.Enabled = idle;
-        btnWinRm.Enabled = idle && hosts.Count > 0;
-        btnScan.Enabled = idle && hosts.Count > 0;
-        btnUpdate.Enabled = idle && hosts.Any(h => h.Scanned);
-        btnTransfer.Enabled = idle && hosts.Count > 0;
-        btnSendCommand.Enabled = idle && hosts.Count > 0;
-        btnRetry.Enabled = idle && hosts.Any(h => h.CanRetryUpdate);
+        btnSelectAll.Enabled = btnClearSelection.Enabled = idle && hosts.Count > 0;
+        lblSelection.Text = $"{selected.Length} von {hosts.Count} ausgewählt";
+        if (table.Columns.Contains("include")) table.Columns["include"].ReadOnly = !idle;
+        btnWinRm.Enabled = idle && selected.Length > 0;
+        btnScan.Enabled = idle && selected.Length > 0;
+        btnUpdate.Enabled = idle && selected.Any(h => h.Scanned);
+        btnTransfer.Enabled = idle && selected.Length > 0;
+        btnSendCommand.Enabled = idle && selected.Length > 0;
+        btnRetry.Enabled = idle && selected.Any(h => h.CanRetryUpdate);
         btnExport.Enabled = idle && hosts.Count > 0;
         btnCancel.Enabled = busy || selfUpdating;
         nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle; chkForceUpdate.Enabled = idle;

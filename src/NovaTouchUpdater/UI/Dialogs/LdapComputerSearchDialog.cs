@@ -43,7 +43,7 @@ internal sealed class LdapComputerSearchDialog : Form
         for (int row = 0; row < 7; row++) layout.RowStyles.Add(new RowStyle(row == 4 ? SizeType.Percent : SizeType.AutoSize, row == 4 ? 100 : 0));
         layout.Controls.Add(new Label
         {
-            Text = "Domänencomputer suchen und gewünschte Treffer anhaken. Die Suche verwendet die aktuelle Windows-Anmeldung.",
+            Text = "Gewünschte Computer per Zeile oder Kontrollkästchen auswählen. Die Suche verwendet die aktuelle Windows-Anmeldung.",
             AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 3, 3, 10)
         }, 0, 0);
 
@@ -64,7 +64,7 @@ internal sealed class LdapComputerSearchDialog : Form
         nameLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         nameLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         nameLayout.Controls.Add(pattern, 0, 0);
-        nameLayout.Controls.Add(new Label { Text = "Das Muster ist frei wählbar. * steht für beliebig viele Zeichen; mit * allein werden alle Computer gesucht.", AutoSize = true, Dock = DockStyle.Fill }, 0, 1);
+        nameLayout.Controls.Add(new Label { Text = "Das Muster ist frei wählbar. * steht für beliebig viele Zeichen. Leer oder * = alle Computer.", AutoSize = true, Dock = DockStyle.Fill }, 0, 1);
         names.Controls.Add(nameLayout);
         var advanced = new TabPage("Erweiterte Suche (LDAP)") { Padding = new Padding(8) };
         var filterLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
@@ -89,8 +89,14 @@ internal sealed class LdapComputerSearchDialog : Form
         results.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.DisplayedCells;
         results.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
         results.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        results.MultiSelect = false;
+        results.EditMode = DataGridViewEditMode.EditOnEnter;
         results.BackgroundColor = Color.White;
-        results.Columns.Add(new DataGridViewCheckBoxColumn { Name = "include", HeaderText = "", AutoSizeMode = DataGridViewAutoSizeColumnMode.None, Width = 35 });
+        results.Columns.Add(new DataGridViewCheckBoxColumn
+        {
+            Name = "include", HeaderText = "Auswahl", AutoSizeMode = DataGridViewAutoSizeColumnMode.DisplayedCells,
+            DefaultCellStyle = new DataGridViewCellStyle { Padding = Padding.Empty, Alignment = DataGridViewContentAlignment.MiddleCenter }
+        });
         foreach (var column in new[] { ("name", "Computer"), ("dns", "DNS-Name"), ("os", "Betriebssystem"), ("description", "Beschreibung") })
             results.Columns.Add(new DataGridViewTextBoxColumn { Name = column.Item1, HeaderText = column.Item2, ReadOnly = true, SortMode = DataGridViewColumnSortMode.Automatic });
         layout.Controls.Add(results, 0, 4);
@@ -121,6 +127,15 @@ internal sealed class LdapComputerSearchDialog : Form
         };
         results.CurrentCellDirtyStateChanged += (_, _) => { if (results.IsCurrentCellDirty) results.CommitEdit(DataGridViewDataErrorContexts.Commit); };
         results.CellValueChanged += (_, _) => { if (!changingRows) UpdateSelection(); };
+        results.CellClick += (_, e) => { if (e.ColumnIndex > 0) ToggleSelectedRow(e.RowIndex); };
+        results.KeyDown += (_, e) =>
+        {
+            // The checkbox column retains its native mouse, keyboard and accessibility
+            // behavior. Space on a read-only text cell selects the same computer.
+            if (e.KeyCode != Keys.Space || results.CurrentCell is not { ColumnIndex: > 0 } cell) return;
+            ToggleSelectedRow(cell.RowIndex);
+            e.Handled = e.SuppressKeyPress = true;
+        };
         foreach (TextBox input in new[] { domain, searchBase, pattern, customFilter }) input.TextChanged += (_, _) => InvalidateResults();
         modes.SelectedIndexChanged += (_, _) =>
         {
@@ -192,6 +207,13 @@ internal sealed class LdapComputerSearchDialog : Form
     internal string[] GetSelectedHosts() => results.Rows.Cast<DataGridViewRow>()
         .Where(row => row.Cells[0].Value is true && row.Tag is LdapComputer)
         .Select(row => ((LdapComputer)row.Tag!).Host).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    private void ToggleSelectedRow(int rowIndex)
+    {
+        if (pending is not null || stale || changingRows || rowIndex < 0 || rowIndex >= results.Rows.Count) return;
+        DataGridViewCell cell = results.Rows[rowIndex].Cells["include"];
+        cell.Value = cell.Value is not true;
+    }
 
     private void InvalidateResults()
     {

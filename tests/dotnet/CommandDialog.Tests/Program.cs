@@ -54,6 +54,8 @@ internal static class Program
         }
         using (var dialog = new CommandDialog(24))
         {
+            Assert(All(dialog).OfType<Label>().Any(label => label.Text.Contains("24 Hosts") && label.Text.Contains("Hostübersicht ausgewählt")),
+                "the command dialog clearly states that actions target the checked hosts");
             var controls = All(dialog).Where(c => c.Name.Length > 0).ToDictionary(c => c.Name);
             var payment = (CheckBox)controls["payment"];
             var fiscal = (CheckBox)controls["fiscal"];

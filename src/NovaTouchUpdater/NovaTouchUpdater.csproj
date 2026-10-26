@@ -16,6 +16,7 @@
     <ApplicationIcon>Assets\NovaTouchUpdater.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="MainForm.Tests" />
     <EmbeddedResource Include="Assets\NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
     <EmbeddedResource Include="Assets\NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
     <EmbeddedResource Include="Scripts\RemoteWorker.ps1" LogicalName="NovaTouchUpdater.RemoteWorker.ps1" />

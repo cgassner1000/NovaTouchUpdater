@@ -50,7 +50,7 @@ internal sealed class CommandDialog : Form
                 Text = "Was möchten Sie ausführen?", AutoSize = true, Dock = DockStyle.Fill,
                 Font = new Font(Font.FontFamily, 16F, FontStyle.Bold), Margin = new Padding(0, 0, 0, 8)
             },
-            Paragraph($"Die Auswahl gilt für die gesamte Hostliste ({hosts})."));
+            Paragraph($"Die Aktion gilt für {hosts}, die in der Hostübersicht ausgewählt sind."));
         header.Margin = new Padding(0, 0, 0, 14);
         layout.Controls.Add(header, 0, 0);
 

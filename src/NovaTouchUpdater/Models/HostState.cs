@@ -8,6 +8,7 @@ internal sealed class HostState
     private string phase = "Bereit";
 
     public string Host { get; init; } = "";
+    public bool IsSelected { get; set; } = true;
     public ConnectionState ConnectionState { get; } = new();
     public string Connection { get => ConnectionState.Status; set => ConnectionState.SetForegroundStatus(value); }
     public bool? DotNet48Installed { get; set; }
