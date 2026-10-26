@@ -8,6 +8,9 @@
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../UiTheme.cs" Link="UiTheme.cs" />
+    <EmbeddedResource Include="../../Assets/NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
+    <EmbeddedResource Include="../../Assets/NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
     <Compile Include="../../CommandDialog.cs" Link="CommandDialog.cs" />
     <Compile Include="../../UploadDirectoryDialog.cs" Link="UploadDirectoryDialog.cs" />
     <Compile Include="../../WorkerRunner.cs" Link="WorkerRunner.cs" />

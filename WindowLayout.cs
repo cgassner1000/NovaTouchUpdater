@@ -43,6 +43,7 @@ internal static class WindowLayout
     // constructing the controls, then scale the complete hierarchy exactly once.
     public static void CompleteInitialization(Form form)
     {
+        UiTheme.Apply(form);
         form.AutoScaleDimensions = new SizeF(96F, 96F);
         form.AutoScaleMode = AutoScaleMode.Dpi;
         form.ResumeLayout(true);

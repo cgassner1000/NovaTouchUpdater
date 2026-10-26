@@ -44,7 +44,7 @@ main{max-width:1460px;margin:0 auto;padding:25px 28px 40px}.meta{display:flex;ga
 input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border-radius:9px;padding:9px 11px;color:var(--ink)}input{width:255px;max-width:100%}button{cursor:pointer}button:hover{background:#eef4fa}
 .scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:1440px;font-size:12.5px}thead th{position:sticky;top:0;background:#eef3fa;text-align:left;color:#52677f;font-weight:700;padding:12px 11px;white-space:nowrap;border-bottom:1px solid var(--line)}tbody td{padding:11px;border-bottom:1px solid #e9eef4;vertical-align:top}tbody tr:hover{background:#f9fbfe}tbody tr:last-child td{border-bottom:none}
 .framework{width:1%;text-align:center;white-space:nowrap}.framework span{font-size:17px;font-weight:700}.framework .yes{color:var(--ok)}.framework .no{color:var(--err)}.pos-ver{min-width:110px;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
-.attempt{width:1%;white-space:nowrap;text-align:center}.host{font-weight:700;white-space:nowrap}.ver{font-variant-numeric:tabular-nums;white-space:nowrap;width:145px}.ver-head{white-space:normal;min-width:145px;width:145px}.ver .before,.ver .after{display:block}.dim{color:var(--muted)}.before{color:#74859a;font-size:12px}.after{font-weight:700}.arrow{display:none}.ver .after::before{content:"→ ";color:#94a2b2;font-weight:normal}
+.host{font-weight:700;white-space:nowrap}.ver{font-variant-numeric:tabular-nums;white-space:nowrap;width:145px}.ver-head{white-space:normal;min-width:145px;width:145px}.ver .before,.ver .after{display:block}.dim{color:var(--muted)}.before{color:#74859a;font-size:12px}.after{font-weight:700}.arrow{display:none}.ver .after::before{content:"→ ";color:#94a2b2;font-weight:normal}
 .status{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11.5px;font-weight:750;white-space:nowrap}.status.ok,.status.command{background:var(--okbg);color:var(--ok)}.status.bad{background:var(--errbg);color:var(--err)}.status.current{background:var(--bluebg);color:var(--blue)}.status.other{background:var(--warnbg);color:var(--warn)}
 .info-cell{min-width:430px;width:45%;overflow-wrap:anywhere}.info-phase{color:var(--ink)}.info-error{color:var(--err);margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere}.result-cell{white-space:nowrap;text-align:center}.log details{min-width:100px}.log summary{color:#245f9d;cursor:pointer;font-weight:650}.log pre{max-width:470px;max-height:320px;overflow:auto;font-size:11px;background:#13233a;color:#dce6f2;border-radius:8px;padding:11px;white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}
 .footer{color:var(--muted);font-size:12px;margin-top:16px}.empty{padding:24px;text-align:center;color:var(--muted)}
@@ -94,7 +94,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 <div class="scroll"><table id="hostTable">
 <thead><tr>
   <th>Hostname</th><th>Verbindung</th><th class="framework">.NET 4.8</th><th class="ver-head">Payment (vorher → nachher)</th><th class="ver-head">Fiscal (vorher → nachher)</th><th class="ver-head">Server Suite (vorher → nachher)</th><th>NovaTouch POS</th>
-  <th>Information</th><th>Details</th><th class="attempt">Versuch</th><th>Ergebnis</th>
+  <th>Information</th><th>Details</th><th>Status</th>
 </tr></thead><tbody>
 """);
         foreach (HostState host in hosts.OrderBy(h => h.Host, StringComparer.OrdinalIgnoreCase))
@@ -109,7 +109,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
             string search = string.Join(' ', new[] { host.Host, host.Connection, DisplayText.Clean(host.PaymentBefore), DisplayText.Clean(host.Payment),
                 DisplayText.Clean(host.FiscalBefore), DisplayText.Clean(host.Fiscal), DisplayText.DotNet48Description(host.DotNet48Installed),
                 DisplayText.Clean(host.ServerSuiteBefore), DisplayText.Clean(host.ServerSuite), DisplayText.ServiceInstances(host.Services.Where(s => s.Kind == "serversuite"), host.ServerSuite),
-                DisplayText.Clean(host.PosVersion), DisplayText.Clean(host.Phase),
+                DisplayText.Clean(host.PosVersion), DisplayText.WithAttempt(DisplayText.Clean(host.Phase), host.Attempt),
                 host.Result, DisplayText.Clean(host.Error) }).ToLowerInvariant();
             sb.Append("<tr data-kind=\"").Append(kind).Append("\" data-search=\"").Append(E(search)).AppendLine("\">");
             sb.Append("<td class=\"host\">").Append(E(host.Host)).AppendLine("</td>");
@@ -134,15 +134,14 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
             sb.Append("<td class=\"pos-ver\">").Append(E(DisplayText.Clean(host.PosVersion))).AppendLine("</td>");
             // Der aktuelle Schritt und die bisherigen Fehler-/Informationstexte teilen sich eine Spalte.
             sb.Append("<td class=\"info-cell\">");
-            if (!string.IsNullOrWhiteSpace(host.Phase))
-                sb.Append("<div class=\"info-phase\">").Append(E(DisplayText.Clean(host.Phase))).Append("</div>");
+            if (!string.IsNullOrWhiteSpace(host.Phase) || host.Attempt > 1)
+                sb.Append("<div class=\"info-phase\">").Append(E(DisplayText.WithAttempt(DisplayText.Clean(host.Phase), host.Attempt))).Append("</div>");
             if (!string.IsNullOrWhiteSpace(host.Error) && !host.Error.Equals(host.Phase, StringComparison.OrdinalIgnoreCase))
                 sb.Append("<div class=\"info-error\">").Append(E(DisplayText.Clean(host.Error))).Append("</div>");
             sb.AppendLine("</td>");
             sb.Append("<td class=\"log\"><details><summary>Protokoll</summary><pre>");
             sb.Append(E(host.Log.Count == 0 ? "Kein Hostprotokoll vorhanden." : string.Join(Environment.NewLine, host.Log.Select(DisplayText.Clean))));
             sb.AppendLine("</pre></details></td>");
-            sb.Append("<td class=\"attempt\">").Append(host.Attempt > 0 ? host.Attempt.ToString() + "/3" : "–").AppendLine("</td>");
             sb.Append("<td class=\"result-cell\"><span class=\"status ").Append(kind).Append("\">")
                 .Append(E(host.Result == "Bereits aktuell / übersprungen" ? "Aktuell" : host.Result))
                 .AppendLine("</span></td></tr>");

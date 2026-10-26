@@ -24,6 +24,7 @@ public sealed class MainForm : Form
     private readonly string logFile;
     private CancellationTokenSource? cancellation;
     private bool busy;
+    private bool fittingColumns;
     private bool selfUpdating;
     private bool checkingRelease;
     private AppRelease? availableRelease;
@@ -49,7 +50,7 @@ public sealed class MainForm : Form
     private readonly CheckBox chkSsl = new();
     private readonly CheckBox chkForceUpdate = new();
     private readonly CheckBox chkSkipZipTransfer = new();
-    private readonly ProgressBar progress = new();
+    private readonly ProgressBar progress = new ModernProgressBar();
     private readonly Button btnImport = Button("Hostliste laden");
     private readonly Button btnAddHost = Button("Host hinzufügen");
     private readonly Button btnRemoveHost = Button("Entfernen");
@@ -86,32 +87,38 @@ public sealed class MainForm : Form
     private bool activeSkipZipTransfer;
     private bool lastUpdateForce;
 
-    public MainForm()
+    public MainForm() : this(preview: false) { }
+
+    // Off-screen design previews use synthetic rows and never load the user's
+    // config, start monitoring, check releases or write an application log.
+    internal MainForm(bool preview)
     {
         SuspendLayout();
         Text = $"NovaTouch Updater v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
-        Font = new Font("Segoe UI", 9F);
-        BackColor = Color.White;
-        ClientSize = new Size(1230, 790);
+        Font = UiTheme.BodyFont();
+        BackColor = UiTheme.Background;
+        ClientSize = new Size(1440, 920);
         MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterScreen;
         string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovaTouchUpdater", "Logs");
-        Directory.CreateDirectory(logDir);
-        logFile = Path.Combine(logDir, "Update-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
+        if (!preview) Directory.CreateDirectory(logDir);
+        logFile = preview ? "" : Path.Combine(logDir, "Update-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
         ConstructUi();
         WindowLayout.CompleteInitialization(this);
-        LoadStartupConfig();
+        if (!preview) LoadStartupConfig();
         // Erst nach dem ersten Layout die endgültigen Fill-Spalten aktivieren.
         connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
         releaseTimer.Tick += async (_, _) => await CheckAppReleaseAsync();
         updateNotice.LinkClicked += async (_, _) => await UpdateApplicationAsync();
         txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
         txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
+        DpiChanged += (_, _) => BeginInvoke((Action)ApplyColumnWeights);
         chkSsl.CheckedChanged += (_, _) => { InvalidateConnectionChecks(); UpdateButtons(); };
         nHttpsPort.ValueChanged += (_, _) => InvalidateConnectionChecks();
         Shown += async (_, _) =>
         {
             ApplyColumnWeights();
+            if (preview) return;
             connectionTimer.Start();
             releaseTimer.Start();
             _ = CheckAppReleaseAsync();
@@ -208,10 +215,9 @@ public sealed class MainForm : Form
         }
     }
 
-    private static Button Button(string text) => new()
+    private static Button Button(string text) => new ModernButton
     {
-        Text = text, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        Padding = new Padding(8, 4, 8, 4), FlatStyle = FlatStyle.System
+        Text = text
     };
 
     private static FlowLayoutPanel FlowRow(params Control[] controls)
@@ -261,7 +267,7 @@ public sealed class MainForm : Form
         var main = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            ColumnCount = 1, RowCount = 5, Padding = new Padding(16), BackColor = BackColor
+            ColumnCount = 1, RowCount = 5, Padding = new Padding(22, 20, 22, 18), BackColor = BackColor
         };
         main.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -277,10 +283,11 @@ public sealed class MainForm : Form
         var configuration = new TableLayoutPanel
         {
             Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2, RowCount = 1, Padding = new Padding(2)
+            ColumnCount = 2, RowCount = 2, Margin = new Padding(0, 0, 0, 14)
         };
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+        configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.Controls.Add(configuration, 0, 1);
 
@@ -311,9 +318,17 @@ public sealed class MainForm : Form
         txtRemotePath.TextAlign = HorizontalAlignment.Left;
         txtRemotePath.Margin = new Padding(3, 2, 8, 2);
         targetPath.Controls.Add(txtRemotePath, 1, 0);
-        var files = Stack(Stack(hostList, lblFile), PanelRow(btnPayment, lblPayment),
+        var hostCard = Section("Hosts", Stack(hostList, lblFile));
+        hostCard.Name = "hostsCard";
+        hostCard.Margin = new Padding(0, 0, 0, 12);
+        configuration.Controls.Add(hostCard, 0, 0);
+        configuration.SetColumnSpan(hostCard, 2);
+        var filesContent = Stack(PanelRow(btnPayment, lblPayment),
             PanelRow(btnFiscal, lblFiscal), PanelRow(btnServerSuite, lblServerSuite), targetPath);
-        configuration.Controls.Add(files, 0, 0);
+        var files = Section("Update-Dateien", filesContent);
+        files.Name = "filesCard";
+        files.Margin = new Padding(0, 0, 8, 0);
+        configuration.Controls.Add(files, 0, 1);
         lblFile.Text = "Keine Hostliste";
         lblPayment.Text = "Payment Target: –";
         lblFiscal.Text = "Fiscal Target: –";
@@ -344,14 +359,27 @@ public sealed class MainForm : Form
         nUpdate.Minimum = 1; nUpdate.Maximum = 100; nUpdate.Value = 8; nUpdate.Width = 55;
         optionBar.Controls.Add(LabeledInput("Update parallel:", nUpdate));
         chkSsl.Text = "HTTPS"; chkSsl.AutoSize = true; chkSsl.Margin = new Padding(5, 3, 8, 3);
-        optionBar.Controls.Add(chkSsl);
         nHttpsPort.Minimum = 1; nHttpsPort.Maximum = 65535; nHttpsPort.Value = 5986; nHttpsPort.Width = 75;
-        optionBar.Controls.Add(LabeledInput("HTTPS-Port:", nHttpsPort));
+        var httpsOptions = new TableLayoutPanel
+        {
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 3, RowCount = 1, Anchor = AnchorStyles.Left, Margin = Padding.Empty
+        };
+        for (int column = 0; column < 3; column++) httpsOptions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        httpsOptions.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        chkSsl.Anchor = nHttpsPort.Anchor = AnchorStyles.Left;
+        httpsOptions.Controls.Add(chkSsl, 0, 0);
+        httpsOptions.Controls.Add(new Label
+        {
+            Text = "HTTPS-Port:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 4, 3)
+        }, 1, 0);
+        httpsOptions.Controls.Add(nHttpsPort, 2, 0);
+        optionBar.Controls.Add(httpsOptions);
         chkForceUpdate.Text = "Force Up-Downgrade";
         chkForceUpdate.AutoSize = true;
-        chkForceUpdate.Margin = new Padding(5, 3, 8, 3);
+        chkForceUpdate.Anchor = AnchorStyles.Left;
+        chkForceUpdate.Margin = new Padding(3);
         chkForceUpdate.Checked = false;
-        optionBar.Controls.Add(chkForceUpdate);
         chkSkipZipTransfer.Text = "Installationsdatei nicht übertragen" + Environment.NewLine + "Lokale Datei verwenden";
         chkSkipZipTransfer.AutoSize = true;
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
@@ -365,36 +393,51 @@ public sealed class MainForm : Form
         tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
         tips.SetToolTip(chkSkipZipTransfer, "Lokale ZIPs bestimmen weiterhin die Zielversion. ZIPs auf den Clients werden bei Updates nicht übertragen.");
         tips.SetToolTip(btnRetry, "Hosts mit Prüf- oder Updatefehlern erneut prüfen/aktualisieren. Frühere Updatefehler bleiben auch nach einem erfolgreichen Neustart wiederholbar. Dienst- und Neustartbefehle werden hier nicht wiederholt.");
-        var settings = Stack(login, optionBar, chkSkipZipTransfer);
-        configuration.Controls.Add(settings, 1, 0);
+        var settingsContent = Stack(login, optionBar, chkSkipZipTransfer, chkForceUpdate);
+        var settings = Section("Verbindung & Ausführung", settingsContent);
+        settings.Name = "settingsCard";
+        settings.Margin = new Padding(8, 0, 0, 0);
+        configuration.Controls.Add(settings, 1, 1);
         bool stacked = false;
         configuration.Layout += (_, _) =>
         {
             // Bei großen Schriften oder schmalen Fenstern beide Bereiche untereinander anordnen.
-            bool needsStack = configuration.ClientSize.Width * .45F < chkSkipZipTransfer.PreferredSize.Width + settings.Margin.Horizontal + 16;
+            int optionsWidth = Math.Max(chkSkipZipTransfer.PreferredSize.Width, httpsOptions.PreferredSize.Width);
+            int comfortableWidth = Math.Max(optionsWidth + settings.Padding.Horizontal,
+                TextRenderer.MeasureText(settings.Controls[0].Text, settings.Controls[0].Font).Width * 2);
+            bool needsStack = configuration.ClientSize.Width * .45F < comfortableWidth + settings.Padding.Left;
             if (needsStack == stacked) return;
             stacked = needsStack;
             configuration.SuspendLayout();
             configuration.ColumnCount = stacked ? 1 : 2;
-            configuration.RowCount = stacked ? 2 : 1;
+            configuration.RowCount = stacked ? 3 : 2;
             configuration.ColumnStyles.Clear();
             configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, stacked ? 100 : 55));
             if (!stacked) configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
             configuration.RowStyles.Clear();
             configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             if (stacked) configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            configuration.SetCellPosition(settings, stacked ? new TableLayoutPanelCellPosition(0, 1) : new TableLayoutPanelCellPosition(1, 0));
+            configuration.SetColumnSpan(hostCard, stacked ? 1 : 2);
+            configuration.SetCellPosition(settings, stacked ? new TableLayoutPanelCellPosition(0, 2) : new TableLayoutPanelCellPosition(1, 1));
+            files.Margin = stacked ? new Padding(0, 0, 0, 10) : new Padding(0, 0, 8, 0);
+            settings.Margin = stacked ? Padding.Empty : new Padding(8, 0, 0, 0);
             configuration.ResumeLayout(true);
         };
 
         var bar = FlowRow();
+        ((ModernButton)btnScan).Role = ButtonRole.Accent;
+        ((ModernButton)btnUpdate).Role = ButtonRole.Primary;
+        ((ModernButton)btnCancel).Role = ButtonRole.Danger;
         foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
         {
-            btn.Margin = new Padding(0, 3, 9, 3);
+            btn.Margin = new Padding(0, 3, 7, 3);
             bar.Controls.Add(btn);
         }
         var filterBar = FlowRow();
-        filterBar.Controls.Add(new Label { Text = "Anzeige:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 5, 3) });
+        filterBar.Margin = new Padding(0, 9, 0, 12);
+        filterBar.Controls.Add(new Label { Text = "Hostübersicht", Font = new Font(Font, FontStyle.Bold), AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 18, 3) });
+        filterBar.Controls.Add(new Label { Text = "Anzeige", ForeColor = UiTheme.Muted, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 8, 3) });
         statusFilter.DropDownStyle = ComboBoxStyle.DropDownList;
         statusFilter.Width = 146;
         statusFilter.Margin = new Padding(0, 2, 0, 0);
@@ -404,6 +447,7 @@ public sealed class MainForm : Form
         filterBar.Controls.Add(statusFilter);
         main.Controls.Add(Stack(bar, filterBar), 0, 2);
 
+        table.Name = "hosts";
         table.Dock = DockStyle.Fill;
         table.MinimumSize = new Size(0, 160);
         table.AllowUserToAddRows = false;
@@ -411,6 +455,7 @@ public sealed class MainForm : Form
         table.ReadOnly = true;
         table.MultiSelect = false;
         table.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        table.ScrollBars = ScrollBars.Vertical;
         // Fill erst nach dem fertigen Layout in ApplyColumnWeights aktivieren.
         table.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
         table.RowHeadersVisible = false;
@@ -421,8 +466,10 @@ public sealed class MainForm : Form
         table.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
         table.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders;
         table.DefaultCellStyle.Padding = new Padding(0, 4, 0, 4);
+        table.DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         table.Columns.Add("hostname", "Hostname");
         table.Columns.Add("connection", "Verbindung");
+        table.Columns["connection"].CellTemplate = new StatusBadgeCell();
         table.Columns["connection"].ToolTipText = "Automatische WinRM-Prüfung ca. alle 10 Sekunden. Letzte Prüfung und Fehlerdetails stehen im Tooltip des Hosts.";
         table.Columns.Add("dotnet48", ".NET 4.8");
         table.Columns.Add("payment", "Payment Ist");
@@ -431,15 +478,16 @@ public sealed class MainForm : Form
         table.Columns.Add("pos", "NovaTouch POS");
         table.Columns.Add("information", "Information");
         table.Columns["information"].CellTemplate = new InformationProgressCell();
-        table.Columns.Add("attempt", "Versuch");
-        table.Columns.Add("result", "Ergebnis");
+        table.Columns.Add("result", "Status");
+        table.Columns["result"].CellTemplate = new StatusBadgeCell();
         // Prozentwerte werden nach dem Anzeigen des Fensters in ApplyColumnWeights gesetzt.
         // Dadurch verändern die späteren MinimumWidth-Einstellungen die FillWeight-Werte nicht.
 
         // Mindestbreiten verhindern bei kleinen Fenstern unlesbare Spalten.
         // Bei sehr schmalen Fenstern haben Mindestbreiten Vorrang vor Prozentwerten.
-        table.Columns["hostname"].MinimumWidth = 80;
-        table.Columns["connection"].MinimumWidth = 75;
+        table.Columns["hostname"].MinimumWidth = 160;
+        table.Columns["connection"].MinimumWidth = 112;
+        table.Columns["connection"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         table.Columns["dotnet48"].MinimumWidth = 52;
         table.Columns["payment"].MinimumWidth = 110;
         table.Columns["fiscal"].MinimumWidth = 110;
@@ -447,14 +495,12 @@ public sealed class MainForm : Form
         table.Columns["serversuite"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         table.Columns["pos"].MinimumWidth = 110;
         table.Columns["information"].MinimumWidth = 200;
-        table.Columns["attempt"].MinimumWidth = 62;
-        table.Columns["result"].MinimumWidth = 75;
+        table.Columns["result"].MinimumWidth = 100;
+        table.Columns["hostname"].DefaultCellStyle.Font = new Font(Font, FontStyle.Bold);
 
         table.Columns["dotnet48"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["dotnet48"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["dotnet48"].ToolTipText = ".NET Framework 4.8 oder neuer: ✓ installiert, ✗ nicht installiert, – nicht geprüft";
-        table.Columns["attempt"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-        table.Columns["attempt"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["result"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["result"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["result"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
@@ -465,14 +511,32 @@ public sealed class MainForm : Form
             if (table.Rows[e.RowIndex].Tag is HostState host) ShowHostLog(host);
         };
         table.SelectionChanged += (_, _) => UpdateButtons();
+        table.ClientSizeChanged += (_, _) => { if (table.IsHandleCreated) ApplyColumnWeights(); };
+        table.VisibleChanged += (_, _) => { if (table.Visible && table.IsHandleCreated) ApplyColumnWeights(); };
+        table.CellPainting += (_, e) =>
+        {
+            if (e.RowIndex != -1 || e.ColumnIndex < 0) return;
+            e.Paint(e.ClipBounds, e.PaintParts);
+            if (e.ColumnIndex < table.Columns.Count - 1 && (e.PaintParts & DataGridViewPaintParts.Border) != 0)
+            {
+                var state = e.Graphics!.Save();
+                e.Graphics.SetClip(Rectangle.Intersect(e.CellBounds, e.ClipBounds));
+                using var separator = new Pen(Color.FromArgb(202, 213, 229));
+                e.Graphics.DrawLine(separator, e.CellBounds.Right - 1, e.CellBounds.Top, e.CellBounds.Right - 1, e.CellBounds.Bottom - 1);
+                e.Graphics.Restore(state);
+            }
+            e.Handled = true;
+        };
         main.Controls.Add(table, 0, 3);
 
         lblSummary.Text = "0 Hosts";
         lblSummary.AutoSize = true;
         lblSummary.Dock = DockStyle.Fill;
-        lblSummary.Font = new Font(Font, FontStyle.Bold);
+        lblSummary.ForeColor = UiTheme.Muted;
+        lblSummary.Margin = new Padding(0, 12, 0, 10);
         progress.Dock = DockStyle.Fill;
-        progress.Height = 22;
+        progress.Height = 6;
+        progress.Margin = Padding.Empty;
         main.Controls.Add(Stack(lblSummary, progress), 0, 4);
 
         btnImport.Click += (_, _) => LoadHosts();
@@ -502,23 +566,60 @@ public sealed class MainForm : Form
             // Even the longest option must remain readable if a vertical scrollbar
             // reduces the available width at very large text sizes.
             int width = main.Padding.Horizontal + configuration.Margin.Horizontal + configuration.Padding.Horizontal
-                + chkSkipZipTransfer.PreferredSize.Width + chkSkipZipTransfer.Margin.Horizontal;
+                + Math.Max(chkSkipZipTransfer.PreferredSize.Width + chkSkipZipTransfer.Margin.Horizontal,
+                    httpsOptions.PreferredSize.Width + httpsOptions.Margin.Horizontal) + settings.Padding.Horizontal;
             if (main.MinimumSize.Width != width) main.MinimumSize = new Size(width, 0);
         };
         Controls.Add(WindowLayout.CreateScrollArea(main, table));
     }
 
+    private SurfaceCard Section(string title, TableLayoutPanel content)
+    {
+        var card = new SurfaceCard
+        {
+            Dock = DockStyle.Top, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1, RowCount = content.RowCount + 1, Width = 640
+        };
+        card.SuspendLayout();
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (int row = 0; row < card.RowCount; row++) card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        card.Controls.Add(new Label
+        {
+            Text = title, AutoSize = true, Dock = DockStyle.Fill, UseMnemonic = false,
+            Font = new Font(Font.FontFamily, 11F, FontStyle.Bold), Margin = new Padding(0, 0, 0, 12)
+        }, 0, 0);
+        var children = content.Controls.Cast<Control>().Select(child => (child, row: content.GetRow(child))).ToArray();
+        foreach (var (child, row) in children) card.Controls.Add(child, 0, row + 1);
+        content.Dispose();
+        card.AutoSize = true;
+        card.ResumeLayout(true);
+        return card;
+    }
+
     private void ApplyColumnWeights()
     {
-        // Hier kannst du die prozentualen Breiten selbst ändern (Summe = 100).
-        // Zuerst Fill deaktivieren, damit das Setzen einzelner Werte nicht
-        // bereits die anderen Spalten proportional neu berechnet.
+        if (fittingColumns || table.Columns.Count == 0 || table.ClientSize.Width <= 0) return;
+        fittingColumns = true;
         table.SuspendLayout();
         try
         {
             table.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            foreach (DataGridViewColumn column in table.Columns)
+            // Minimum widths are a shared budget, not independent limits that
+            // can push Status outside the viewport. Narrow windows wrap text.
+            int[] preferredMinimums = [140, 104, 50, 90, 90, 104, 104, 220, 94];
+            float scale = table.DeviceDpi / 96F * table.Font.SizeInPoints / 9.5F;
+            int available = Math.Max(1, table.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 2);
+            float fit = Math.Min(1F, available / (preferredMinimums.Sum() * scale));
+            for (int index = 0; index < table.Columns.Count; index++)
+            {
+                var column = table.Columns[index];
                 column.AutoSizeMode = DataGridViewAutoSizeColumnMode.NotSet;
+                column.MinimumWidth = Math.Max(2, (int)(preferredMinimums[index] * scale * fit));
+            }
+            int horizontalPadding = Math.Max(1, (int)(5 * scale * fit));
+            table.ColumnHeadersDefaultCellStyle.Padding = new Padding(horizontalPadding, (int)(11 * scale), horizontalPadding, (int)(11 * scale));
+            table.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.True;
+            table.DefaultCellStyle.Padding = new Padding(horizontalPadding, (int)(9 * scale), horizontalPadding, (int)(9 * scale));
 
             table.Columns["hostname"].FillWeight = 11;
             table.Columns["connection"].FillWeight = 9;
@@ -527,16 +628,17 @@ public sealed class MainForm : Form
             table.Columns["fiscal"].FillWeight = 6;
             table.Columns["serversuite"].FillWeight = 8;
             table.Columns["pos"].FillWeight = 9;
-            table.Columns["information"].FillWeight = 35;
-            table.Columns["attempt"].FillWeight = 5;
+            table.Columns["information"].FillWeight = 40;
             table.Columns["result"].FillWeight = 8;
 
             // Einmaliges Aktivieren nach der kompletten Gewichtung.
             table.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            table.HorizontalScrollingOffset = 0;
         }
         finally
         {
             table.ResumeLayout(true);
+            fittingColumns = false;
         }
     }
 
@@ -550,7 +652,7 @@ public sealed class MainForm : Form
         pnl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         pnl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         pnl.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        btn.Margin = new Padding(0, 3, 0, 3);
+        btn.Margin = new Padding(0, 4, 0, 4);
         lbl.AutoEllipsis = true; lbl.AutoSize = false; lbl.Size = Size.Empty;
         lbl.Dock = DockStyle.Fill;
         lbl.Margin = new Padding(8, 0, 0, 0);
@@ -584,7 +686,7 @@ public sealed class MainForm : Form
         {
             Text = "Computer hinzufügen oder bearbeiten", Width = 720, Height = 420, MinimumSize = new Size(560, 350),
             FormBorderStyle = FormBorderStyle.Sizable, StartPosition = FormStartPosition.CenterParent,
-            MinimizeBox = false, MaximizeBox = false, Font = new Font("Segoe UI", 9F)
+            MinimizeBox = false, MaximizeBox = false, Font = UiTheme.BodyFont()
         };
         dialog.SuspendLayout();
         var label = new Label
@@ -602,9 +704,9 @@ public sealed class MainForm : Form
         var buttons = FlowRow();
         buttons.FlowDirection = FlowDirection.RightToLeft;
         buttons.Padding = new Padding(8);
-        var add = new Button { Text = "OK", AutoSize = true };
-        var cancel = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, AutoSize = true };
-        var browse = new Button { Text = "Durchsuchen", AutoSize = true };
+        var add = new ModernButton { Text = "OK", Role = ButtonRole.Primary };
+        var cancel = new ModernButton { Text = "Abbrechen", DialogResult = DialogResult.Cancel };
+        var browse = new ModernButton { Text = "Durchsuchen" };
         browse.Click += (_, _) =>
         {
             try
@@ -1422,24 +1524,19 @@ public sealed class MainForm : Form
         string connectionToolTip;
         string info;
         int? rowProgress;
+        int attempt;
         lock (h)
         {
             connection = h.Connection;
             connectionToolTip = h.ConnectionState.ToolTip;
             info = DisplayText.Information(h.Phase, h.Error);
             rowProgress = h.ProgressPercent;
+            attempt = h.Attempt;
         }
         var cells = h.Row.Cells;
         cells["hostname"].Value = h.Host;
         cells["connection"].Value = connection;
         cells["connection"].ToolTipText = connectionToolTip;
-        cells["connection"].Style.ForeColor = connection switch
-        {
-            "Verbunden" => Color.FromArgb(22, 115, 75),
-            "Nicht erreichbar" => Color.FromArgb(170, 45, 54),
-            "Neustart angefordert" => Color.FromArgb(133, 90, 28),
-            _ => Color.FromArgb(95, 110, 130)
-        };
         cells["dotnet48"].Value = DisplayText.DotNet48(h.DotNet48Installed);
         cells["dotnet48"].ToolTipText = DisplayText.DotNet48Description(h.DotNet48Installed);
         cells["payment"].Value = h.Payment;
@@ -1453,22 +1550,12 @@ public sealed class MainForm : Form
         cells["pos"].ToolTipText = h.PosVersion;
         // Aktuellen Schritt und bisherige Fehler-/Informationstexte gemeinsam anzeigen.
         if (rowProgress is int percent) info = $"{percent} % · {info}";
+        info = DisplayText.WithAttempt(info, attempt);
         cells["information"].Tag = rowProgress;
         cells["information"].Value = info;
         cells["information"].ToolTipText = info;
-        cells["attempt"].Value = h.Attempt == 0 ? "–" : h.Attempt + "/3";
         cells["result"].Value = h.Result == "Bereits aktuell / übersprungen" ? "Aktuell" : h.Result;
         cells["result"].ToolTipText = h.Result;
-        Color color = h.Result switch
-        {
-            "Erfolgreich" => Color.FromArgb(223, 245, 230),
-            "Wieder online" or "Dienste OK" or "POS OK" => Color.FromArgb(223, 245, 230),
-            "Bereits aktuell / übersprungen" => Color.FromArgb(230, 242, 253),
-            "Fehler" => Color.FromArgb(255, 229, 230),
-            "Läuft" or "Neustart angefordert" => Color.FromArgb(255, 246, 213),
-            _ => Color.White
-        };
-        h.Row.DefaultCellStyle.BackColor = color;
     }
 
     private void UpdateSummary()
@@ -1596,7 +1683,7 @@ public sealed class MainForm : Form
 
     private void ShowHostLog(HostState host)
     {
-        using var window = new Form { Text = "Protokoll – " + host.Host, Width = 920, Height = 520, StartPosition = FormStartPosition.CenterParent, Font = new Font("Segoe UI", 9F) };
+        using var window = new Form { Text = "Protokoll – " + host.Host, Width = 920, Height = 520, Padding = new Padding(18), StartPosition = FormStartPosition.CenterParent, Font = UiTheme.BodyFont() };
         window.SuspendLayout();
         var text = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, Dock = DockStyle.Fill, Font = new Font("Consolas", 9F), WordWrap = false };
         lock (logLock) text.Text = string.Join(Environment.NewLine, host.Log);

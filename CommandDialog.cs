@@ -8,7 +8,7 @@ internal sealed class CommandDialog : Form
     private readonly CheckBox terminal = new() { Name = "terminal" };
     private readonly CheckBox pos = new() { Name = "pos" };
     private readonly Label selection = new() { Name = "selection", AutoSize = true, Dock = DockStyle.Fill };
-    private readonly Button execute = new()
+    private readonly Button execute = new ModernButton
     {
         Name = "execute", Text = "Auswahl ausführen", AutoSize = true,
         AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12, 7, 12, 7),
@@ -25,8 +25,8 @@ internal sealed class CommandDialog : Form
     {
         SuspendLayout();
         Text = "Befehl senden";
-        Font = new Font("Segoe UI", 10F);
-        BackColor = Color.White;
+        Font = UiTheme.BodyFont();
+        BackColor = UiTheme.Background;
         ClientSize = new Size(780, 690);
         MinimumSize = new Size(620, 480);
         StartPosition = FormStartPosition.CenterParent;
@@ -73,7 +73,7 @@ internal sealed class CommandDialog : Form
         scroll.Controls.Add(content);
         layout.Controls.Add(scroll, 0, 1);
 
-        var cancel = new Button
+        var cancel = new ModernButton
         {
             Text = "Abbrechen", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.Cancel
@@ -118,17 +118,18 @@ internal sealed class CommandDialog : Form
         if (StartServerSuite) services.Add("nt3 Server Suite");
         execute.Enabled = RestartTerminals || RestartPos || services.Count > 0;
         execute.Text = RestartTerminals ? "Windows-Neustart bestätigen …" : RestartPos ? "POS-Neustart bestätigen …" : "Auswahl ausführen";
+        ((ModernButton)execute).Role = RestartTerminals ? ButtonRole.Danger : ButtonRole.Primary;
         selection.Text = RestartTerminals
             ? "Ausgewählt: vollständiger Windows-Neustart. Eine Bestätigung folgt."
             : RestartPos ? "Ausgewählt: KassaPreh im angemeldeten Benutzerkonto neu starten. Eine Bestätigung folgt."
             : services.Count > 0 ? "Ausgewählte Dienste: " + string.Join(", ", services) : "Noch keine Aktion ausgewählt.";
-        selection.ForeColor = RestartTerminals || RestartPos ? Color.FromArgb(153, 44, 32) : Color.FromArgb(75, 89, 107);
+        selection.ForeColor = RestartTerminals ? UiTheme.Danger : RestartPos ? UiTheme.Warning : UiTheme.Muted;
     }
 
     private static Label Paragraph(string text) => new()
     {
         Text = text, AutoSize = true, Dock = DockStyle.Fill,
-        ForeColor = Color.FromArgb(75, 89, 107), Margin = new Padding(0, 0, 0, 8)
+        ForeColor = UiTheme.Muted, Margin = new Padding(0, 0, 0, 8)
     };
 
     private Label Heading(string text, int topMargin) => new()
@@ -145,14 +146,25 @@ internal sealed class CommandDialog : Form
         choice.Font = new Font(Font, FontStyle.Bold);
         choice.Margin = new Padding(0, 0, 0, 5);
         choice.AccessibleDescription = description;
-        if (windowsRestart) choice.ForeColor = Color.FromArgb(153, 44, 32);
+        if (windowsRestart) choice.ForeColor = UiTheme.Warning;
         var detail = Paragraph(description);
         detail.Margin = new Padding(24, 0, 0, 0);
-        var card = Stack(choice, detail);
+        var card = new SurfaceCard { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 2 };
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        card.Controls.Add(choice, 0, 0);
+        card.Controls.Add(detail, 0, 1);
         card.Padding = new Padding(12, 10, 12, 10);
         card.Margin = new Padding(0, 0, 0, 8);
-        card.BackColor = windowsRestart ? Color.FromArgb(255, 242, 235) : Color.FromArgb(243, 246, 250);
-        card.BorderStyle = BorderStyle.FixedSingle;
+        void RefreshCard()
+        {
+            card.BackColor = choice.Checked ? (windowsRestart ? UiTheme.WarningSoft : UiTheme.AccentSoft) : UiTheme.Surface;
+            card.BorderColor = choice.Checked ? (windowsRestart ? UiTheme.Warning : UiTheme.Accent) : UiTheme.Border;
+            card.Invalidate();
+        }
+        choice.CheckedChanged += (_, _) => RefreshCard();
+        RefreshCard();
         card.SizeChanged += (_, _) =>
         {
             int width = Math.Max(1, card.ClientSize.Width - card.Padding.Horizontal);

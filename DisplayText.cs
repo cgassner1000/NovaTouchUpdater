@@ -45,6 +45,9 @@ internal static class DisplayText
         return currentStep + "  |  " + detail;
     }
 
+    public static string WithAttempt(string information, int attempt) =>
+        attempt > 1 ? $"Versuch {attempt}/3: {information}" : information;
+
     public static string Version(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return "";

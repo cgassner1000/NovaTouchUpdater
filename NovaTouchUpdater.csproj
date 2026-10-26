@@ -10,9 +10,12 @@
     <AssemblyName>NovaTouchUpdater</AssemblyName>
     <RootNamespace>NovaTouchUpdater</RootNamespace>
     <Version>1.0.0</Version>
+    <ApplicationIcon>Assets\NovaTouchUpdater.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
+    <EmbeddedResource Include="Assets\NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
+    <EmbeddedResource Include="Assets\NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
     <EmbeddedResource Include="RemoteWorker.ps1" LogicalName="NovaTouchUpdater.RemoteWorker.ps1" />
     <EmbeddedResource Include="UpdateSteps.ps1" LogicalName="NovaTouchUpdater.UpdateSteps.ps1" />
     <EmbeddedResource Include="UploadDirectory.ps1" LogicalName="NovaTouchUpdater.UploadDirectory.ps1" />

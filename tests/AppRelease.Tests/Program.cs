@@ -141,8 +141,8 @@ internal static class Program
         {
             using var link = new LinkLabel { Text = "Neue Version verfügbar", Visible = true };
             using var header = new UpdaterHeader(link) { Font = new Font("Segoe UI", 9F * scale) };
-            header.Controls.Cast<Control>().Single(c => c != link).Controls.OfType<Label>().Single(l => l.Text == "NovaTouch 2.5 Updater").Font =
-                new Font("Segoe UI", 19F * scale, FontStyle.Bold);
+            header.Controls.OfType<Label>().Single(l => l.Text == "NovaTouch Updater").Font =
+                new Font("Segoe UI", 22F * scale, FontStyle.Bold);
             header.Scale(new SizeF(scale, scale));
             _ = header.Handle; // no Form.Show, connections or real application startup
             foreach (int width in new[] { 1700, 1190, 610, 1190, 1700 })
@@ -153,13 +153,14 @@ internal static class Program
                     header.PerformLayout();
                     foreach (Control control in header.Controls) control.PerformLayout();
                 }
-                Control caption = header.Controls.Cast<Control>().Single(c => c != link);
+                var captions = header.Controls.OfType<Label>().Where(c => c != link).ToArray();
+                var subtitle = captions.Single(c => c.Text.Contains("parallele Remote-Updates"));
                 Assert(link.Right <= header.ClientSize.Width && Math.Abs(link.Right + link.Margin.Right - header.ClientSize.Width) <= 2,
                     $"update notice stays aligned to the right at {width}px / {scale * 100}%");
-                Assert(!link.Bounds.IntersectsWith(caption.Bounds), $"notice never overlaps caption at {width}px / {scale * 100}%");
-                Assert(caption.Controls.Cast<Control>().All(c => c.Right <= caption.Width), $"header texts fit at {width}px / {scale * 100}%");
-                if (width == 1190) Assert(header.GetRow(link) == 0, $"normal window keeps the notice in the same row at {scale * 100}%");
-                if (width == 610) Assert(header.GetRow(link) == 1, $"narrow window gives the notice its own row at {scale * 100}%");
+                Assert(captions.All(caption => !link.Bounds.IntersectsWith(caption.Bounds)), $"notice never overlaps caption at {width}px / {scale * 100}%");
+                Assert(captions.All(c => c.Right <= header.ClientSize.Width), $"header texts fit at {width}px / {scale * 100}%");
+                if (width == 1190) Assert(header.GetRow(link) == header.GetRow(subtitle), $"normal window keeps the notice beside the subtitle at {scale * 100}%");
+                if (width == 610) Assert(header.GetRow(link) > header.GetRow(subtitle), $"narrow window gives the notice its own row at {scale * 100}%");
                 if (scale == 1F && width is 1190 or 610)
                 {
                     header.Height = header.GetPreferredSize(new Size(header.Width, 0)).Height;

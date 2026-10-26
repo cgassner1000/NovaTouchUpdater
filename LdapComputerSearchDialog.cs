@@ -11,7 +11,7 @@ internal sealed class LdapComputerSearchDialog : Form
         Name = "customFilter", Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Both, WordWrap = false,
         Font = new Font("Consolas", 9F), PlaceholderText = "z. B. (&(name=SERVER-*)(operatingSystem=*Windows*))"
     };
-    private readonly TabControl modes = new() { Name = "modes", Dock = DockStyle.Fill, Height = 135 };
+    private readonly TabControl modes = new ModernTabs { Name = "modes", Dock = DockStyle.Fill, Height = 145 };
     private readonly DataGridView results = new() { Name = "results" };
     private readonly Label status = new() { Name = "searchStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Noch keine Suche gestartet." };
     private readonly Label selection = new() { Name = "selectedCount", AutoSize = true, Anchor = AnchorStyles.Left };
@@ -31,7 +31,7 @@ internal sealed class LdapComputerSearchDialog : Form
         this.search = search ?? LdapComputerSearch.SearchAsync;
         SuspendLayout();
         Text = "Computer in der Domäne suchen";
-        Font = new Font("Segoe UI", 9F);
+        Font = UiTheme.BodyFont();
         ClientSize = new Size(960, 650);
         MinimumSize = new Size(700, 480);
         StartPosition = FormStartPosition.CenterParent;
@@ -103,6 +103,8 @@ internal sealed class LdapComputerSearchDialog : Form
         Controls.Add(WindowLayout.CreateScrollArea(layout, results));
         CancelButton = cancel;
         AcceptButton = find;
+        ((ModernButton)find).Role = ButtonRole.Primary;
+        ((ModernButton)import).Role = ButtonRole.Accent;
 
         find.Click += async (_, _) => await SearchAsync();
         stop.Click += (_, _) => CancelSearch();
@@ -220,7 +222,7 @@ internal sealed class LdapComputerSearchDialog : Form
         status.ForeColor = error ? Color.Firebrick : Color.FromArgb(75, 89, 107);
     }
 
-    private static Button MakeButton(string text, string name) => new() { Name = name, Text = text, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(8, 3, 8, 3) };
+    private static Button MakeButton(string text, string name) => new ModernButton { Name = name, Text = text };
     private static FlowLayoutPanel Flow(params Control[] controls)
     {
         var panel = new WrappingFlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true, Margin = Padding.Empty };

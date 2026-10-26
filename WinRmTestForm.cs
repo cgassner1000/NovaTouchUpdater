@@ -6,7 +6,7 @@ internal sealed class WinRmTestForm : Form
     private readonly DataGridView grid = new();
     private readonly TextBox details = new();
     private readonly Label summary = new();
-    private readonly Button cancel = new() { Text = "Abbrechen", AutoSize = true };
+    private readonly Button cancel = new ModernButton { Text = "Abbrechen" };
     private readonly CancellationTokenSource cancellation = new();
     private bool running = true;
     private int completed;
@@ -19,7 +19,7 @@ internal sealed class WinRmTestForm : Form
         Size = new Size(1100, 700);
         MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterParent;
-        Font = new Font("Segoe UI", 9F);
+        Font = UiTheme.BodyFont();
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 1, Padding = new Padding(10) };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -43,6 +43,7 @@ internal sealed class WinRmTestForm : Form
         grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders;
         foreach (string title in new[] { "Host", "Protokoll / Port", "TCP", "New-PSSession", "Invoke-Command", "Ergebnis" })
             grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = title, SortMode = DataGridViewColumnSortMode.NotSortable });
+        grid.Columns[5].CellTemplate = new StatusBadgeCell();
         layout.Controls.Add(grid, 0, 1);
         details.Dock = DockStyle.Fill;
         details.MinimumSize = new Size(0, 90);
@@ -132,7 +133,6 @@ internal sealed class WinRmTestForm : Form
         row.Cells[3].Value = result.Session;
         row.Cells[4].Value = result.Command;
         row.Cells[5].Value = result.Success ? "OK" : "Fehler";
-        row.DefaultCellStyle.BackColor = result.Success ? Color.Honeydew : Color.MistyRose;
         row.Tag = $"{row.Cells[0].Value} – {row.Cells[1].Value}\r\nTCP: {result.Tcp}\r\nNew-PSSession: {result.Session}\r\nInvoke-Command: {result.Command}\r\n\r\n{result.Message}\r\n{result.Error}";
         foreach (DataGridViewCell cell in row.Cells) cell.ToolTipText = result.Error;
         completed++;

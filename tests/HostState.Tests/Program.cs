@@ -187,3 +187,19 @@ var suiteHeaders = Regex.Matches(suiteReport, "<th(?: [^>]*)?>(.*?)</th>").Selec
 Assert(Array.IndexOf(suiteHeaders, "Server Suite (vorher → nachher)") == Array.IndexOf(suiteHeaders, "Fiscal (vorher → nachher)") + 1 &&
     suiteReport.Contains("Server Suite Target: <strong>2026.4.9792</strong>") && suiteReport.Contains("nt3_server_suite_A") && suiteReport.Contains("nt3_server_suite_B"),
     "HTML places server suite after fiscal and includes target version plus every installed instance");
+
+var retryHosts = Enumerable.Range(1, 3).Select(attempt => new HostState
+{
+    Host = $"retry-{attempt}.invalid", Attempt = attempt, Phase = "Kopieren <Paket>", Error = "Fehler & Details"
+}).ToArray();
+string retryReport = HtmlReport.Create(retryHosts, "", "", now.LocalDateTime, false);
+var retryHeaders = Regex.Matches(retryReport, "<th(?: [^>]*)?>(.*?)</th>").Select(match => match.Groups[1].Value).ToArray();
+Assert(retryHeaders.Length == 10 && !retryHeaders.Contains("Versuch") && retryHeaders.TakeLast(3).SequenceEqual(new[] { "Information", "Details", "Status" }) &&
+    !retryReport.Contains("class=\"attempt\""), "HTML removes the separate attempt column while retaining information, protocol and status");
+foreach (int attempt in new[] { 1, 2, 3 })
+{
+    string row = Regex.Match(retryReport, $"<td class=\"host\">retry-{attempt}.invalid</td>[\\s\\S]*?</tr>").Value;
+    string expectedPhase = (attempt == 1 ? "" : $"Versuch {attempt}/3: ") + "Kopieren &lt;Paket&gt;";
+    Assert(row.Contains($"<div class=\"info-phase\">{expectedPhase}</div>") && row.Contains("Fehler &amp; Details"),
+        $"HTML attempt {attempt} keeps the correct prefix and escapes phase and error text");
+}
