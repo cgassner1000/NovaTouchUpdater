@@ -9,7 +9,10 @@
     <Nullable>enable</Nullable>
     <AssemblyName>NovaTouchUpdater</AssemblyName>
     <RootNamespace>NovaTouchUpdater</RootNamespace>
-    <Version>1.0.0</Version>
+    <UpdaterBaseVersion>$([System.Text.RegularExpressions.Regex]::Replace($([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/version.txt')), '(?m)^\s*#.*$', '').Trim())</UpdaterBaseVersion>
+    <UpdaterBuildNumber>0</UpdaterBuildNumber>
+    <UpdaterBuildNumber Condition="'$(GITHUB_RUN_NUMBER)' != ''">$(GITHUB_RUN_NUMBER)</UpdaterBuildNumber>
+    <Version>$(UpdaterBaseVersion).$(UpdaterBuildNumber)</Version>
     <ApplicationIcon>Assets\NovaTouchUpdater.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
@@ -26,4 +29,10 @@
     <EmbeddedResource Include="DirectorySearch.ps1" LogicalName="NovaTouchUpdater.DirectorySearch.ps1" />
     <None Update="config.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('config.json')" />
   </ItemGroup>
+  <Target Name="ValidateUpdaterVersion" BeforeTargets="PrepareForBuild">
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(UpdaterBaseVersion)', '^\d+\.\d+$'))"
+           Text="version.txt muss genau eine Basisversion im Format Hauptversion.Nebenversion enthalten, zum Beispiel 1.1. Beschreibungszeilen beginnen mit #." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(UpdaterBuildNumber)', '^\d+$'))"
+           Text="GITHUB_RUN_NUMBER muss eine ganze, nicht negative Zahl sein." />
+  </Target>
 </Project>

@@ -40,7 +40,15 @@ jobs:
             throw "Build fehlgeschlagen: $exe nicht gefunden."
           }
 
-          $versionedName = "NovaTouchUpdater-v1.0.$env:GITHUB_RUN_NUMBER.exe"
+          $exe = (Resolve-Path -LiteralPath $exe).ProviderPath
+          $version = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion
+          if ($version) { $version = $version.Split('+')[0] }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Keine gueltige Versionsnummer in der EXE gefunden: $version"
+          }
+          $releaseTag = "v$version"
+          "RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $versionedName = "NovaTouchUpdater-$releaseTag.exe"
           Rename-Item -LiteralPath $exe -NewName $versionedName
           $versionedExe = Join-Path $publishDir $versionedName
 
@@ -54,7 +62,6 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: v1.0.${{ github.run_number }}
         run: |
           $releaseExe = "bin/Release/net8.0-windows/win-x64/publish/NovaTouchUpdater-$env:RELEASE_TAG.exe"
           gh release create "$env:RELEASE_TAG" "$releaseExe" `

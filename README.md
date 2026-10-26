@@ -250,8 +250,16 @@ können dann abweichen. Das HTML-Layout wird getrennt in `HtmlReport.cs`
 
 ### Windows-Release-Build
 
+Die Basisversion wird ausschließlich in **`version.txt`** im Projektordner geändert. Die Datei enthält eine Anleitung; die mit `#` beginnenden Beschreibungszeilen werden beim Einlesen ignoriert. Nur die Zahl in der letzten Zeile ändern: beispielsweise `1.1` für die Reihe `1.1.x` oder `1.2` für `1.2.x`. Lokale Builds erhalten damit die Version `1.1.0`. Bei GitHub-Releases wird die fortlaufende Workflow-Laufnummer angehängt, beispielsweise `1.1.123`. Die Laufnummer beginnt beim Wechsel der Basisversion nicht erneut bei null. EXE-Dateiname und Release-Tag werden aus der eingebetteten EXE-Version übernommen; weitere Dateien müssen für einen Versionswechsel nicht geändert werden.
+
 `Build-win64.cmd` im Projektordner ausführen (Visual Studio / .NET-8-SDK notwendig).
 Damit wird eine eigenständige `win-x64`-EXE veröffentlicht.
+
+Lokaler Test der Versionsübernahme und Release-Benennung (isolierte Testdateien unter `obj`, keine Veröffentlichung):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\Version.Tests.ps1
+```
 
 ### Single EXE Build
 

@@ -1,0 +1,15 @@
+# NovaTouch Updater - Versionseinstellung
+#
+# Zum Ändern der Versionsreihe nur die Zahl in der letzten Zeile bearbeiten.
+# Format: Hauptversion.Nebenversion
+# Beispiele: 1.1 für Version 1.1.x, 1.2 für Version 1.2.x, 2.0 für Version 2.0.x.
+#
+# Die letzte Zahl (x) wird automatisch ergänzt:
+# - GitHub-Release: fortlaufende Workflow-Laufnummer, z. B. 1.1.123.
+# - Lokaler Build / Visual Studio: 0, also z. B. 1.1.0.
+# Die GitHub-Laufnummer wird bei einem Versionswechsel nicht zurückgesetzt.
+# EXE-Version, EXE-Dateiname und GitHub-Release übernehmen diese Einstellung.
+# Weitere Dateien müssen für einen Versionswechsel nicht geändert werden.
+#
+# Aktuelle Basisversion (nur diese Zeile ändern; kein x und kein v eintragen):
+1.1
