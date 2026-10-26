@@ -1,3 +1,22 @@
 <Solution>
-  <Project Path="NovaTouchUpdater.csproj" />
+  <Folder Name="/Application/">
+    <Project Path="src/NovaTouchUpdater/NovaTouchUpdater.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/dotnet/AppRelease.Tests/AppRelease.Tests.csproj" />
+    <Project Path="tests/dotnet/CommandDialog.Tests/CommandDialog.Tests.csproj" />
+    <Project Path="tests/dotnet/ConfigStore.Tests/ConfigStore.Tests.csproj" />
+    <Project Path="tests/dotnet/ConnectionState.Tests/ConnectionState.Tests.csproj" />
+    <Project Path="tests/dotnet/DirectoryPicker.Tests/DirectoryPicker.Tests.csproj" />
+    <Project Path="tests/dotnet/HostState.Tests/HostState.Tests.csproj" />
+    <Project Path="tests/dotnet/InformationProgress.Tests/InformationProgress.Tests.csproj" />
+    <Project Path="tests/dotnet/LdapSearch.Tests/LdapSearch.Tests.csproj" />
+  </Folder>
+  <Folder Name="/Project/">
+    <File Path="README.md" />
+    <File Path="version.txt" />
+    <File Path="Build-win64.cmd" />
+    <File Path="Directory.Build.props" />
+    <File Path="tests/README.md" />
+  </Folder>
 </Solution>

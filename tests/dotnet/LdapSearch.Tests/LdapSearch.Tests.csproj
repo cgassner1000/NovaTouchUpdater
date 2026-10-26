@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(RepositoryRoot)tests/Shared/TestWorkspace.cs" Link="TestWorkspace.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Styling/UiTheme.cs" Link="UiTheme.cs" />
+    <EmbeddedResource Include="$(RepositoryRoot)src/NovaTouchUpdater/Assets/NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
+    <EmbeddedResource Include="$(RepositoryRoot)src/NovaTouchUpdater/Assets/NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/DirectoryServices/LdapComputerSearch.cs" Link="LdapComputerSearch.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Dialogs/LdapComputerSearchDialog.cs" Link="LdapComputerSearchDialog.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Layout/WindowLayout.cs" Link="WindowLayout.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Controls/WrappingFlowLayoutPanel.cs" Link="WrappingFlowLayoutPanel.cs" />
+    <EmbeddedResource Include="$(RepositoryRoot)src/NovaTouchUpdater/Scripts/DirectorySearch.ps1" LogicalName="NovaTouchUpdater.DirectorySearch.ps1" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>NovaTouchUpdater</AssemblyName>
+    <RootNamespace>NovaTouchUpdater</RootNamespace>
+    <UpdaterBaseVersion>$([System.Text.RegularExpressions.Regex]::Replace($([System.IO.File]::ReadAllText('$(RepositoryRoot)version.txt')), '(?m)^\s*#.*$', '').Trim())</UpdaterBaseVersion>
+    <UpdaterBuildNumber>0</UpdaterBuildNumber>
+    <UpdaterBuildNumber Condition="'$(GITHUB_RUN_NUMBER)' != ''">$(GITHUB_RUN_NUMBER)</UpdaterBuildNumber>
+    <Version>$(UpdaterBaseVersion).$(UpdaterBuildNumber)</Version>
+    <ApplicationIcon>Assets\NovaTouchUpdater.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
+    <EmbeddedResource Include="Assets\NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
+    <EmbeddedResource Include="Scripts\RemoteWorker.ps1" LogicalName="NovaTouchUpdater.RemoteWorker.ps1" />
+    <EmbeddedResource Include="Scripts\UpdateSteps.ps1" LogicalName="NovaTouchUpdater.UpdateSteps.ps1" />
+    <EmbeddedResource Include="Scripts\UploadDirectory.ps1" LogicalName="NovaTouchUpdater.UploadDirectory.ps1" />
+    <EmbeddedResource Include="Scripts\RemoteCommand.ps1" LogicalName="NovaTouchUpdater.RemoteCommand.ps1" />
+    <EmbeddedResource Include="Scripts\WinRmWorker.ps1" LogicalName="NovaTouchUpdater.WinRmWorker.ps1" />
+    <EmbeddedResource Include="Scripts\ConnectionWorker.ps1" LogicalName="NovaTouchUpdater.ConnectionWorker.ps1" />
+    <EmbeddedResource Include="Scripts\SelfUpdate.ps1" LogicalName="NovaTouchUpdater.SelfUpdate.ps1" />
+    <EmbeddedResource Include="Scripts\DirectorySearch.ps1" LogicalName="NovaTouchUpdater.DirectorySearch.ps1" />
+    <None Include="$(RepositoryRoot)config.json" Link="config.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(RepositoryRoot)config.json')" />
+  </ItemGroup>
+  <Target Name="ValidateUpdaterVersion" BeforeTargets="PrepareForBuild">
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(UpdaterBaseVersion)', '^\d+\.\d+$'))"
+           Text="version.txt muss genau eine Basisversion im Format Hauptversion.Nebenversion enthalten, zum Beispiel 1.1. Beschreibungszeilen beginnen mit #." />
+    <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(UpdaterBuildNumber)', '^\d+$'))"
+           Text="GITHUB_RUN_NUMBER muss eine ganze, nicht negative Zahl sein." />
+  </Target>
+</Project>

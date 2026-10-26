@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <RepositoryRoot>$(MSBuildThisFileDirectory)</RepositoryRoot>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(RepositoryRoot)artifacts</ArtifactsPath>
+  </PropertyGroup>
+</Project>

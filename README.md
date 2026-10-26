@@ -2,6 +2,43 @@
 
 Quellcode für eine eigenständige Windows-GUI zur parallelen Verwaltung von Updates der Windows-Dienste `nt.payment*`, `nt.fiscal*` und aller Instanzen `nt3_server_suite*`, basierend auf den gelieferten PowerShell-Skripten.
 
+## Dateiaufbau
+
+```text
+NovaTouchUpdater/
+├── NovaTouchUpdater.slnx       Visual-Studio-Projektmappe mit Anwendung und Tests
+├── Build-win64.cmd            Eigenständige Windows-EXE erstellen
+├── version.txt                Zentrale Versionseinstellung mit Anleitung
+├── Directory.Build.props      Gemeinsame Build- und Ausgabeordner
+├── config/                    Beispielkonfiguration ohne Zugangsdaten
+├── src/NovaTouchUpdater/      Anwendung und Projektdatei
+│   ├── Program.cs             Programmeinstieg
+│   ├── UI/                    Hauptfenster, Dialoge, Steuerelemente, Layout und Design
+│   ├── Configuration/         Config laden/speichern und Passwortverschlüsselung
+│   ├── Models/                Hostzustand, Verbindungszustand und Paketnamen
+│   ├── DirectoryServices/     Domänensuche und LDAP
+│   ├── Remoting/              PowerShell-Prozessausführung und JSON-Protokoll
+│   ├── Updates/               GitHub-Versionsprüfung und Selbstaktualisierung
+│   ├── Reporting/             HTML-Bericht
+│   ├── Common/                Gemeinsame Textaufbereitung
+│   ├── Scripts/               Eingebettete PowerShell-Worker und Updateabläufe
+│   └── Assets/                Programmsymbol und Bildressourcen
+├── tests/                     Automatische Entwicklungsprüfungen; siehe tests/README.md
+│   ├── dotnet/                C#-Tests für Zustände, Konfiguration und Oberfläche
+│   ├── powershell/            Tests der Worker mit simulierten Diensten und Hosts
+│   └── Shared/                Gemeinsame Testpfade
+└── artifacts/                 Erzeugte Dateien; nicht in Git
+    ├── bin/                   Kompilierte Anwendungen und Testprogramme
+    ├── obj/                   Build-Zwischendateien
+    ├── publish/win-x64/       Fertige NovaTouchUpdater.exe
+    ├── test-results/          Testdateien, Protokolle und Vorschaubilder
+    └── legacy/                Frühere Build-Ausgaben und Vorschaudateien
+```
+
+Die Tests prüfen unter anderem Versionsvergleiche, alle Server-Suite-Instanzen, den Erhalt bestehender Dateien, Fehlerfälle und die Darstellung bei verschiedenen Skalierungen. Sie gehören zur Entwicklung und werden nicht in die fertige Anwendung eingebaut. Die PowerShell-Worker unter `src/NovaTouchUpdater/Scripts` werden weiterhin mit denselben Ressourcennamen in die EXE eingebettet.
+
+Eine vorhandene persönliche `config.json` im Hauptordner bleibt dort und wird für lokale Builds neben die EXE kopiert. Die Anwendung selbst lädt und speichert ihre Config weiterhin neben der gestarteten EXE. Die Beispielkonfiguration liegt unter `config/config.example.json`; erzeugte Dateien und persönliche Einstellungen sind in Git ignoriert.
+
 ## Voraussetzungen
 
 - Visual Studio 2026 mit Workload **.NET-Desktopentwicklung** und .NET 8 SDK
@@ -30,23 +67,23 @@ Das Passwort wird beim Speichern mit **Windows DPAPI / LocalMachine** verschlüs
 
 Alte Configs mit dem Klartextfeld `Password` bleiben lesbar. Beim Speichern wird dieses Feld entfernt und durch das verschlüsselte Passwort ersetzt. Auch die bisherige benutzergebundene DPAPI-Config bleibt unter dem ursprünglichen Benutzer lesbar: **Einmal mit diesem Benutzer öffnen und erneut speichern**, damit sie anschließend von den anderen Benutzern desselben Rechners verwendet werden kann. Ist ein vorhandenes verschlüsseltes Passwort beschädigt oder nicht entschlüsselbar, werden die anderen Einstellungen trotzdem geladen und eine erneute Passworteingabe angefordert. Eine fehlgeschlagene Speicherung lässt eine vorhandene Datei unverändert. Fehlt `config.json`, startet die Anwendung mit leerer Hostliste und ohne vorausgefüllte Zugangsdaten.
 
-Lokale Tests für Speicherung, DPAPI-Verschlüsselung, Migration und Schreibfehler (nur künstliche Zugangsdaten und Testdateien unter `obj`, keine vorhandene `config.json` wird verändert):
+Lokale Tests für Speicherung, DPAPI-Verschlüsselung, Migration und Schreibfehler (nur künstliche Zugangsdaten und Testdateien unter `artifacts/test-results`, keine vorhandene `config.json` wird verändert):
 
 ```powershell
-dotnet run --project tests\ConfigStore.Tests\ConfigStore.Tests.csproj -c Release
+dotnet run --project tests\dotnet\ConfigStore.Tests\ConfigStore.Tests.csproj -c Release
 ```
 
 Windows 10 Enterprise LTSC 2019 (1809) und Windows Server 2019 unterstützen .NET 8. Der .NET-8-Support endet am 10. November 2026. Die Windows-Desktopanwendung kann self-contained veröffentlicht werden.
 
 ## Projekt öffnen
 
-Visual Studio 2026: `NovaTouchUpdater.csproj` öffnen, NuGet/SDK laden, `F5` starten. Für Release:
+Visual Studio 2026: `NovaTouchUpdater.slnx` öffnen, NuGet/SDK laden, `F5` starten. Für Release:
 
 ```powershell
-dotnet publish .\NovaTouchUpdater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=false
+dotnet publish .\src\NovaTouchUpdater\NovaTouchUpdater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=false -o ".\artifacts\publish\win-x64"
 ```
 
-Ergebnis im Ordner `bin\Release\net8.0-windows\win-x64\publish\`.
+Ergebnis im Ordner `artifacts\publish\win-x64\`.
 
 Build und lokale Tests sind unter Windows ausführbar. Die automatisierten Update-Tests verwenden Testordner und simulierte Dienste/WinRM-Aufrufe; sie ersetzen keinen Update-Test auf einem echten Testclient.
 
@@ -65,15 +102,15 @@ Beim Wechsel von einer älteren Updater-Version kann deren eingebetteter Updateh
 Lokale Tests verwenden simulierte HTTP-Antworten, Testdateien und simulierte Programmstarts; sie aktualisieren weder den laufenden Updater noch Remote-Clients:
 
 ```powershell
-dotnet run --project tests\AppRelease.Tests\AppRelease.Tests.csproj -c Release
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\SelfUpdate.Tests.ps1
+dotnet run --project tests\dotnet\AppRelease.Tests\AppRelease.Tests.csproj -c Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SelfUpdate.Tests.ps1
 ```
 
-Der vollständige Umbenennungstest startet ausschließlich eine separat veröffentlichte **Test-EXE** in neuen Testordnern unter `obj`. Er prüft den tatsächlichen Neustart von einem Versionsnamen auf `NovaTouchUpdater.exe`, eine bereits vorhandene Zieldatei, unveränderte Config-Dateien und das Ausbleiben wiederholter Neustarts. Die Anwendung selbst und Remote-Clients werden dabei nicht gestartet:
+Der vollständige Umbenennungstest startet ausschließlich eine separat veröffentlichte **Test-EXE** in neuen Testordnern unter `artifacts/test-results`. Er prüft den tatsächlichen Neustart von einem Versionsnamen auf `NovaTouchUpdater.exe`, eine bereits vorhandene Zieldatei, unveränderte Config-Dateien und das Ausbleiben wiederholter Neustarts. Die Anwendung selbst und Remote-Clients werden dabei nicht gestartet:
 
 ```powershell
-dotnet publish tests\AppRelease.Tests\AppRelease.Tests.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:PublishReadyToRun=false -p:OutputType=WinExe -o "obj\app rename test"
-dotnet run --project tests\AppRelease.Tests\AppRelease.Tests.csproj -c Release -- --rename-integration "obj\app rename test\AppRelease.Tests.exe"
+dotnet publish tests\dotnet\AppRelease.Tests\AppRelease.Tests.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:PublishReadyToRun=false -p:OutputType=WinExe -o "artifacts\test-results\app rename test"
+dotnet run --project tests\dotnet\AppRelease.Tests\AppRelease.Tests.csproj -c Release -- --rename-integration "artifacts\test-results\app rename test\AppRelease.Tests.exe"
 ```
 
 Die Oberfläche berücksichtigt die Windows-Anzeigeskalierung pro Monitor (PerMonitorV2). Buttonleisten und Optionen brechen bei wenig Platz um; Zeilenhöhen richten sich nach dem Inhalt. Bei großen Schriften oder schmalen Fenstern stehen Dateiauswahl und Einstellungen untereinander. Reicht die Bildschirmfläche nicht aus, lassen sich die Inhalte im Haupt- und WinRM-Fenster scrollen.
@@ -94,8 +131,8 @@ Die LDAP-Suche verwendet Windows PowerShell 5.1 und die vorhandene .NET-Verzeich
 Lokale Tests prüfen Filterbildung, frei wählbare Muster, eigene LDAP-Ausdrücke, Auswahl, Abbrechen, Darstellung und die echte JSON-Verbindung zum eingebetteten Suchprozess mit einer vor jeder Verzeichnisverbindung abgewiesenen Testeingabe. Die PowerShell-Tests prüfen echte Verzeichnisobjekte ohne Netzwerkverbindung auf unveränderte Windows-Anmeldung und korrektes Aufräumen; Suchergebnisse und LDAP-/Aufräumfehler werden simuliert. Beide Tests fragen keine echte Domäne ab und verändern keine vorhandene Config:
 
 ```powershell
-dotnet run --project tests\LdapSearch.Tests\LdapSearch.Tests.csproj -c Release
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\DirectorySearch.Tests.ps1
+dotnet run --project tests\dotnet\LdapSearch.Tests\LdapSearch.Tests.csproj -c Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\DirectorySearch.Tests.ps1
 ```
 
 1. Hostnamen-TXT laden: ein Hostname/IP pro Zeile; Leerzeilen und Zeilen mit `#`/`;` werden ignoriert, Duplikate entfernt.
@@ -126,9 +163,9 @@ Nach bestätigtem Neustartauftrag steht beim Host **Windows-Neustart angefordert
 Test der Befehlsaktionen mit simulierten WinRM-, Dienst- und Shutdown-Aufrufen; dabei werden keine Rechner neu gestartet:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\RemoteCommand.Tests.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\PosRestart.Tests.ps1
-dotnet run --project tests\CommandDialog.Tests\CommandDialog.Tests.csproj -c Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\RemoteCommand.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\PosRestart.Tests.ps1
+dotnet run --project tests\dotnet\CommandDialog.Tests\CommandDialog.Tests.csproj -c Release
 ```
 
 Die Hostübersicht zeigt die **IST-Versionen** von Payment, Fiscal und Server Suite. Die für alle Hosts identischen Zielversionen stehen als **Payment Target**, **Fiscal Target** und **Server Suite Target** bei der ZIP-Auswahl und werden automatisch aus dem ZIP-Dateinamen gelesen.
@@ -140,9 +177,9 @@ Während eines manuellen `Prüfen + Versionen` pausiert die Hintergrundprüfung,
 Tests der Verbindungsüberwachung mit simulierten Antworten, ohne Verbindung zu Zielhosts:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\ConnectionWorker.Tests.ps1
-dotnet run --project tests\ConnectionState.Tests\ConnectionState.Tests.csproj -c Release
-dotnet run --project tests\HostState.Tests\HostState.Tests.csproj -c Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\ConnectionWorker.Tests.ps1
+dotnet run --project tests\dotnet\ConnectionState.Tests\ConnectionState.Tests.csproj -c Release
+dotnet run --project tests\dotnet\HostState.Tests\HostState.Tests.csproj -c Release
 ```
 
 Die Spaltenreihenfolge lautet: **Hostname | Verbindung | .NET 4.8 | Payment Ist | Fiscal Ist | Server Suite Ist | NovaTouch POS | Information | Status**. Die schmale .NET-Spalte zeigt **✓** bei installiertem .NET Framework 4.8 oder neuer (auch 4.8.1), **✗** bei fehlendem/älterem Framework und **–** vor einer Prüfung bzw. bei nicht ermitteltem Status. Grundlage ist der Registry-Wert `Release >= 528040` unter `NET Framework Setup\NDP\v4\Full` ([Microsoft-Dokumentation](https://learn.microsoft.com/en-us/dotnet/framework/install/how-to-determine-which-versions-are-installed)). Die POS-Version stammt aus `DisplayVersion` der Programmeinträge mit Namen `NovaTouch POS` unter den 32- und 64-Bit-Uninstall-Schlüsseln in `HKLM`. Fehlt POS, steht dort **Nicht installiert**; das allein verursacht keinen Fehler und verhindert kein Update. Bei registrierter Installation ohne Versionsangabe steht **Version unbekannt**. Beim erneuten Prüfen werden alte Ergebnisse zurückgesetzt. Beide Angaben stehen auch im HTML-Bericht.
@@ -152,8 +189,8 @@ Die breite Spalte „Information“ zeigt den aktuellen Bearbeitungsschritt **zu
 Die zusätzlichen Scan-Prüfungen lassen sich ohne Netzwerkzugriff mit simulierten Registry- und WinRM-Antworten testen:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\SoftwareInventory.Tests.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\ServiceInventory.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SoftwareInventory.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\ServiceInventory.Tests.ps1
 ```
 
 ## HTML-Bericht
@@ -194,8 +231,8 @@ Eine fehlende `version.txt` ergibt **Version unbekannt**, sodass ein Update fehl
 Test des vollständigen Update-Ablaufs mit lokalen Testordnern sowie simulierten Diensten und Remoting (keine Zielhosts werden angesprochen):
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\ServerSuiteUpdate.Tests.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\UploadDirectory.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\ServerSuiteUpdate.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\UploadDirectory.Tests.ps1
 ```
 
 ## Grenzen und Sicherheitsaspekte
@@ -213,18 +250,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\UploadDirectory.Te
 ## Logdateien
 
 `%LOCALAPPDATA%\NovaTouchUpdater\Logs\Update-YYYYMMDD-HHMMSS.log`
-
-## Dateiaufbau
-
-- `Program.cs` — WinForms-Einstieg
-- `MainForm.cs` — GUI, Phasen- und Parallelitätssteuerung, Retry, Export
-- `WorkerRunner.cs` — PowerShell-Prozessausführung / JSON-Protokoll
-- `AppConfigStore.cs` — Config laden und atomar speichern, Passwortschutz über Windows DPAPI
-- `RemoteWorker.ps1` — WinRM-Probe, Service-Inventar, ZIP-Verteilung, Update und Verifikation
-- `UpdateSteps.ps1` — entpackte Pakete prüfen, Dienste gemeinsam stoppen, Installationsordner aktualisieren und Dienste wieder starten
-- `UploadDirectory.ps1` — Uploadordner prüfen und nach Bestätigung ausschließlich ihren Inhalt bereinigen
-- `UploadDirectoryDialog.cs` — Abfrage mit Hostnamen, Zielpfaden und Auswahl zwischen Bereinigen, Beibehalten und Abbrechen
-- `NovaTouchUpdater.csproj` — .NET-8-WinForms-Projekt
 
 ## Alternative zu PowerShell-Remoting
 
@@ -255,16 +280,16 @@ Die Basisversion wird ausschließlich in **`version.txt`** im Projektordner geä
 `Build-win64.cmd` im Projektordner ausführen (Visual Studio / .NET-8-SDK notwendig).
 Damit wird eine eigenständige `win-x64`-EXE veröffentlicht.
 
-Lokaler Test der Versionsübernahme und Release-Benennung (isolierte Testdateien unter `obj`, keine Veröffentlichung):
+Lokaler Test der Versionsübernahme und Release-Benennung (isolierte Testdateien unter `artifacts/test-results`, keine Veröffentlichung):
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\Version.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\Version.Tests.ps1
 ```
 
 ### Single EXE Build
 
 Im Projektordner 
-dotnet publish .\NovaTouchUpdater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o ".\publish-single"
+dotnet publish .\src\NovaTouchUpdater\NovaTouchUpdater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o ".\artifacts\publish\win-x64"
 ### WinRM separat testen
 
 Der Button **Test WinRM** prüft alle importierten Hosts mit der unter **Prüfen parallel** eingestellten Parallelität und den vorhandenen Anmeldedaten (leerer Benutzername: aktuelle Windows-Anmeldung). Geprüft wird ausschließlich das ausgewählte Protokoll: HTTP/5985 oder HTTPS auf dem eingestellten HTTPS-Port (Standard 5986, beispielsweise 443). Protokoll und tatsächlich verwendeter Port stehen im Diagnosefenster; verschiedene Hosts laufen parallel.
@@ -276,6 +301,6 @@ Der Remote-Testbefehl gibt lediglich einen konstanten Text zurück. Es werden ke
 Lokaler Test der Diagnose-Fehlerpfade ohne Netzwerkzugriff:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\WinRmWorker.Tests.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\WinRmPort.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\WinRmWorker.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\WinRmPort.Tests.ps1
 ```

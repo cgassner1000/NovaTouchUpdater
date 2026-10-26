@@ -6,11 +6,11 @@ if errorlevel 1 (
     echo FEHLER: .NET SDK nicht gefunden. Installiere .NET 8 SDK bzw. die Visual-Studio-Workload .NET-Desktopentwicklung.
     exit /b 1
 )
-dotnet publish "NovaTouchUpdater.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=false
+dotnet publish "src\NovaTouchUpdater\NovaTouchUpdater.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=false -o "artifacts\publish\win-x64"
 if errorlevel 1 (
     echo FEHLER: Build fehlgeschlagen.
     exit /b 1
 )
 echo.
-echo Fertig: bin\Release\net8.0-windows\win-x64\publish\NovaTouchUpdater.exe
+echo Fertig: artifacts\publish\win-x64\NovaTouchUpdater.exe
 exit /b 0

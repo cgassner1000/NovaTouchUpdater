@@ -5,6 +5,7 @@
 
 # User-specific files
 config.json
+artifacts/
 *.rsuser
 *.suo
 *.user
