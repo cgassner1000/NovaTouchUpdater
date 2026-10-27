@@ -1699,7 +1699,7 @@ public sealed partial class MainForm : Form
     {
         HostState[] active = ExecutionHosts().ToArray();
         lblSelection.Text = $"{active.Count(h => h.IsSelected)} von {active.Length} ausgewählt";
-        lblSummary.Text = $"Hosts: {active.Length}    |    Verbunden / lokal: {active.Count(h => h.Connection is "Verbunden" or "Lokal")}    |    " +
+        lblSummary.Text = $"Hosts: {active.Length}    |    Verbunden: {active.Count(h => h.Connection is "Verbunden" or "Lokal")}    |    " +
             $"Aktualisiert: {active.Count(h => h.Result == "Erfolgreich")}    |    " +
             $"Bereits aktuell: {active.Count(h => h.Result == "Bereits aktuell / übersprungen")}    |    " +
             $"Befehle OK: {active.Count(h => h.CommandSucceeded)}    |    " +
