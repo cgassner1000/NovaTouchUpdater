@@ -173,27 +173,7 @@ public sealed partial class MainForm : Form
         try
         {
             var loaded = AppConfigStore.Load(configPath);
-            var config = loaded.Settings;
-
-            txtRemotePath.Text = string.IsNullOrWhiteSpace(config.RemotePath) ? activeRemoteInstallPath : config.RemotePath;
-            txtUser.Text = config.Username ?? "";
-            chkSsl.Checked = config.UseSsl;
-            nHttpsPort.Value = config.HttpsPort;
-            softwarePath.Text = config.SoftwarePath ?? "";
-
-            txtPassword.Text = loaded.Password;
-
-            string[] configuredHosts = config.Hosts ?? [];
-            if (configuredHosts.Length > 0)
-            {
-                hosts.Clear();
-                foreach (string host in configuredHosts) hosts.Add(new HostState { Host = host });
-                lblFile.Text = $"config.json ({hosts.Count})";
-                RebuildRows();
-                UpdateSummary();
-            }
-            executionMode.SelectedIndex = Enum.TryParse<UpdateExecutionMode>(config.ExecutionMode, out var mode) ? (int)mode : (int)UpdateExecutionMode.Remote;
-            UpdateExecutionSelection();
+            ApplyLoadedConfig(loaded);
             if (loaded.PasswordWarning is not null)
                 MessageBox.Show(this, loaded.PasswordWarning, "Passwort neu eingeben", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -205,19 +185,43 @@ public sealed partial class MainForm : Form
         }
     }
 
+    private void ApplyLoadedConfig(LoadedConfig loaded)
+    {
+        var config = loaded.Settings;
+        txtRemotePath.Text = string.IsNullOrWhiteSpace(config.RemotePath) ? activeRemoteInstallPath : config.RemotePath;
+        txtUser.Text = config.Username ?? "";
+        chkSsl.Checked = config.UseSsl;
+        nHttpsPort.Value = config.HttpsPort;
+        softwarePath.Text = config.SoftwarePath ?? "";
+        txtPassword.Text = loaded.Password;
+        string[] configuredHosts = config.Hosts ?? [];
+        if (configuredHosts.Length > 0)
+        {
+            hosts.Clear();
+            foreach (string host in configuredHosts) hosts.Add(new HostState { Host = host });
+            lblFile.Text = $"config.json ({hosts.Count})";
+            RebuildRows();
+            UpdateSummary();
+        }
+        executionMode.SelectedIndex = Enum.TryParse<UpdateExecutionMode>(config.ExecutionMode, out var mode) ? (int)mode : (int)UpdateExecutionMode.Remote;
+        UpdateExecutionSelection();
+    }
+
+    private UpdaterConfig CaptureConfig() => new()
+    {
+        // Save every loaded remote host, including rows hidden by a filter.
+        Hosts = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
+        Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
+        SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString()
+    };
+
     private void SaveConfig()
     {
         if (busy || selfUpdating) return;
         string configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
         try
         {
-            AppConfigStore.Save(configPath, new UpdaterConfig
-            {
-                // Save every loaded host, including rows hidden by a filter.
-                Hosts = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
-                Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
-                SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString()
-            }, txtPassword.Text);
+            AppConfigStore.Save(configPath, CaptureConfig(), txtPassword.Text);
             Log("SYSTEM", $"Config gespeichert: {configPath} ({hosts.Count} Hosts)");
             MessageBox.Show(this, "Config gespeichert",
                 "Config gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -325,7 +329,7 @@ public sealed partial class MainForm : Form
         targetPath.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         targetPath.Controls.Add(new Label
         {
-            Text = "Zielpfad auf den Clients:", AutoSize = true, Anchor = AnchorStyles.Left, TextAlign = ContentAlignment.MiddleLeft
+            Text = "Zielpfad für Update-Dateien:", AutoSize = true, Anchor = AnchorStyles.Left, TextAlign = ContentAlignment.MiddleLeft
         }, 0, 0);
         txtRemotePath.Text = activeRemoteInstallPath;
         txtRemotePath.Dock = DockStyle.Fill;
@@ -405,7 +409,7 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
         tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, Benutzer, Passwort und HTTPS speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
-        tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
+        tips.SetToolTip(txtRemotePath, "Ablage für ZIPs, MSIs und temporäre Update-Dateien. Gilt für LOCALHOST und für jeden ausgewählten Remote-Host. Wird bei einem nötigen Update angelegt und mit der Config gespeichert.");
         tips.SetToolTip(chkSkipZipTransfer, "ZIP- und MSI-Pakete müssen bereits im Remote-Zielpfad liegen; sie werden anhand der lokalen Auswahl und SHA256 geprüft. Lokale Updates stellen ihre Pakete direkt bereit.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
@@ -1227,7 +1231,7 @@ public sealed partial class MainForm : Form
         Action = action, Host = host.Host,
         LocalExecution = host.IsLocal,
         Username = host.IsLocal ? "" : activeUser, Password = host.IsLocal ? "" : activePassword, UseSsl = !host.IsLocal && activeSsl, HttpsPort = activeHttpsPort, ForceUpdate = activeForceUpdate,
-        RemoteInstallPath = host.IsLocal ? LocalWorkspace : activeRemoteInstallPath, SkipZipTransfer = !host.IsLocal && activeSkipZipTransfer,
+        RemoteInstallPath = activeRemoteInstallPath, SkipZipTransfer = !host.IsLocal && activeSkipZipTransfer,
         PaymentZip = (components & UpdateComponents.Payment) != 0 ? paymentZip : "",
         PaymentVersion = (components & UpdateComponents.Payment) != 0 ? paymentVersion : "",
         PaymentSha256 = (components & UpdateComponents.Payment) != 0 ? paymentHash : "",
@@ -1327,9 +1331,9 @@ public sealed partial class MainForm : Form
         {
             MessageBox.Show(this, "Mindestens ein Update-Paket auswählen oder den Softwareordner einlesen."); return;
         }
-        if (SelectedRemoteHosts().Length > 0 && !Regex.IsMatch(txtRemotePath.Text.Trim(), @"^[A-Za-z]:\\"))
+        if (!Regex.IsMatch(txtRemotePath.Text.Trim(), @"^[A-Za-z]:\\"))
         {
-            MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad auf den Clients eingeben, z. B. C:\\install\\Novacom.",
+            MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad für die Update-Dateien eingeben, z. B. C:\\install\\Novacom.",
                 "Zielpfad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
@@ -1869,7 +1873,7 @@ public sealed partial class MainForm : Form
         btnCancel.Enabled = busy || selfUpdating || loadingPackages;
         nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle && remote; chkForceUpdate.Enabled = idle;
         nHttpsPort.Enabled = idle && remote && chkSsl.Checked;
-        txtRemotePath.Enabled = idle && remote; chkSkipZipTransfer.Enabled = idle && remote;
+        txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle && remote;
         txtUser.Enabled = txtPassword.Enabled = idle && remote; statusFilter.Enabled = idle;
         executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = readPackages.Enabled = idle;
         foreach (var controls in msiControls.Values) controls.Button.Enabled = idle;

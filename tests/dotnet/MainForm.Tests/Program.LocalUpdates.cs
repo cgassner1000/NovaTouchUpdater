@@ -58,6 +58,28 @@ internal static partial class Program
         HostState local = Targets(form).Single();
         Assert(local.IsLocal && local.Host == "LOCALHOST" && Field<DataGridView>(form, "table").Rows.Count == 1,
             "local-only execution automatically adds and selects LOCALHOST while hiding remote rows");
+        string targetPath = Path.Combine(TestWorkspace.Artifacts, "Local update destination");
+        Field<TextBox>(form, "txtRemotePath").Text = " " + targetPath + " ";
+        Field<TextBox>(form, "softwarePath").Text = @" D:\Software Quellen ";
+        Assert(Field<TextBox>(form, "txtRemotePath").Enabled, "the update-file destination remains editable in local-only mode");
+
+        string configPath = Path.Combine(TestWorkspace.Artifacts, "local-paths-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var captured = (UpdaterConfig)Call(form, "CaptureConfig")!;
+            AppConfigStore.Save(configPath, captured, ""); // Synthetic settings and no credentials; never use the personal config.
+            var loaded = AppConfigStore.Load(configPath);
+            using var restored = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
+            Call(restored, "ApplyLoadedConfig", loaded);
+            Call(restored, "CaptureCredentials");
+            HostState restoredLocal = Targets(restored).Single();
+            var restoredRequest = (WorkerRequest)Call(restored, "Request", "update", restoredLocal, UpdateComponents.Payment)!;
+            Assert(loaded.Settings.SoftwarePath == @"D:\Software Quellen" && loaded.Settings.RemotePath == targetPath &&
+                Field<TextBox>(restored, "softwarePath").Text == @"D:\Software Quellen" && restoredRequest.RemoteInstallPath == targetPath && restoredRequest.LocalExecution,
+                "source directory, update destination and Local mode persist through the actual form capture, config file and startup apply path");
+            Assert(loaded.Settings.Hosts!.Length == 3 && !loaded.Settings.Hosts.Contains("LOCALHOST"), "saving local settings retains remote hosts and recreates LOCALHOST from the execution mode");
+        }
+        finally { File.Delete(configPath); }
         Field<TextBox>(form, "txtUser").Text = "unused-domain-user";
         Field<TextBox>(form, "txtPassword").Text = "";
         Assert((bool)Call(form, "ValidateCredentials")! && !Field<Button>(form, "btnWinRm").Enabled && !Field<TextBox>(form, "txtUser").Enabled,
@@ -74,9 +96,15 @@ internal static partial class Program
         WorkerRequest request = worker.Requests.Single(r => r.Action == "update");
         Assert(request.LocalExecution && request.MsiPackage?.Kind == "ntc" && !request.SkipZipTransfer && string.IsNullOrEmpty(request.PaymentZip) && local.NtcVersion == "2.0.0" && local.RebootRequired,
             "a local MSI update uses the direct path, changes only its component, and retains a required-reboot result");
+        Assert(request.RemoteInstallPath == targetPath, "local MSI packages use the configured destination instead of a hidden TEMP workspace");
+        var zipRequest = (WorkerRequest)Call(form, "Request", "update", local, UpdateComponents.Payment)!;
+        Assert(zipRequest.LocalExecution && zipRequest.RemoteInstallPath == targetPath, "local ZIP updates use the same configured destination as MSI packages");
         Assert(local.Phase.Contains("Neustart erforderlich") && local.Result == "Erfolgreich", "MSI success includes an explicit required-reboot notice");
         mode.SelectedIndex = 1;
         Assert(Targets(form).Length == 4 && Targets(form).Count(h => h.IsLocal) == 1, "combined execution includes LOCALHOST and selected remote computers once");
+        var remoteRequest = (WorkerRequest)Call(form, "Request", "update", Targets(form).First(h => !h.IsLocal), UpdateComponents.Payment)!;
+        Assert(!remoteRequest.LocalExecution && remoteRequest.RemoteInstallPath == targetPath,
+            "combined mode uses the configured path on each respective local or remote machine");
         mode.SelectedIndex = 2;
         Assert(Targets(form).Length == 3 && Targets(form).All(h => !h.IsLocal), "remote-only execution excludes LOCALHOST from all remote requests");
     }

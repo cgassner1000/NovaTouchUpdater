@@ -13,7 +13,6 @@ public sealed partial class MainForm
     private CancellationTokenSource? packageCancellation;
     private bool loadingPackages;
     private UpdateExecutionMode Mode => executionMode.SelectedIndex is >= 0 and <= 2 ? (UpdateExecutionMode)executionMode.SelectedIndex : UpdateExecutionMode.Remote;
-    private static string LocalWorkspace => Path.Combine(Path.GetTempPath(), "NovaTouchUpdater", "LocalUpdates");
     private IEnumerable<HostState> ExecutionHosts() => hosts.Where(h => Mode == UpdateExecutionMode.LocalAndRemote || (Mode == UpdateExecutionMode.Local ? h.IsLocal : !h.IsLocal));
     private HostState[] SelectedRemoteHosts() => SelectedHosts().Where(h => !h.IsLocal).ToArray();
 
@@ -190,7 +189,7 @@ public sealed partial class MainForm
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Zielordner und zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen, einschließlich portable_python. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
-        if (selected.Any(h => h.IsLocal)) text.AppendLine("Lokal: direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
+        if (selected.Any(h => h.IsLocal)) text.AppendLine("Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLokal: direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
         if (selected.Any(h => !h.IsLocal)) text.AppendLine("Remote-Zielpfad: " + txtRemotePath.Text.Trim() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv"));
         return text.ToString();
     }
