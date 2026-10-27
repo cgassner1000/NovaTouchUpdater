@@ -277,6 +277,7 @@ try {
     if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
     $req = $requestLine | ConvertFrom-Json
     $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
+    if ($req.Action -eq 'stage-packages' -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
     $sessionOptions = if ($localExecution) { $null } else { New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 180000 }
     $sessionArgs = @{
         ComputerName = [string]$req.Host
@@ -339,10 +340,6 @@ try {
             exit 0
         }
         if ($req.Action -in @('transfer','stage-packages')) {
-            if ($req.Action -eq 'stage-packages' -and -not $localExecution -and [bool]$req.SkipZipTransfer) {
-                Emit @{ Event='result'; Success=$true; Changed=$false; Skipped=$true; Message='Remote-Paketübertragung deaktiviert; keine Dateien übertragen.'; Services=@() }
-                exit 0
-            }
             $remotePath = [string]$req.RemoteInstallPath
             if ([string]::IsNullOrWhiteSpace($remotePath)) { throw 'RemoteInstallPath wurde nicht übergeben.' }
             $remoteInfo = InvokeWorkerCommand -Session $session -ArgumentList $remotePath -ErrorAction Stop -ScriptBlock {

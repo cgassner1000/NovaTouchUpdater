@@ -2,12 +2,12 @@ namespace NovaTouchUpdater;
 
 public sealed partial class MainForm
 {
-    private async Task<TransferFileRequest[]> PackageFilesAsync(CancellationToken ct)
+    private async Task<TransferFileRequest[]> PackageFilesAsync(UpdateComponents components, CancellationToken ct)
     {
         var candidates = new List<TransferFileRequest>();
-        foreach (string path in new[] { paymentZip, fiscalZip, serverSuiteZip }.Where(path => !string.IsNullOrWhiteSpace(path)))
-            candidates.Add(new() { LocalPath = path, RelativePath = Path.GetFileName(path) });
-        foreach (MsiPackageRequest package in msiPackages.Values)
+        foreach (var (component, path) in new[] { (UpdateComponents.Payment, paymentZip), (UpdateComponents.Fiscal, fiscalZip), (UpdateComponents.ServerSuite, serverSuiteZip) })
+            if ((components & component) != 0 && !string.IsNullOrWhiteSpace(path)) candidates.Add(new() { LocalPath = path, RelativePath = Path.GetFileName(path) });
+        foreach (MsiPackageRequest package in msiPackages.Where(pair => (pair.Key & components) != 0).Select(pair => pair.Value))
         {
             candidates.Add(new() { LocalPath = package.PayloadPath, RelativePath = Path.GetFileName(package.PayloadPath) });
             candidates.AddRange(package.CompanionFiles.Select(file => new TransferFileRequest { LocalPath = file.LocalPath, RelativePath = file.RelativePath }));
@@ -33,61 +33,47 @@ public sealed partial class MainForm
         return files.Values.ToArray();
     }
 
-    private async Task StagePackagesAfterScanAsync(HostState[] scanned, CancellationToken ct)
+    private async Task ExecuteHostUpdateAsync(HostState host, CancellationToken ct, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
-        if (SelectedUpdateComponents() == UpdateComponents.None || scanned.Length == 0) return;
-        foreach (HostState host in scanned.Where(h => !h.IsLocal && activeSkipZipTransfer))
+        if (host.IsLocal && !await StageLocalUpdatePackagesAsync(host, ct)) return;
+        await UpdateHostAsync(host, ct, delay);
+    }
+
+    private async Task<bool> StageLocalUpdatePackagesAsync(HostState host, CancellationToken ct)
+    {
+        if (!host.IsLocal) return true;
+        try
         {
-            Log(host.Host, "Paketbereitstellung übersprungen: Installationsdateien nicht übertragen ist aktiviert.");
-            if (host.Scanned) Mark(host, h => h.Phase = "Scan abgeschlossen · Remote-Paketübertragung deaktiviert");
+            ct.ThrowIfCancellationRequested();
+            Mark(host, h => { h.Result = "Läuft"; h.Phase = "Lokale Update-Pakete werden vorbereitet"; });
+            TransferFileRequest[] files = await PackageFilesAsync(host.Updates?.Pending ?? SelectedUpdateComponents(), ct);
+            if (files.Length == 0) return true;
+            WorkerRequest request = Request("stage-packages", host, UpdateComponents.None);
+            request.TransferFiles = files;
+            WorkerResult result = await runner.RunAsync(request, ev =>
+            {
+                Log(host.Host, ev.Phase + ": " + ev.Message);
+                Mark(host, h => h.ApplyProgress(ev));
+            }, ct);
+            if (!result.Success) throw new IOException(FriendlyError(result));
+            Mark(host, h => { h.Phase = "Lokale Update-Pakete bereitgestellt und geprüft"; h.SetProgress(100); });
+            Log(host.Host, "LOKALE PAKETBEREITSTELLUNG => OK " + result.Message);
+            return true;
         }
-        HostState[] targets = scanned.Where(h => h.IsLocal || !activeSkipZipTransfer).ToArray();
-        if (targets.Length == 0) return;
-        TransferFileRequest[] files;
-        try { files = await PackageFilesAsync(ct); }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException)
+        {
+            Mark(host, h => { h.Result = "Abgebrochen"; h.Phase = "Lokale Paketbereitstellung abgebrochen"; });
+            throw;
+        }
         catch (Exception ex)
         {
-            foreach (HostState host in targets)
+            Mark(host, h =>
             {
-                Mark(host, h => { h.Result = "Fehler"; h.Phase = "Paketvorbereitung fehlgeschlagen"; h.Error = string.IsNullOrWhiteSpace(h.Error) ? ex.Message : h.Error + " | " + ex.Message; });
-                Log(host.Host, "PAKETVORBEREITUNG => FEHLER " + ex.Message);
-            }
-            return;
+                h.Result = "Fehler"; h.UpdateFailed = true; h.Phase = "Lokale Paketbereitstellung fehlgeschlagen";
+                h.Error = string.IsNullOrWhiteSpace(h.Error) ? ex.Message : h.Error + " | " + ex.Message;
+            });
+            Log(host.Host, "LOKALE PAKETBEREITSTELLUNG => FEHLER " + ex.Message);
+            return false;
         }
-        ResetProgress(targets.Length);
-        await ParallelPhaseAsync(targets, (int)nUpdate.Value, async (host, token) =>
-        {
-            Mark(host, h => { h.Result = "Läuft"; h.Phase = "Update-Pakete werden bereitgestellt"; });
-            try
-            {
-                WorkerRequest request = Request("stage-packages", host, UpdateComponents.None);
-                request.TransferFiles = files;
-                WorkerResult result = await runner.RunAsync(request, ev =>
-                {
-                    Log(host.Host, ev.Phase + ": " + ev.Message);
-                    Mark(host, h => h.ApplyProgress(ev));
-                }, token);
-                Mark(host, h =>
-                {
-                    h.Result = result.Success && h.Scanned ? "Bereit" : "Fehler";
-                    h.Phase = result.Success ? (h.Scanned ? "Scan abgeschlossen" : "Scan fehlgeschlagen") + " · Update-Pakete bereitgestellt und geprüft" : "Paketbereitstellung fehlgeschlagen";
-                    if (!result.Success) h.Error = string.IsNullOrWhiteSpace(h.Error) ? FriendlyError(result) : h.Error + " | " + FriendlyError(result);
-                    if (result.Success) h.SetProgress(100);
-                });
-                Log(host.Host, "PAKETBEREITSTELLUNG => " + (result.Success ? "OK " + result.Message : "FEHLER " + FriendlyError(result)));
-            }
-            catch (OperationCanceledException)
-            {
-                Mark(host, h => { h.Result = "Abgebrochen"; h.Phase = "Paketbereitstellung abgebrochen"; });
-                throw;
-            }
-            catch (Exception ex)
-            {
-                Mark(host, h => { h.Result = "Fehler"; h.Phase = "Paketbereitstellung fehlgeschlagen"; h.Error = string.IsNullOrWhiteSpace(h.Error) ? ex.Message : h.Error + " | " + ex.Message; });
-                Log(host.Host, "PAKETBEREITSTELLUNG => FEHLER " + ex.Message);
-            }
-            finally { CountCompleted(); }
-        }, ct);
     }
 }

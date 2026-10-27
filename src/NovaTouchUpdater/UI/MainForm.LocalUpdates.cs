@@ -4,7 +4,7 @@ public sealed partial class MainForm
 {
     private readonly ComboBox executionMode = new() { Name = "executionMode", DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly TextBox softwarePath = new() { Name = "softwarePath", Dock = DockStyle.Fill, PlaceholderText = "Ordner mit allen Update-Paketen" };
-    private readonly Label packageStatus = new() { Name = "packageStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Pakete einlesen, dann mit Prüfen + Versionen auf den Zielen bereitstellen." };
+    private readonly Label packageStatus = new() { Name = "packageStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Pakete einlesen. Lokale Paketablage erst mit Updates starten." };
     private readonly Button browseSoftware = Button("Durchsuchen");
     private readonly Button readPackages = Button("Pakete einlesen");
     private readonly SoftwarePackageCatalog packageCatalog = new();
@@ -133,7 +133,7 @@ public sealed partial class MainForm
             msiPackages.Clear();
             foreach (var (component, controls) in msiControls) controls.Label.Text = component.ToString().ToUpperInvariant() + " Target: –";
             foreach (SoftwarePackage package in catalog.Packages) ApplyPackage(package);
-            packageStatus.Text = $"{catalog.Packages.Length} Komponenten gefunden · Bereitstellung mit Prüfen + Versionen" + (catalog.Warnings.Length == 0 ? "." : $" · {catalog.Warnings.Length} Pakete nicht lesbar (Details im Protokoll).");
+            packageStatus.Text = $"{catalog.Packages.Length} Komponenten gefunden · Lokale Paketablage mit Updates starten" + (catalog.Warnings.Length == 0 ? "." : $" · {catalog.Warnings.Length} Pakete nicht lesbar (Details im Protokoll).");
             foreach (string warning in catalog.Warnings) Log("SYSTEM", "PAKETE: " + warning);
         }
         catch (OperationCanceledException) { packageStatus.Text = "Paketsuche abgebrochen."; }
@@ -189,7 +189,7 @@ public sealed partial class MainForm
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Zielordner und zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen, einschließlich portable_python. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
-        if (selected.Any(h => h.IsLocal)) text.AppendLine("Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLokal: direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
+        if (selected.Any(h => h.IsLocal)) text.AppendLine("Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOCALHOST: alle gewählten Pakete bereitstellen; nur installierte Komponenten aktualisieren. Direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
         if (selected.Any(h => !h.IsLocal)) text.AppendLine("Remote-Zielpfad: " + txtRemotePath.Text.Trim() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv"));
         return text.ToString();
     }

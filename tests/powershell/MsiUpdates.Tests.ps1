@@ -127,6 +127,7 @@ try {
     RunCase 'local-upgrade' '1.0.0' $true 0 $true $true
     RunCase 'local-reboot-required' '1.0.0' $true 3010 $true $true
     RunCase 'local-installer-failure' '1.0.0' $true 1603 $false $true
+    RunCase 'remote-absent' '' $false 0 $true $false
     RunCase 'remote-upgrade' '1.0.0' $false 0 $true $true
     RunCase 'remote-current-force' '2.0.0' $false 0 $true $false
     RunCase 'remote-unknown-preflight' 'unknown' $false 0 $true $false $false 'check-upload-directory'
