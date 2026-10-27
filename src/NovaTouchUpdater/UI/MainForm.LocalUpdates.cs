@@ -4,7 +4,7 @@ public sealed partial class MainForm
 {
     private readonly ComboBox executionMode = new() { Name = "executionMode", DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly TextBox softwarePath = new() { Name = "softwarePath", Dock = DockStyle.Fill, PlaceholderText = "Ordner mit allen Update-Paketen" };
-    private readonly Label packageStatus = new() { Name = "packageStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "ZIP- und MSI-Pakete automatisch aus dem Softwareordner laden." };
+    private readonly Label packageStatus = new() { Name = "packageStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Pakete einlesen, dann mit Prüfen + Versionen auf den Zielen bereitstellen." };
     private readonly Button browseSoftware = Button("Durchsuchen");
     private readonly Button readPackages = Button("Pakete einlesen");
     private readonly SoftwarePackageCatalog packageCatalog = new();
@@ -133,7 +133,7 @@ public sealed partial class MainForm
             msiPackages.Clear();
             foreach (var (component, controls) in msiControls) controls.Label.Text = component.ToString().ToUpperInvariant() + " Target: –";
             foreach (SoftwarePackage package in catalog.Packages) ApplyPackage(package);
-            packageStatus.Text = $"{catalog.Packages.Length} Komponenten gefunden" + (catalog.Warnings.Length == 0 ? "." : $" · {catalog.Warnings.Length} Pakete nicht lesbar (Details im Protokoll).");
+            packageStatus.Text = $"{catalog.Packages.Length} Komponenten gefunden · Bereitstellung mit Prüfen + Versionen" + (catalog.Warnings.Length == 0 ? "." : $" · {catalog.Warnings.Length} Pakete nicht lesbar (Details im Protokoll).");
             foreach (string warning in catalog.Warnings) Log("SYSTEM", "PAKETE: " + warning);
         }
         catch (OperationCanceledException) { packageStatus.Text = "Paketsuche abgebrochen."; }

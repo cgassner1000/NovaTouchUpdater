@@ -338,7 +338,11 @@ try {
                 Message=$(if ($clean) { 'Uploadordner bereinigt' } else { 'Uploadordner geprüft' }); Services=@() }
             exit 0
         }
-        if ($req.Action -eq 'transfer') {
+        if ($req.Action -in @('transfer','stage-packages')) {
+            if ($req.Action -eq 'stage-packages' -and -not $localExecution -and [bool]$req.SkipZipTransfer) {
+                Emit @{ Event='result'; Success=$true; Changed=$false; Skipped=$true; Message='Remote-Paketübertragung deaktiviert; keine Dateien übertragen.'; Services=@() }
+                exit 0
+            }
             $remotePath = [string]$req.RemoteInstallPath
             if ([string]::IsNullOrWhiteSpace($remotePath)) { throw 'RemoteInstallPath wurde nicht übergeben.' }
             $remoteInfo = InvokeWorkerCommand -Session $session -ArgumentList $remotePath -ErrorAction Stop -ScriptBlock {
@@ -369,7 +373,11 @@ try {
                 $expectedHash = [string]$file.Sha256
                 if (-not (Test-Path -LiteralPath $localFile -PathType Leaf)) { throw "Lokale Datei fehlt auf dem Updater-PC: $localFile" }
                 if ([string]::IsNullOrWhiteSpace($expectedHash)) { throw "SHA256-Pruefsumme fehlt fuer $localFile" }
-                $remoteFile = Join-Path $remotePath (Split-Path -Path $localFile -Leaf)
+                $relative = Split-Path -Path $localFile -Leaf
+                if ($null -ne $file.PSObject.Properties['RelativePath'] -and -not [string]::IsNullOrWhiteSpace([string]$file.RelativePath)) { $relative = ([string]$file.RelativePath).Replace('/', '\') }
+                if ([IO.Path]::IsPathRooted($relative) -or $relative.Contains(':')) { throw "Ungültiger Paketpfad: $relative" }
+                $remoteFile = [IO.Path]::GetFullPath((Join-Path $remotePath $relative))
+                if (-not $remoteFile.StartsWith($remotePath.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "Paketpfad verlässt den Zielordner: $relative" }
                 $fileLabel = "Datei $($verified + 1)/$($files.Count)"
                 Progress 'Übertragung' ("$fileLabel : Prüfe $([IO.Path]::GetFileName($localFile))") 0
                 $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
@@ -380,6 +388,7 @@ try {
                 }
                 if ($remoteHash -ne $expectedHash) {
                     try {
+                        InvokeWorkerCommand -Session $session -ArgumentList ([IO.Path]::GetDirectoryName($remoteFile)) -ScriptBlock { param($directory) [void][IO.Directory]::CreateDirectory($directory) } -ErrorAction Stop
                         CopyRemoteFileWithProgress $session $localFile $remoteFile $fileLabel
                     }
                     catch {

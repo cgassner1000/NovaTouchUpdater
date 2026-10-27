@@ -405,6 +405,7 @@ public sealed partial class MainForm : Form
         chkSkipZipTransfer.Anchor = AnchorStyles.Left;
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts. LOCALHOST wird direkt geprüft; Remote-Hosts über WinRM.");
+        tips.SetToolTip(btnScan, "Verbindung und Versionen prüfen. Gewählte ZIP- und MSI-Pakete danach unabhängig von der installierten Version im Zielpfad bereitstellen. Es wird nichts installiert. Remote gilt weiterhin: Installationsdatei nicht übertragen.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
         tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, Benutzer, Passwort und HTTPS speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
@@ -1321,6 +1322,8 @@ public sealed partial class MainForm : Form
                 });
                 CountCompleted();
             }, ct);
+            ct.ThrowIfCancellationRequested();
+            await StagePackagesAfterScanAsync(targets.Where(h => h.Connection is "Verbunden" or "Lokal").ToArray(), ct);
         });
     }
 

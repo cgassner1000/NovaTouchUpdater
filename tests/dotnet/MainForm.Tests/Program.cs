@@ -14,6 +14,7 @@ internal static partial class Program
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
             if (args.Contains("--updates")) { UpdateRetryTests(); return 0; }
+            if (args.Contains("--staging")) { PackageStagingTests(); return 0; }
             if (args.Contains("--local")) { Complete(PackageCatalogTests()); LocalExecutionTests(); return 0; }
             if (!args.Contains("--layout"))
             {
@@ -23,6 +24,7 @@ internal static partial class Program
                 UpdateRetryTests();
                 Complete(PackageCatalogTests());
                 LocalExecutionTests();
+                PackageStagingTests();
             }
             LayoutTests();
             return 0;

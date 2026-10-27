@@ -1,5 +1,7 @@
 # Automatische Prüfungen
 
+Die Paketbereitstellung lässt sich mit `MainForm.Tests --staging` und `tests/powershell/PackageStaging.Tests.ps1` getrennt prüfen. Die Oberfläche erhält simulierte Hosts; der Worker verwendet ausschließlich Testordner und simulierte Remote-Sitzungen. Geprüft werden Vorabkopien bei neueren oder nicht installierten Programmen, ausgewählte/erreichbare Ziele, gemeinsame ZIPs, externe CAB-Dateien, SHA256-Wiederverwendung, Pfadgrenzen, erhaltene Scanfehler sowie Remote-„Nicht übertragen“ auch mit Force. Es werden keine Installer oder echten Dienstaktionen ausgeführt.
+
 Dieser Ordner enthält Entwicklungsprüfungen. Sie erkennen unbeabsichtigte Änderungen beim Umbauen des Codes, etwa falsche Versionsvergleiche, verlorene Dateien beim Server-Suite-Update oder fehlerhafte Statusanzeigen. Die fertige `NovaTouchUpdater.exe` benötigt diesen Ordner nicht; die Tests werden nicht in die Anwendung eingebaut.
 
 ## Aufteilung
