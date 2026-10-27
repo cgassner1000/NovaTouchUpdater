@@ -398,7 +398,7 @@ public sealed class MainForm : Form
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
         tips.SetToolTip(chkSkipZipTransfer, "Lokale ZIPs bestimmen weiterhin die Zielversion. ZIPs auf den Clients werden bei Updates nicht übertragen.");
-        tips.SetToolTip(btnRetry, "Hosts mit Prüf- oder Updatefehlern erneut prüfen/aktualisieren. Frühere Updatefehler bleiben auch nach einem erfolgreichen Neustart wiederholbar. Dienst- und Neustartbefehle werden hier nicht wiederholt.");
+        tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         var settingsContent = Stack(login, optionBar, chkSkipZipTransfer, chkForceUpdate);
         var settings = Section("Verbindung & Ausführung", settingsContent);
         settings.Name = "settingsCard";
@@ -1201,15 +1201,29 @@ public sealed class MainForm : Form
         activeSkipZipTransfer = chkSkipZipTransfer.Checked;
     }
 
-    private WorkerRequest Request(string action, HostState host) => new()
+    private WorkerRequest Request(string action, HostState host, UpdateComponents components = UpdateComponents.All) => new()
     {
         Action = action, Host = host.Host,
         Username = activeUser, Password = activePassword, UseSsl = activeSsl, HttpsPort = activeHttpsPort, ForceUpdate = activeForceUpdate,
         RemoteInstallPath = activeRemoteInstallPath, SkipZipTransfer = activeSkipZipTransfer,
-        PaymentZip = paymentZip, PaymentVersion = paymentVersion, PaymentSha256 = paymentHash,
-        FiscalZip = fiscalZip, FiscalVersion = fiscalVersion, FiscalSha256 = fiscalHash,
-        ServerSuiteZip = serverSuiteZip, ServerSuiteVersion = serverSuiteVersion, ServerSuiteSha256 = serverSuiteHash
+        PaymentZip = (components & UpdateComponents.Payment) != 0 ? paymentZip : "",
+        PaymentVersion = (components & UpdateComponents.Payment) != 0 ? paymentVersion : "",
+        PaymentSha256 = (components & UpdateComponents.Payment) != 0 ? paymentHash : "",
+        FiscalZip = (components & UpdateComponents.Fiscal) != 0 ? fiscalZip : "",
+        FiscalVersion = (components & UpdateComponents.Fiscal) != 0 ? fiscalVersion : "",
+        FiscalSha256 = (components & UpdateComponents.Fiscal) != 0 ? fiscalHash : "",
+        ServerSuiteZip = (components & UpdateComponents.ServerSuite) != 0 ? serverSuiteZip : "",
+        ServerSuiteVersion = (components & UpdateComponents.ServerSuite) != 0 ? serverSuiteVersion : "",
+        ServerSuiteSha256 = (components & UpdateComponents.ServerSuite) != 0 ? serverSuiteHash : ""
     };
+
+    private UpdateComponents SelectedUpdateComponents() =>
+        (string.IsNullOrWhiteSpace(paymentZip) ? UpdateComponents.None : UpdateComponents.Payment) |
+        (string.IsNullOrWhiteSpace(fiscalZip) ? UpdateComponents.None : UpdateComponents.Fiscal) |
+        (string.IsNullOrWhiteSpace(serverSuiteZip) ? UpdateComponents.None : UpdateComponents.ServerSuite);
+
+    private UpdateComponents ComponentsForUpdate(HostState host, bool onlyFailed) =>
+        onlyFailed && host.Updates is { Pending: not UpdateComponents.None } state ? state.Pending : SelectedUpdateComponents();
 
     private bool ValidateCredentials()
     {
@@ -1295,16 +1309,30 @@ public sealed class MainForm : Form
         {
             MessageBox.Show(this, onlyFailed ? "Keine ausgewählten Hosts mit Prüf- oder Updatefehlern vorhanden." : "Zuerst die ausgewählten Hosts prüfen und Versionen auslesen."); return;
         }
+        UpdateComponents needed = selected.Aggregate(UpdateComponents.None, (components, host) => components | ComponentsForUpdate(host, onlyFailed));
+        UpdateComponents missing = needed & ~SelectedUpdateComponents();
+        if (missing != UpdateComponents.None)
+        {
+            MessageBox.Show(this, "Für die Wiederholung bitte die Update-ZIP auswählen: " + HostUpdateState.Label(missing),
+                "Fehlende Update-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         if (MessageBox.Show(this,
             $"Update für {selected.Length} Hosts starten?\n\nModus: {(chkForceUpdate.Checked ? "FORCE UPDATE (Versiongleichheit ignorieren)" : "Normal (gleiche Version überspringen)")}\nPayment Target: {(paymentVersion.Length == 0 ? "–" : paymentVersion)}\nFiscal Target: {(fiscalVersion.Length == 0 ? "–" : fiscalVersion)}\nServer Suite Target: {(serverSuiteVersion.Length == 0 ? "–" : serverSuiteVersion)}\nZielpfad: {txtRemotePath.Text.Trim()}\nZIP-Übertragung: {(chkSkipZipTransfer.Checked ? "deaktiviert (ZIPs auf Hosts werden geprüft)" : "aktiv")}\n\nNur Komponenten mit ausgewählter ZIP werden aktualisiert. Bei der Server Suite werden alle Instanzen angehalten und Dateien in apps\\nt3-server-suite sowie portable_python überschrieben oder neu angelegt. Zielordner und zusätzliche Client-Dateien bleiben erhalten. ZIP-Quellen: apps\\nt3-server-suite und installer\\python\\portable_python. Deaktivierte Dienste bleiben deaktiviert.",
             "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         CaptureCredentials();
         lastUpdateForce = activeForceUpdate;
+        foreach (HostState host in selected)
+        {
+            UpdateComponents components = ComponentsForUpdate(host, onlyFailed);
+            if (!onlyFailed || host.Updates is null || host.Updates.Pending == UpdateComponents.None)
+                Mark(host, h => h.Updates = new HostUpdateState(components));
+        }
         await InBatchAsync(selected, async ct =>
         {
-            paymentHash = await WorkerRunner.Sha256Async(paymentZip, ct);
-            fiscalHash = await WorkerRunner.Sha256Async(fiscalZip, ct);
-            serverSuiteHash = await WorkerRunner.Sha256Async(serverSuiteZip, ct);
+            paymentHash = (needed & UpdateComponents.Payment) != 0 ? await WorkerRunner.Sha256Async(paymentZip, ct) : "";
+            fiscalHash = (needed & UpdateComponents.Fiscal) != 0 ? await WorkerRunner.Sha256Async(fiscalZip, ct) : "";
+            serverSuiteHash = (needed & UpdateComponents.ServerSuite) != 0 ? await WorkerRunner.Sha256Async(serverSuiteZip, ct) : "";
             Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; Zielpfad: {activeRemoteInstallPath}; ZIP-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
             ResetProgress(selected.Length);
             var ready = selected;
@@ -1319,62 +1347,94 @@ public sealed class MainForm : Form
             }
             await ParallelPhaseAsync(ready, (int)nUpdate.Value, async (host, token) =>
             {
-                bool succeeded = false;
-                for (int attempt = 1; attempt <= 3; attempt++)
-                {
-                    token.ThrowIfCancellationRequested();
-                    Mark(host, h => { h.Attempt = attempt; h.Phase = "Update"; h.Error = ""; h.Result = "Läuft"; });
-                    if (!host.Scanned)
-                    {
-                        Mark(host, h => { h.DotNet48Installed = null; h.PosVersion = "–"; });
-                        var probe = await DoWorkerAsync(host, "probe", token);
-                        if (!probe.Success)
-                        {
-                            Mark(host, h => { h.Connection = "Nicht erreichbar"; h.Error = FriendlyError(probe); });
-                            if (attempt < 3) await Task.Delay(TimeSpan.FromSeconds(attempt * 3), token);
-                            continue;
-                        }
-                        Mark(host, h => h.Connection = "Verbunden");
-                        var scan = await DoWorkerAsync(host, "scan", token);
-                        Mark(host, h => ReadScanInventory(h, scan));
-                        if (!scan.Success)
-                        {
-                            Mark(host, h => h.Error = FriendlyError(scan));
-                            if (attempt < 3) await Task.Delay(TimeSpan.FromSeconds(attempt * 3), token);
-                            continue;
-                        }
-                        Mark(host, h => { h.Scanned = true; h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; });
-                    }
-                    var result = await DoWorkerAsync(host, "update", token);
-                    Mark(host, h =>
-                    {
-                        h.Error = result.Success ? "" : FriendlyError(result);
-                        h.Phase = result.Success ? "Verifiziert" : "Update fehlgeschlagen";
-                        if (result.Success)
-                        {
-                            h.Result = result.Skipped ? "Übersprungen" : result.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
-                            if (result.Skipped) h.Phase = result.Message;
-                            h.Services = result.Services.ToList(); ReadVersions(h);
-                            h.UpdateFailed = false;
-                            if (result.Changed) h.SetProgress(100);
-                        }
-                    });
-                    if (result.Success) { succeeded = true; break; }
-                    if (attempt < 3) await Task.Delay(TimeSpan.FromSeconds(attempt * 3), token);
-                }
-                Mark(host, h =>
-                {
-                    if (!succeeded)
-                    {
-                        h.Result = "Fehler";
-                        h.UpdateFailed = true;
-                        h.Phase = "Maximal 3 Versuche";
-                    }
-                });
+                await UpdateHostAsync(host, token);
                 CountCompleted();
             }, ct);
             Log("SYSTEM", "Update-Durchlauf abgeschlossen.");
         });
+    }
+
+    private async Task UpdateHostAsync(HostState host, CancellationToken token, Func<TimeSpan, CancellationToken, Task>? delay = null)
+    {
+        HostUpdateState state = host.Updates ?? throw new InvalidOperationException("Update-Komponenten wurden nicht vorbereitet.");
+        delay ??= (duration, ct) => Task.Delay(duration, ct);
+        try
+        {
+            for (int attempt = 1; attempt <= 3 && state.Pending != UpdateComponents.None; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+                Mark(host, h => { h.Attempt = attempt; h.Phase = "Update: " + HostUpdateState.Label(state.Pending); h.Error = state.ErrorText; h.Result = "Läuft"; });
+                if (!host.Scanned)
+                {
+                    Mark(host, h => { h.DotNet48Installed = null; h.PosVersion = "–"; });
+                    var probe = await DoWorkerAsync(host, "probe", token);
+                    if (!probe.Success)
+                    {
+                        Mark(host, h => { h.Connection = "Nicht erreichbar"; h.Error = FriendlyError(probe); });
+                        if (attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
+                        continue;
+                    }
+                    Mark(host, h => h.Connection = "Verbunden");
+                    var scan = await DoWorkerAsync(host, "scan", token);
+                    Mark(host, h => ReadScanInventory(h, scan));
+                    if (!scan.Success)
+                    {
+                        Mark(host, h => h.Error = FriendlyError(scan));
+                        if (attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
+                        continue;
+                    }
+                    Mark(host, h => { h.Scanned = true; h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; });
+                }
+                foreach (UpdateComponents component in HostUpdateState.Each(state.Pending).ToArray())
+                {
+                    token.ThrowIfCancellationRequested();
+                    bool retry = state.WasAttempted(component);
+                    Mark(host, h => { h.Phase = "Update: " + HostUpdateState.Label(component); state.BeginComponent(component); });
+                    WorkerResult result;
+                    try { result = await DoWorkerAsync(host, "update", token, component, retry); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex) { result = new WorkerResult { Success = false, Error = ex.Message }; }
+                    Mark(host, h =>
+                    {
+                        if (result.Success)
+                        {
+                            state.Complete(component, result);
+                            h.Services = result.Services.ToList();
+                            ReadVersions(h);
+                            h.Phase = HostUpdateState.Label(component) + ": " + (result.Skipped ? result.Message : "verifiziert");
+                        }
+                        else
+                        {
+                            state.Fail(component, FriendlyError(result));
+                            h.Phase = HostUpdateState.Label(component) + ": Update fehlgeschlagen";
+                        }
+                        h.Error = state.ErrorText;
+                    });
+                }
+                if (state.Pending != UpdateComponents.None && attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
+            }
+            Mark(host, h =>
+            {
+                h.UpdateFailed = state.Pending != UpdateComponents.None;
+                if (h.UpdateFailed)
+                {
+                    h.Result = "Fehler";
+                    h.Phase = "Maximal 3 Versuche: " + HostUpdateState.Label(state.Pending);
+                }
+                else
+                {
+                    h.Error = "";
+                    h.Result = state.AllSkipped ? "Übersprungen" : state.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
+                    h.Phase = state.AllSkipped ? "Keine ausgewählten Dienste installiert – übersprungen" : "Verifiziert";
+                    if (state.Changed) h.SetProgress(100);
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            Mark(host, h => { h.UpdateFailed = state.Pending != UpdateComponents.None; h.Result = "Abgebrochen"; h.Phase = "Update abgebrochen"; });
+            throw;
+        }
     }
 
     private void InvalidateConnectionChecks()
@@ -1470,8 +1530,9 @@ public sealed class MainForm : Form
         {
             try
             {
-                var request=Request("check-upload-directory",host);
+                var request=Request("check-upload-directory",host, forUpdate ? host.Updates?.Pending ?? UpdateComponents.All : UpdateComponents.All);
                 request.CheckUpdateUpload=forUpdate;
+                request.RetryUpdate=forUpdate && host.Updates is { } state && (state.Attempted & state.Pending) != UpdateComponents.None;
                 WorkerResult result=new();
                 for (int attempt=1; attempt <= (forUpdate ? 3 : 1); attempt++)
                 {
@@ -1531,12 +1592,15 @@ public sealed class MainForm : Form
         return targets.Where(checks.ContainsKey).ToArray();
     }
 
-    private async Task<WorkerResult> DoWorkerAsync(HostState host, string action, CancellationToken ct)
+    private async Task<WorkerResult> DoWorkerAsync(HostState host, string action, CancellationToken ct,
+        UpdateComponents components = UpdateComponents.All, bool retryUpdate = false)
     {
-        Log(host.Host, action.ToUpperInvariant() + " gestartet");
+        Log(host.Host, action.ToUpperInvariant() + (action == "update" ? " [" + HostUpdateState.Label(components) + "]" : "") + " gestartet");
         // A running update is not interrupted midway through stop/copy/start.
         // Cancellation prevents new hosts and new attempts, but active updates finish.
-        WorkerResult result = await runner.RunAsync(Request(action, host), ev =>
+        WorkerRequest request = Request(action, host, components);
+        request.RetryUpdate = retryUpdate;
+        WorkerResult result = await runner.RunAsync(request, ev =>
         {
             Log(host.Host, ev.Phase + ": " + ev.Message);
             Mark(host, h => h.ApplyProgress(ev));

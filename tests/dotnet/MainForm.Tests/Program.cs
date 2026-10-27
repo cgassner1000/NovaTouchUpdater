@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using NovaTouchUpdater;
 
-internal static class Program
+internal static partial class Program
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
@@ -13,11 +13,13 @@ internal static class Program
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
+            if (args.Contains("--updates")) { UpdateRetryTests(); return 0; }
             if (!args.Contains("--layout"))
             {
                 FormattingTests();
                 SelectionTests();
                 ScanTests();
+                UpdateRetryTests();
             }
             LayoutTests();
             return 0;

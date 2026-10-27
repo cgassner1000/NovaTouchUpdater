@@ -265,7 +265,8 @@ try {
                 if (-not [bool]$req.SkipZipTransfer) {
                     $inventory=@(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
                     $checkTargets=GetUpdateTargets $req
-                    $force=$null -ne $req.PSObject.Properties['ForceUpdate'] -and [bool]$req.ForceUpdate
+                    $force=($null -ne $req.PSObject.Properties['ForceUpdate'] -and [bool]$req.ForceUpdate) -or
+                        ($null -ne $req.PSObject.Properties['RetryUpdate'] -and [bool]$req.RetryUpdate)
                     $uploadRequired=@(SelectUpdateServices $inventory $checkTargets $force).Count -gt 0
                 }
                 if (-not $uploadRequired) {
@@ -368,9 +369,13 @@ try {
         if ($forceUpdate) {
             Progress 'Force Update' 'Versionsvergleich übersprungen; nur ausgewählte Komponenten werden aktualisiert'
         }
+        $retryUpdate = $null -ne $req.PSObject.Properties['RetryUpdate'] -and [bool]$req.RetryUpdate
+        if ($retryUpdate) {
+            Progress 'Wiederholung' 'Nur die fehlgeschlagene Komponente wird erneut vollständig installiert und verifiziert'
+        }
 
         # Filter VOR ZIP-Uebertragung, Entpacken und jeglichem Dienst-Stopp.
-        $pending = @(SelectUpdateServices $services $targets $forceUpdate)
+        $pending = @(SelectUpdateServices $services $targets ($forceUpdate -or $retryUpdate))
         $suiteInstances = @($pending | Where-Object Kind -eq 'serversuite')
         if ($suiteInstances.Count -gt 0) {
             Progress 'Server-Suite-Instanzen' ("Alle $($suiteInstances.Count) erkannten Instanzen werden berücksichtigt.")

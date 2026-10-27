@@ -406,20 +406,23 @@ try {
     }
 
     foreach ($selectedKind in @('payment','fiscal','serversuite')) {
-        foreach ($force in @($false,$true)) {
-            ResetCase ($selectedKind + '-only-force-' + $force)
+        foreach ($mode in @('normal','force','retry')) {
+            $force = $mode -eq 'force'
+            $retry = $mode -eq 'retry'
+            ResetCase ($selectedKind + '-only-' + $mode)
             Service 'a' 'one'; Service 'b' 'two'; Component 'payment'; Component 'fiscal'
             if ($selectedKind -eq 'serversuite') { Package }
             else { Package @{ 'component.exe'='1.2.3.4'; 'nested/updated.txt'='new' } $selectedKind }
             # Stale version fields without a ZIP must never select another component.
             $script:request.PaymentVersion='1.2.3.4'; $script:request.FiscalVersion='1.2.3.4'
             $script:request.ForceUpdate=$force
+            $script:request.RetryUpdate=$retry
             # Verify the complete update path over custom HTTPS as well as HTTP.
             $script:request.UseSsl=$force; $script:request.HttpsPort=443
             $expectedVersion = if ($selectedKind -eq 'serversuite') { '2026.4.9792.0' } else { '1.2.3.4' }
             $before = @{}
             foreach ($svc in $script:installed) {
-                if ($force -and $svc.Kind -eq $selectedKind) {
+                if (($force -or $retry) -and $svc.Kind -eq $selectedKind) {
                     $versionPath = if ($selectedKind -eq 'serversuite') { Join-Path $svc.InstallDir 'version.txt' } else { $svc.ExePath }
                     WriteFixture $versionPath $expectedVersion
                 }
@@ -452,7 +455,7 @@ try {
                 Assert ([IO.File]::ReadAllText((Join-Path $pythonRoot 'python.exe')) -eq $expectedPython) 'Python must update only with a selected suite ZIP, including Force mode'
                 Assert (Test-Path -LiteralPath (Join-Path $pythonRoot 'obsolete-python.txt')) 'Additional Python files must remain present for every update selection'
             }
-            Passed ("single ZIP updates only $selectedKind (Force=$force), leaving other services and files untouched")
+            Passed ("single ZIP updates only $selectedKind (mode=$mode), leaving other services and files untouched")
         }
     }
     ResetCase 'combined'; Service 'a' 'one'; Component 'payment'; Component 'fiscal'; Package

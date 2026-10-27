@@ -40,6 +40,7 @@ internal sealed class HostState
     public int Attempt { get; set; }
     public bool Scanned { get; set; }
     public bool UpdateFailed { get; set; }
+    public HostUpdateState? Updates { get; set; }
     // Command results preserve the last scan/update retry eligibility. A reboot
     // cannot repair an update failure or introduce a new reason to run an update.
     public bool CanRetryUpdate => UpdateFailed || retryableFailure;

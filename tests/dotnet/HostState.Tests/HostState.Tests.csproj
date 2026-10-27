@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="$(RepositoryRoot)tests/Shared/TestWorkspace.cs" Link="TestWorkspace.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/HostState.cs" Link="HostState.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/HostUpdateState.cs" Link="HostUpdateState.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/ConnectionState.cs" Link="ConnectionState.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Remoting/WorkerRunner.cs" Link="WorkerRunner.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Reporting/HtmlReport.cs" Link="HtmlReport.cs" />
