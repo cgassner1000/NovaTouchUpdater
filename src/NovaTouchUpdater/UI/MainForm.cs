@@ -119,12 +119,12 @@ public sealed partial class MainForm : Form
         updateNotice.LinkClicked += async (_, _) => await UpdateApplicationAsync();
         txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
         txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
-        DpiChanged += (_, _) => BeginInvoke((Action)ApplyColumnWeights);
+        DpiChanged += (_, _) => BeginInvoke((Action)ApplyColumnWidths);
         chkSsl.CheckedChanged += (_, _) => { InvalidateConnectionChecks(); UpdateButtons(); };
         nHttpsPort.ValueChanged += (_, _) => InvalidateConnectionChecks();
         Shown += async (_, _) =>
         {
-            ApplyColumnWeights();
+            ApplyColumnWidths();
             if (preview) return;
             if (!string.IsNullOrWhiteSpace(softwarePath.Text)) await LoadSoftwarePackagesAsync();
             connectionTimer.Start();
@@ -491,7 +491,7 @@ public sealed partial class MainForm : Form
         table.MultiSelect = false;
         table.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         table.ScrollBars = ScrollBars.Vertical;
-        // Breiten erst nach dem fertigen Layout in ApplyColumnWeights berechnen.
+        // Breiten erst nach dem fertigen Layout in ApplyColumnWidths berechnen.
         table.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
         table.RowHeadersVisible = false;
         table.BackgroundColor = Color.White;
@@ -529,23 +529,8 @@ public sealed partial class MainForm : Form
             column.ReadOnly = column.Name != "include";
         }
         table.Columns["include"].ToolTipText = "Host für Remote-Aktionen auswählen";
-        // Die Basisbreiten und Gewichte werden nach dem ersten Layout auf die
-        // tatsächlich verfügbare Fensterbreite verteilt.
-
-        // Mindestbreiten verhindern bei kleinen Fenstern unlesbare Spalten.
-        // ApplyColumnWeights verkleinert das gemeinsame Budget bei schmalen Fenstern.
-        table.Columns["hostname"].MinimumWidth = 160;
-        table.Columns["connection"].MinimumWidth = 112;
-        table.Columns["connection"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
-        table.Columns["dotnet48"].MinimumWidth = 52;
-        table.Columns["payment"].MinimumWidth = 110;
-        table.Columns["fiscal"].MinimumWidth = 110;
-        table.Columns["serversuite"].MinimumWidth = 125;
-        table.Columns["serversuite"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
-        table.Columns["pos"].MinimumWidth = 110;
-        table.Columns["ntc"].MinimumWidth = 110;
-        table.Columns["information"].MinimumWidth = 200;
-        table.Columns["result"].MinimumWidth = 100;
+        // Überschriften und Zellinhalte bestimmen die Breiten nach dem Layout.
+        // Information bekommt als einzige Spalte die verbleibende Breite.
         table.Columns["hostname"].DefaultCellStyle.Font = new Font(Font, FontStyle.Bold);
 
         table.Columns["dotnet48"].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
@@ -570,20 +555,30 @@ public sealed partial class MainForm : Form
             host.IsSelected = selected;
             HostSelectionChanged();
         };
+        table.CellValueChanged += (_, e) =>
+        {
+            if (e.ColumnIndex < 0) return;
+            DataGridViewColumn column = table.Columns[e.ColumnIndex];
+            if (column.Name == "include" || (column.Name == "information" && e.RowIndex >= 0)) return;
+            InvalidateColumnContent(column);
+        };
+        table.RowsAdded += (_, _) => InvalidateColumnContent();
+        table.RowsRemoved += (_, _) => InvalidateColumnContent(clearTextMeasurements: true);
+        table.FontChanged += (_, _) => InvalidateColumnContent(clearTextMeasurements: true);
+        table.ColumnDefaultCellStyleChanged += (_, _) => InvalidateColumnContent();
         table.KeyDown += (_, e) =>
         {
             if (busy || selfUpdating || e.KeyCode != Keys.Space || table.CurrentCell?.ColumnIndex == table.Columns["include"].Index || table.CurrentRow?.Tag is not HostState host) return;
             table.CurrentRow.Cells["include"].Value = !host.IsSelected;
             e.Handled = e.SuppressKeyPress = true;
         };
-        table.ClientSizeChanged += (_, _) => { if (table.IsHandleCreated) ApplyColumnWeights(); };
-        table.VisibleChanged += (_, _) => { if (table.Visible && table.IsHandleCreated) ApplyColumnWeights(); };
+        table.ClientSizeChanged += (_, _) => { if (table.IsHandleCreated) ApplyColumnWidths(); };
+        table.VisibleChanged += (_, _) => { if (table.Visible && table.IsHandleCreated) ApplyColumnWidths(); };
         foreach (VScrollBar scrollbar in table.Controls.OfType<VScrollBar>())
             scrollbar.VisibleChanged += (_, _) =>
             {
                 if (!table.IsHandleCreated) return;
-                if (fittingColumns) table.BeginInvoke((Action)ApplyColumnWeights);
-                else ApplyColumnWeights();
+                QueueColumnSizing();
             };
         table.CellPainting += (_, e) =>
         {
@@ -667,69 +662,6 @@ public sealed partial class MainForm : Form
         card.AutoSize = true;
         card.ResumeLayout(true);
         return card;
-    }
-
-    private void ApplyColumnWeights()
-    {
-        if (fittingColumns || table.Columns.Count == 0 || table.ClientSize.Width <= 0) return;
-        fittingColumns = true;
-        table.SuspendLayout();
-        try
-        {
-            table.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            // Minimum widths are a shared budget, not independent limits that
-            // can push Status outside the viewport. Narrow windows wrap text.
-            int[] preferredMinimums = [0, 140, 104, 76, 90, 90, 112, 128, 128, 220, 94];
-            float scale = table.DeviceDpi / 96F * table.Font.SizeInPoints / 9.5F;
-            int scrollbarWidth = table.Controls.OfType<VScrollBar>().Where(scrollbar => scrollbar.Visible).Sum(scrollbar => scrollbar.Width);
-            int borderWidth = table.BorderStyle == BorderStyle.None ? 0 : SystemInformation.BorderSize.Width * 2;
-            int available = Math.Max(1, table.ClientSize.Width - scrollbarWidth - borderWidth);
-            int checkboxWidth = (int)Math.Ceiling(26 * table.DeviceDpi / 96F);
-            int horizontalPadding = Math.Max(1, (int)(5 * scale));
-            var headerPadding = new Padding(horizontalPadding, (int)(11 * scale), horizontalPadding, (int)(11 * scale));
-            using var graphics = table.CreateGraphics();
-            var widths = table.Columns.Cast<DataGridViewColumn>()
-                .Select((column, index) => Math.Max(preferredMinimums[index] * scale,
-                    ((SizingColumnHeaderCell)column.HeaderCell).SingleLineWidth(graphics, headerPadding))).ToArray();
-            float textWidth = widths.Skip(1).Sum();
-            float fit = Math.Min(1F, Math.Max(0, available - checkboxWidth) / textWidth);
-            horizontalPadding = Math.Max(1, (int)(5 * scale * fit));
-            table.ColumnHeadersDefaultCellStyle.Padding = new Padding(horizontalPadding, (int)(11 * scale), horizontalPadding, (int)(11 * scale));
-            table.ColumnHeadersDefaultCellStyle.WrapMode = fit < 1F ? DataGridViewTriState.True : DataGridViewTriState.False;
-            table.DefaultCellStyle.Padding = new Padding(horizontalPadding, (int)(9 * scale), horizontalPadding, (int)(9 * scale));
-
-            table.Columns["hostname"].FillWeight = 11;
-            table.Columns["connection"].FillWeight = 9;
-            table.Columns["dotnet48"].FillWeight = 5;
-            table.Columns["payment"].FillWeight = 6;
-            table.Columns["fiscal"].FillWeight = 6;
-            table.Columns["serversuite"].FillWeight = 9;
-            table.Columns["pos"].FillWeight = 10;
-            table.Columns["ntc"].FillWeight = 10;
-            table.Columns["information"].FillWeight = 32;
-            table.Columns["result"].FillWeight = 8;
-
-            // Allocate a shared pixel budget explicitly. Native Fill can defer
-            // redistribution during layout and leave Status outside the viewport.
-            float remaining = Math.Max(0, available - checkboxWidth - textWidth * fit);
-            float weightSum = table.Columns.Cast<DataGridViewColumn>().Skip(1).Sum(column => column.FillWeight);
-            int allocated = 0;
-            for (int index = 0; index < table.Columns.Count; index++)
-            {
-                DataGridViewColumn column = table.Columns[index];
-                column.AutoSizeMode = DataGridViewAutoSizeColumnMode.NotSet;
-                column.MinimumWidth = index == 0 ? checkboxWidth : Math.Max(2, (int)(widths[index] * fit));
-                column.Width = index == 0 ? checkboxWidth : index == table.Columns.Count - 1 ? available - allocated
-                    : Math.Max(column.MinimumWidth, (int)(widths[index] * fit + remaining * column.FillWeight / weightSum));
-                allocated += column.Width;
-            }
-            table.HorizontalScrollingOffset = 0;
-        }
-        finally
-        {
-            table.ResumeLayout(true);
-            fittingColumns = false;
-        }
     }
 
     private static Control PanelRow(Button btn, Label lbl)

@@ -16,6 +16,7 @@ internal static partial class Program
             if (args.Contains("--updates")) { UpdateRetryTests(); return 0; }
             if (args.Contains("--staging")) { PackageStagingTests(); return 0; }
             if (args.Contains("--local")) { Complete(PackageCatalogTests()); LocalExecutionTests(); return 0; }
+            if (args.Contains("--columns")) { ColumnSizingTests(); return 0; }
             if (!args.Contains("--layout"))
             {
                 FormattingTests();
@@ -25,6 +26,7 @@ internal static partial class Program
                 Complete(PackageCatalogTests());
                 LocalExecutionTests();
                 PackageStagingTests();
+                ColumnSizingTests();
             }
             LayoutTests();
             return 0;
@@ -234,7 +236,7 @@ internal static partial class Program
                 canvas.CreateControl();
                 foreach (Control control in All(canvas)) _ = control.Handle;
                 for (int pass = 0; pass < 5; pass++) Layout(canvas);
-                Call(form, "ApplyColumnWeights");
+                Call(form, "ApplyColumnWidths");
                 for (int pass = 0; pass < 3; pass++) Layout(canvas);
                 Application.DoEvents();
                 Rectangle checkbox = table.Rows[0].Cells["include"].ContentBounds;

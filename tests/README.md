@@ -32,6 +32,8 @@ dotnet run --project tests\dotnet\HostState.Tests\HostState.Tests.csproj -c Rele
 
 `MainForm.Tests` prüft die Hostauswahl, den Erhalt beim Filtern und Sortieren, die Sperre während eines Durchlaufs sowie die Spaltenbreiten bei 100–200 % Skalierung. Zusätzlich werden die Zelltypen beim Neuaufbau und bei kurzzeitig leeren Checkboxen geprüft; `--formatting` führt nur diese Formatierungsprüfung aus. `LdapSearch.Tests` prüft auch die Checkbox-Formatierung der Domänensuche. Die tatsächlichen Prüf- und Überwachungsabläufe erhalten dabei simulierte Worker; weder die persönliche Config noch reale Hosts werden verwendet.
 
+`MainForm.Tests --columns` prüft die automatische Anpassung an längere und wieder kürzere Hostnamen und Versionen, Zeilen außerhalb des sichtbaren Ausschnitts sowie das Entfernen langer Werte. Auch geprüft: Nur „Information“ bekommt zusätzlichen Platz beim Vergrößern des Fensters; ihr Text und Fortschritt beeinflussen die anderen Spalten nicht. Bei überlangen Zellinhalten bleiben die Überschriften und die rechte Statusspalte sichtbar. `--layout` prüft zusätzlich das gesamte Fenster bei 100–200 % Skalierung und schmaler Fensterbreite.
+
 ```powershell
 dotnet run --project tests\dotnet\MainForm.Tests\MainForm.Tests.csproj -c Release
 ```

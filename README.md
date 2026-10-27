@@ -300,13 +300,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\UploadD
 
 **Lokal** benötigt kein WinRM. Für entfernte Zielhosts wird weiterhin WinRM verwendet. Andere Remote-Transporte sind nicht implementiert.
 
-## Spaltenbreiten selbst ändern
+## Dynamische Spaltenbreiten
 
-**Datei:** `src/NovaTouchUpdater/UI/MainForm.cs`, Methode **`ApplyColumnWeights()`**.
+**Datei:** `src/NovaTouchUpdater/UI/MainForm.TableColumns.cs`, Methode **`ApplyColumnWidths()`**.
 
-Die erste Spalte hat keine Überschrift und bleibt fest auf Checkbox-Breite (26 Pixel bei 100 %, passend zur DPI skaliert). Die Basisbreiten unter `preferredMinimums` und die gemessenen, einzeiligen Überschriften bestimmen den gemeinsamen Mindestbedarf der übrigen Spalten. Der restliche Platz wird nach den `FillWeight`-Werten verteilt: `hostname=11`, `connection=9`, `dotnet48=5`, `payment=6`, `fiscal=6`, `serversuite=9`, `pos=10`, `ntc=10`, `information=32`, `result=8`. Diese Werte verteilen den zusätzlich verfügbaren Platz, sie sind keine festen Prozentanteile der gesamten Tabelle. **Status** reicht bis zum rechten Tabellenrand; Platz für die senkrechte Scrollleiste wird nur bei sichtbarer Scrollleiste abgezogen.
+Die Spalten passen sich automatisch an die Überschrift und den längsten enthaltenen Wert an, einschließlich der Zeilen außerhalb des sichtbaren Ausschnitts. Zur Textbreite kommen Zellinnenabstand und ein kleiner zusätzlicher Abstand (`gap`, 6 Pixel bei 100 %). Ändern sich Werte oder werden Zeilen entfernt bzw. gefiltert, werden die Breiten neu berechnet und können auch wieder schrumpfen. Die erste Spalte bleibt ohne Überschrift auf Checkbox-Breite (26 Pixel bei 100 %, passend zur DPI skaliert).
 
-Reicht die Fensterbreite nicht aus, wird das gemeinsame Breitenbudget verkleinert und der Text umgebrochen. Die Spaltenbreiten werden direkt berechnet, damit die rechte Spalte **Status** auch nach Größenänderungen im sichtbaren Bereich bleibt. Das HTML-Layout wird getrennt in `src/NovaTouchUpdater/Reporting/HtmlReport.cs` über CSS gesteuert.
+Nur **Information** erhält die gesamte übrige Breite; ihr Inhalt beeinflusst die Spaltenverteilung nicht. **Status** bleibt am rechten Tabellenrand sichtbar. Reicht der Platz für außergewöhnlich lange Werte nicht aus, werden diese umgebrochen; die Überschriften behalten ihre Mindestbreite. Erst bei einem Fenster, in dem schon die einzeiligen Überschriften nicht mehr nebeneinander passen, werden auch diese umgebrochen. Platz für die senkrechte Scrollleiste wird nur bei sichtbarer Scrollleiste abgezogen. Das HTML-Layout wird getrennt in `src/NovaTouchUpdater/Reporting/HtmlReport.cs` über CSS gesteuert.
 ### Windows-Release-Build
 
 Die Basisversion wird ausschließlich in **`version.txt`** im Projektordner geändert. Die Datei enthält eine Anleitung; die mit `#` beginnenden Beschreibungszeilen werden beim Einlesen ignoriert. Nur die Zahl in der letzten Zeile ändern: beispielsweise `1.1` für die Reihe `1.1.x` oder `1.2` für `1.2.x`. Lokale Builds erhalten damit die Version `1.1.0`. Bei GitHub-Releases wird die fortlaufende Workflow-Laufnummer angehängt, beispielsweise `1.1.123`. Die Laufnummer beginnt beim Wechsel der Basisversion nicht erneut bei null. EXE-Dateiname und Release-Tag werden aus der eingebetteten EXE-Version übernommen; weitere Dateien müssen für einen Versionswechsel nicht geändert werden.
