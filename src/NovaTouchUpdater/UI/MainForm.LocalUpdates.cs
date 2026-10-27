@@ -24,7 +24,7 @@ public sealed partial class MainForm
         selector.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         selector.Controls.Add(softwarePath, 0, 0);
         selector.Controls.Add(FlowRow(browseSoftware, readPackages), 1, 0);
-        var card = Section("Lokales Update", Stack(new Label
+        var card = Section("Installations-Pakete", Stack(new Label
         {
             Text = "Softwareordner mit ZIP- und MSI-Paketen:", AutoSize = true, Dock = DockStyle.Fill
         }, selector, packageStatus));
