@@ -34,6 +34,8 @@ dotnet run --project tests\dotnet\HostState.Tests\HostState.Tests.csproj -c Rele
 
 `MainForm.Tests --columns` prüft die automatische Anpassung an längere und wieder kürzere Hostnamen und Versionen, Zeilen außerhalb des sichtbaren Ausschnitts sowie das Entfernen langer Werte. Auch geprüft: Nur „Information“ bekommt zusätzlichen Platz beim Vergrößern des Fensters; ihr Text und Fortschritt beeinflussen die anderen Spalten nicht. Bei überlangen Zellinhalten bleiben die Überschriften und die rechte Statusspalte sichtbar. `--layout` prüft zusätzlich das gesamte Fenster bei 100–200 % Skalierung und schmaler Fensterbreite.
 
+`MainForm.Tests --parallel` prüft den Prüfablauf mit gezielt angehaltenen simulierten Verbindungen und Versionsabfragen. Ein bereits verbundener Host muss Versionen lesen und fertig werden können, während eine andere Verbindung noch wartet. Geprüft werden außerdem die gemeinsame Parallelitätsgrenze für beide Schritte, sofortige Ergebnisse, unabhängige Verbindungs- und Lesefehler, einmaliger Fortschritt je Host, die Hostauswahl sowie Abbruch ohne Start weiterer Schritte oder Hosts. Die Hintergrundüberwachung wird nach dem Durchlauf wieder freigegeben. Es werden keine echten Verbindungen aufgebaut oder Pakete übertragen.
+
 ```powershell
 dotnet run --project tests\dotnet\MainForm.Tests\MainForm.Tests.csproj -c Release
 ```

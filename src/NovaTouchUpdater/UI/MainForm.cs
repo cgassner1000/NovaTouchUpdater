@@ -1218,9 +1218,12 @@ public sealed partial class MainForm : Form
     private async Task RunScanPhaseAsync(HostState[] targets)
     {
         CaptureCredentials();
+        int parallelism = (int)nScan.Value;
         await InBatchAsync(targets, async ct =>
         {
-            await ParallelPhaseAsync(targets, (int)nScan.Value, async (host, token) =>
+            // Each slot owns one host from connection through inventory. A slow
+            // connection must not hold up version reads on other connected hosts.
+            await ParallelPhaseAsync(targets, parallelism, async (host, token) =>
             {
                 Mark(host, h =>
                 {
@@ -1235,14 +1238,14 @@ public sealed partial class MainForm : Form
                     h.Error = result.Success ? "" : FriendlyError(result);
                     h.Result = result.Success ? "Offen" : "Fehler";
                 });
-                CountCompleted();
-            }, ct);
-            if (ct.IsCancellationRequested) return;
-            ResetProgress(targets.Count(h => h.Connection is "Verbunden" or "Lokal"));
-            await ParallelPhaseAsync(targets.Where(h => h.Connection is "Verbunden" or "Lokal").ToArray(), (int)nScan.Value, async (host, token) =>
-            {
+                if (!result.Success)
+                {
+                    CountCompleted();
+                    return;
+                }
+                token.ThrowIfCancellationRequested();
                 Mark(host, h => h.Phase = "Versionen werden gelesen");
-                var result = await DoWorkerAsync(host, "scan", token);
+                result = await DoWorkerAsync(host, "scan", token);
                 Mark(host, h =>
                 {
                     h.Scanned = result.Success;

@@ -17,11 +17,13 @@ internal static partial class Program
             if (args.Contains("--staging")) { PackageStagingTests(); return 0; }
             if (args.Contains("--local")) { Complete(PackageCatalogTests()); LocalExecutionTests(); return 0; }
             if (args.Contains("--columns")) { ColumnSizingTests(); return 0; }
+            if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
             if (!args.Contains("--layout"))
             {
                 FormattingTests();
                 SelectionTests();
                 ScanTests();
+                ScanPipelineTests();
                 UpdateRetryTests();
                 Complete(PackageCatalogTests());
                 LocalExecutionTests();
