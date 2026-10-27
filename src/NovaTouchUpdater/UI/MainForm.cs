@@ -514,9 +514,9 @@ public sealed partial class MainForm : Form
         table.Columns["connection"].CellTemplate = new StatusBadgeCell();
         table.Columns["connection"].ToolTipText = "Automatische WinRM-Prüfung ca. alle 10 Sekunden. Letzte Prüfung und Fehlerdetails stehen im Tooltip des Hosts.";
         table.Columns.Add("dotnet48", ".NET 4.8");
-        table.Columns.Add("payment", "Payment");
-        table.Columns.Add("fiscal", "Fiscal");
-        table.Columns.Add("serversuite", "Server Suite");
+        table.Columns.Add("payment", "Nt.Payment");
+        table.Columns.Add("fiscal", "Nt.Fiskal");
+        table.Columns.Add("serversuite", "NT3.Server.Suite");
         table.Columns.Add("pos", "NovaTouch POS");
         table.Columns.Add("ntc", "NovaTouch NTC");
         table.Columns.Add("information", "Information");
