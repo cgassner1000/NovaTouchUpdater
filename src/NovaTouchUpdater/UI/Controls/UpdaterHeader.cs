@@ -20,7 +20,7 @@ internal sealed class UpdaterHeader : TableLayoutPanel
         RowStyles.Add(new RowStyle(SizeType.AutoSize));
         RowStyles.Add(new RowStyle(SizeType.AutoSize));
         RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        Margin = new Padding(0, 0, 0, 22);
+        Margin = new Padding(0, 0, 0, 8);
         var mark = new AppMark { Margin = new Padding(0, 4, 14, 0) };
         Controls.Add(mark, 0, 0);
         SetRowSpan(mark, 2);
