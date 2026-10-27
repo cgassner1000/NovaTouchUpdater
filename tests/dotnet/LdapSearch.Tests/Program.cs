@@ -1,6 +1,6 @@
 using NovaTouchUpdater;
 
-internal static class Program
+internal static partial class Program
 {
     [STAThread]
     private static int Main()
@@ -11,6 +11,7 @@ internal static class Program
             FilterTests();
             NetworkSearchTests.Run().GetAwaiter().GetResult();
             ProtocolTests().GetAwaiter().GetResult();
+            StreamingProtocolTests().GetAwaiter().GetResult();
             FormattingTests();
             DialogTests();
             NetworkDialogTests();
@@ -35,8 +36,9 @@ internal static class Program
     }
 
     private static LdapComputerSearchDialog DomainDialog(Func<LdapSearchRequest, CancellationToken, Task<LdapSearchResult>> search) =>
-        new(new ComputerDiscovery(directorySearch: search, domainAvailable: _ => Task.FromResult(true),
-            networkSearch: (_, _, _) => throw new InvalidOperationException("Domain-only tests must not scan a real network")));
+        new(new ComputerDiscovery(directorySearch: (request, ct, _) => search(request, ct), domainAvailable: _ => Task.FromResult(true),
+            networkSearch: (_, _, _, _) => throw new InvalidOperationException("Domain-only tests must not scan a real network"),
+            resolveAddress: (_, _) => Task.FromResult("")));
 
     private static void FormattingTests()
     {
@@ -202,15 +204,15 @@ internal static class Program
         using var uiContext = new WindowsFormsSynchronizationContext();
         NetworkSearchRequest? observed = null;
         var discovery = new ComputerDiscovery(
-            directorySearch: (_, _) => throw new InvalidOperationException("Workgroup dialog must not query LDAP"),
+            directorySearch: (_, _, _) => throw new InvalidOperationException("Workgroup dialog must not query LDAP"),
             domainAvailable: _ => Task.FromResult(false),
-            networkSearch: (request, progress, _) =>
+            networkSearch: (request, progress, _, _) =>
             {
                 observed = request;
                 progress?.Report("Lokales Netzwerk: 2 / 2 Adressen geprüft · 2 Treffer");
                 return Task.FromResult(new LdapSearchResult(true, [
-                    new("PC01-RST-POS-01", "", "", "IP-Adresse: 192.0.2.1"),
-                    new("PC02-RST-POS-02", "", "", "IP-Adresse: 192.0.2.2")
+                    new("PC01-RST-POS-01", "", "", "", "192.0.2.1"),
+                    new("PC02-RST-POS-02", "", "", "", "192.0.2.2")
                 ], "Lokales Netzwerk: 192.0.2.0/30", false, ""));
             });
         using var dialog = new LdapComputerSearchDialog(discovery);
@@ -259,8 +261,8 @@ internal static class Program
             bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "network-search-dialog.png"));
         }
         using var waiting = new LdapComputerSearchDialog(new ComputerDiscovery(domainAvailable: _ => Task.FromResult(false),
-            directorySearch: (_, _) => throw new InvalidOperationException("Cancellation test must not query LDAP"),
-            networkSearch: async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); }));
+            directorySearch: (_, _, _) => throw new InvalidOperationException("Cancellation test must not query LDAP"),
+            networkSearch: async (_, _, ct, _) => { await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); }));
         _ = waiting.Handle;
         var waitingControls = All(waiting).Where(c => c.Name.Length > 0).ToDictionary(c => c.Name);
         SynchronizationContext.SetSynchronizationContext(uiContext);
@@ -271,10 +273,12 @@ internal static class Program
         Complete(running);
         Assert(waitingControls["searchStatus"].Text.Contains("abgebrochen") && waitingControls["searchSource"].Enabled && !waitingControls["import"].Enabled,
             "cancelling local discovery restores the dialog without selectable partial results");
+        StreamingDialogTests(uiContext);
         // Closing the last dialog uninstalls the WinForms synchronization context;
         // finish asynchronous UI tests before exercising the actual import/close.
         import.PerformClick();
         Assert(dialog.SelectedHosts.SequenceEqual(new[] { "PC01-RST-POS-01" }), "importing network results transfers only the checked hosts");
+        SynchronizationContext.SetSynchronizationContext(null);
     }
 
     private static void SelectionInteractionTests()

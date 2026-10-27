@@ -90,14 +90,14 @@ internal static class NetworkSearchTests
         bool joined = false, missing = false, denied = false;
         int ldap = 0, network = 0, detection = 0;
         var discovery = new ComputerDiscovery(
-            directorySearch: (_, _) =>
+            directorySearch: (_, _, _) =>
             {
                 ldap++;
                 if (missing) throw new LdapDomainUnavailableException("No domain found");
                 if (denied) throw new UnauthorizedAccessException("LDAP denied");
                 return Task.FromResult(new LdapSearchResult(true, [], "DC=example,DC=test", false, ""));
             },
-            networkSearch: (request, _, _) =>
+            networkSearch: (request, _, _, _) =>
             {
                 network++;
                 Assert(request.Pattern == "PC*-RST-POS-*" && request.Range == "192.0.2.0/24", "automatic fallback retains the entered name pattern and IP range");

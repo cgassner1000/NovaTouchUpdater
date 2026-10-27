@@ -93,6 +93,15 @@ $createEntry = {
 $createSearcher = { param($entry) return $script:fixture.Searcher }
 $request = [pscustomobject]@{ Domain=''; SearchBase=''; Filter='(&(objectCategory=computer)(name=CUSTOM-*))' }
 
+$script:fixture = New-Fixture 3
+$script:liveComputers = [Collections.Generic.List[string]]::new()
+$liveResult = Invoke-DirectoryComputerSearch $request -CreateEntry $createEntry -CreateSearcher $createSearcher -MaximumResults 2 -OnComputer {
+    param($computer)
+    Assert (-not $script:fixture.Searcher.Disposed) 'computer callback runs before search completion and cleanup'
+    $script:liveComputers.Add([string]$computer.Name)
+}
+Assert ($script:liveComputers.Count -eq 2 -and $liveResult.Computers.Count -eq 2 -and $liveResult.Truncated) 'live callbacks stream only accepted results and retain the result limit and final summary'
+
 $script:fixture = New-Fixture 1201
 $result = Invoke-DirectoryComputerSearch $request -CreateEntry $createEntry -CreateSearcher $createSearcher
 Assert ($result.Success -and $result.Computers.Count -eq 1201 -and -not $result.Truncated) 'paged search returns more than the usual 1000 AD entries without silently truncating'

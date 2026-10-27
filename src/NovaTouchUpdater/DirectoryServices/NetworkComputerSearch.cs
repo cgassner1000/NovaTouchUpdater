@@ -61,7 +61,7 @@ internal sealed class NetworkComputerSearch
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.NonBacktracking, TimeSpan.FromMilliseconds(100));
     }
 
-    internal async Task<LdapSearchResult> SearchAsync(NetworkSearchRequest request, IProgress<string>? progress, CancellationToken ct)
+    internal async Task<LdapSearchResult> SearchAsync(NetworkSearchRequest request, IProgress<string>? progress, CancellationToken ct, IProgress<LdapComputer>? found = null)
     {
         ct.ThrowIfCancellationRequested();
         Regex pattern = NamePattern(request.Pattern);
@@ -89,7 +89,12 @@ internal sealed class NetworkComputerSearch
                 if (computer is not null)
                 {
                     if (IPAddress.TryParse(computer.Name, out _)) unnamed++;
-                    if (pattern.IsMatch(computer.Name)) computers.Add(computer);
+                    if (pattern.IsMatch(computer.Name))
+                    {
+                        computer = computer with { IpAddress = address.ToString() };
+                        computers.Add(computer);
+                        found?.Report(computer);
+                    }
                 }
                 progress?.Report($"Lokales Netzwerk: {++completed} / {addresses.Count} Adressen geprüft · {computers.Count} Treffer");
             }
@@ -117,7 +122,7 @@ internal sealed class NetworkComputerSearch
         if (!ping.Result && netbios.Result is null) return null;
         string? dnsName = dns.Result;
         string name = netbios.Result ?? dnsName?.Split('.')[0] ?? address.ToString();
-        return new(name, dnsName ?? "", "", $"IP-Adresse: {address}" + (name == address.ToString() ? " · Name nicht ermittelbar" : ""));
+        return new(name, dnsName ?? "", "", name == address.ToString() ? "Name nicht ermittelbar" : "", address.ToString());
     }
 
     private static async Task<bool> PingAsync(IPAddress address, CancellationToken ct)

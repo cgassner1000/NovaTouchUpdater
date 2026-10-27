@@ -25,6 +25,7 @@ internal sealed class LdapComputerSearchDialog : Form
     private CancellationTokenSource? pending;
     private bool changingRows;
     private bool stale = true;
+    private readonly Dictionary<string, DataGridViewRow> resultRows = new(StringComparer.OrdinalIgnoreCase);
 
     internal string[] SelectedHosts { get; private set; } = [];
 
@@ -107,7 +108,7 @@ internal sealed class LdapComputerSearchDialog : Form
             Name = "include", HeaderText = "Auswahl", AutoSizeMode = DataGridViewAutoSizeColumnMode.DisplayedCells,
             DefaultCellStyle = new DataGridViewCellStyle { NullValue = false, Padding = Padding.Empty, Alignment = DataGridViewContentAlignment.MiddleCenter }
         });
-        foreach (var column in new[] { ("name", "Computer"), ("dns", "DNS-Name"), ("os", "Betriebssystem"), ("description", "Beschreibung") })
+        foreach (var column in new[] { ("name", "Computer"), ("ip", "IP-Adresse"), ("os", "Betriebssystem"), ("description", "Beschreibung") })
             results.Columns.Add(new DataGridViewTextBoxColumn { Name = column.Item1, HeaderText = column.Item2, ReadOnly = true, SortMode = DataGridViewColumnSortMode.Automatic });
         layout.Controls.Add(results, 0, 4);
         status.Margin = new Padding(3, 8, 3, 8);
@@ -175,36 +176,39 @@ internal sealed class LdapComputerSearchDialog : Form
         using var cancellation = new CancellationTokenSource();
         pending = cancellation;
         results.Rows.Clear();
+        resultRows.Clear();
         stale = true;
         SetSearching(true);
         SetStatus("Suche wird vorbereitet …", false);
-        var progress = new SearchProgress(message =>
+        void PostUpdate(Action update)
         {
             if (IsDisposed || !IsHandleCreated) return;
             try
             {
                 BeginInvoke((Action)(() =>
                 {
-                    if (!IsDisposed && ReferenceEquals(pending, cancellation) && !cancellation.IsCancellationRequested) SetStatus(message, false);
+                    if (!IsDisposed && ReferenceEquals(pending, cancellation) && !cancellation.IsCancellationRequested) update();
                 }));
             }
             catch (InvalidOperationException) { /* Dialog is closing. */ }
-        });
+        }
+        var progress = new SearchProgress(message => PostUpdate(() => SetStatus(message, false)));
+        var found = new ComputerProgress(computer => PostUpdate(() =>
+        {
+            ShowComputer(computer);
+            SetStatus($"{results.Rows.Count} Computer / Geräte gefunden · Suche läuft …", false);
+        }));
         try
         {
-            var result = await discovery.SearchAsync(options, progress, cancellation.Token);
+            var result = await discovery.SearchAsync(options, progress, cancellation.Token, found);
             cancellation.Token.ThrowIfCancellationRequested();
             if (IsDisposed) return;
             if (!result.Success) throw new InvalidOperationException(result.Error);
             changingRows = true;
             try
             {
-                foreach (LdapComputer computer in result.Computers ?? [])
-                {
-                    if (string.IsNullOrWhiteSpace(computer.Host) || computer.Host.Any(char.IsWhiteSpace)) continue;
-                    int row = results.Rows.Add(false, computer.Name, computer.DnsName, computer.OperatingSystem, computer.Description);
-                    results.Rows[row].Tag = computer;
-                }
+                foreach (LdapComputer computer in result.Computers ?? []) ShowComputer(computer);
+                results.Sort(results.Columns["name"], System.ComponentModel.ListSortDirection.Ascending);
             }
             finally { changingRows = false; }
             stale = false;
@@ -222,6 +226,31 @@ internal sealed class LdapComputerSearchDialog : Form
     }
 
     internal void CancelSearch() => pending?.Cancel();
+
+    private void ShowComputer(LdapComputer computer)
+    {
+        if (string.IsNullOrWhiteSpace(computer.Host) || computer.Host.Any(char.IsWhiteSpace)) return;
+        bool wasChanging = changingRows;
+        changingRows = true;
+        try
+        {
+            if (!resultRows.TryGetValue(computer.Host, out var row))
+            {
+                row = results.Rows[results.Rows.Add(false, computer.Name, "", computer.OperatingSystem, computer.Description)];
+                resultRows.Add(computer.Host, row);
+            }
+            if (row.Tag is LdapComputer previous && !string.IsNullOrWhiteSpace(previous.IpAddress))
+                computer = computer with { IpAddress = string.Join(", ", (previous.IpAddress + "," + computer.IpAddress)
+                    .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.OrdinalIgnoreCase)) };
+            row.Tag = computer;
+            row.Cells["name"].Value = computer.Name;
+            row.Cells["os"].Value = computer.OperatingSystem;
+            row.Cells["description"].Value = computer.Description;
+            row.Cells["ip"].Value = string.IsNullOrWhiteSpace(computer.IpAddress) ? "–" : computer.IpAddress;
+            row.Cells["ip"].ToolTipText = string.IsNullOrWhiteSpace(computer.IpAddress) ? "Keine IP-Adresse ermittelt. Der Computer kann trotzdem übernommen werden." : computer.IpAddress;
+        }
+        finally { changingRows = wasChanging; }
+    }
 
     internal void SetAllSelected(bool value)
     {
@@ -254,7 +283,9 @@ internal sealed class LdapComputerSearchDialog : Form
     {
         find.Enabled = !active;
         stop.Enabled = active;
-        source.Enabled = modes.Enabled = results.Enabled = !active;
+        source.Enabled = modes.Enabled = !active;
+        results.Enabled = true;
+        results.Columns["include"].ReadOnly = active;
         UpdateScopeControls();
         UpdateSelection();
     }
@@ -284,6 +315,10 @@ internal sealed class LdapComputerSearchDialog : Form
     private sealed class SearchProgress(Action<string> report) : IProgress<string>
     {
         public void Report(string value) => report(value);
+    }
+    private sealed class ComputerProgress(Action<LdapComputer> report) : IProgress<LdapComputer>
+    {
+        public void Report(LdapComputer value) => report(value);
     }
     private static FlowLayoutPanel Flow(params Control[] controls)
     {

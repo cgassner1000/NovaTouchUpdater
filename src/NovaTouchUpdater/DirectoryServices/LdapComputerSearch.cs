@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace NovaTouchUpdater;
 
-internal sealed record LdapComputer(string Name, string DnsName, string OperatingSystem, string Description)
+internal sealed record LdapComputer(string Name, string DnsName, string OperatingSystem, string Description, string IpAddress = "")
 {
     public string Host => string.IsNullOrWhiteSpace(DnsName) ? Name : DnsName;
 }
@@ -67,7 +67,7 @@ internal static class LdapComputerQuery
 
 internal static class LdapComputerSearch
 {
-    internal static async Task<LdapSearchResult> SearchAsync(LdapSearchRequest request, CancellationToken cancellationToken)
+    internal static async Task<LdapSearchResult> SearchAsync(LdapSearchRequest request, CancellationToken cancellationToken, IProgress<LdapComputer>? computers = null)
     {
         LdapComputerQuery.ValidateFilter(request.Filter);
         string directory = Path.Combine(Path.GetTempPath(), "NovaTouchUpdater");
@@ -94,7 +94,7 @@ internal static class LdapComputerSearch
                 process.StartInfo.ArgumentList.Add(argument);
             started = process.Start();
             if (!started) throw new InvalidOperationException("Die Domänensuche konnte nicht gestartet werden.");
-            Task<string> output = process.StandardOutput.ReadToEndAsync();
+            Task<LdapSearchResult?> output = ReadResultsAsync(process.StandardOutput, computers, timeout.Token);
             Task<string> errors = process.StandardError.ReadToEndAsync();
             await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request).AsMemory(), timeout.Token);
             process.StandardInput.Close();
@@ -103,16 +103,15 @@ internal static class LdapComputerSearch
             {
                 if (!process.HasExited) process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync(CancellationToken.None);
-                await Task.WhenAll(output, errors);
+                try { await output; } catch (OperationCanceledException) { }
+                await errors;
                 cancellationToken.ThrowIfCancellationRequested();
                 throw new TimeoutException("Die Domänensuche hat das Zeitlimit überschritten. Bitte Verbindung, Domäne und Suchfilter prüfen.");
             }
-            string json = await output;
             string error = await errors;
             if (process.ExitCode != 0) throw new InvalidOperationException("Die Domänensuche wurde nicht abgeschlossen. " + error.Trim());
             LdapSearchResult result;
-            try { result = JsonSerializer.Deserialize<LdapSearchResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                ?? throw new JsonException(); }
+            try { result = await output ?? throw new JsonException(); }
             catch (JsonException) { throw new InvalidOperationException("Die Domänensuche hat keine gültige Antwort geliefert. " + error.Trim()); }
             if (!result.Success)
             {
@@ -126,5 +125,27 @@ internal static class LdapComputerSearch
             if (started && !process.HasExited) { process.Kill(entireProcessTree: true); process.WaitForExit(5000); }
             try { File.Delete(script); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         }
+    }
+
+    internal static async Task<LdapSearchResult?> ReadResultsAsync(TextReader reader, IProgress<LdapComputer>? computers, CancellationToken ct)
+    {
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        LdapSearchResult? result = null;
+        while (await reader.ReadLineAsync(ct).ConfigureAwait(false) is { } line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            using var json = JsonDocument.Parse(line);
+            if (json.RootElement.TryGetProperty("Event", out var kind) && kind.GetString() == "computer")
+            {
+                LdapComputer computer = json.RootElement.GetProperty("Computer").Deserialize<LdapComputer>(options) ?? throw new JsonException();
+                computers?.Report(computer);
+            }
+            else
+            {
+                if (result is not null) throw new JsonException("Mehrere abschließende Suchergebnisse empfangen.");
+                result = json.RootElement.Deserialize<LdapSearchResult>(options) ?? throw new JsonException();
+            }
+        }
+        return result;
     }
 }

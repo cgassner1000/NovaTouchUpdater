@@ -37,7 +37,8 @@ function Invoke-DirectoryComputerSearch {
             New-DirectorySearchEntry $path
         },
         [scriptblock]$CreateSearcher = { param($entry) [DirectoryServices.DirectorySearcher]::new($entry) },
-        [ValidateRange(1,10000)][int]$MaximumResults = 10000
+        [ValidateRange(1,10000)][int]$MaximumResults = 10000,
+        [scriptblock]$OnComputer
     )
     $ErrorActionPreference = 'Stop'
     $domain = ([string]$Request.Domain).Trim()
@@ -93,9 +94,11 @@ function Invoke-DirectoryComputerSearch {
             if (-not $hostName) { $hostName = $values.name }
             if (-not $hostName -or $hostName -match '\s' -or -not $seen.Add($hostName)) { continue }
             if ($computers.Count -ge $MaximumResults) { $truncated = $true; break }
-            $computers.Add([pscustomobject]@{
+            $computer = [pscustomobject]@{
                 Name=$values.name; DnsName=$values.dnshostname; OperatingSystem=$values.operatingsystem; Description=$values.description
-            })
+            }
+            $computers.Add($computer)
+            if ($null -ne $OnComputer) { $null = & $OnComputer $computer }
         }
         [pscustomobject]@{ Success=$true; Computers=@($computers | Sort-Object Name,DnsName); SearchBase=$base; Truncated=$truncated; Error='' }
     } catch {
@@ -127,8 +130,13 @@ if (-not $LibraryOnly) {
     try {
         Add-Type -AssemblyName System.DirectoryServices
         $request = [Console]::In.ReadLine() | ConvertFrom-Json
-        $result = Invoke-DirectoryComputerSearch -Request $request
+        $result = Invoke-DirectoryComputerSearch -Request $request -OnComputer {
+            param($computer)
+            [Console]::Out.WriteLine((@{ Event='computer'; Computer=$computer } | ConvertTo-Json -Depth 4 -Compress))
+            [Console]::Out.Flush()
+        }
         $result | ConvertTo-Json -Depth 6 -Compress | ForEach-Object { [Console]::Out.WriteLine($_) }
+        [Console]::Out.Flush()
     } catch {
         $failure = $_.Exception
         $domainUnavailable = $false
