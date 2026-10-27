@@ -9,9 +9,11 @@ internal static class Program
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             FilterTests();
+            NetworkSearchTests.Run().GetAwaiter().GetResult();
             ProtocolTests().GetAwaiter().GetResult();
             FormattingTests();
             DialogTests();
+            NetworkDialogTests();
             SelectionInteractionTests();
             LayoutTests();
             return 0;
@@ -32,9 +34,13 @@ internal static class Program
         throw new InvalidOperationException(message);
     }
 
+    private static LdapComputerSearchDialog DomainDialog(Func<LdapSearchRequest, CancellationToken, Task<LdapSearchResult>> search) =>
+        new(new ComputerDiscovery(directorySearch: search, domainAvailable: _ => Task.FromResult(true),
+            networkSearch: (_, _, _) => throw new InvalidOperationException("Domain-only tests must not scan a real network")));
+
     private static void FormattingTests()
     {
-        using var dialog = new LdapComputerSearchDialog((_, _) => throw new InvalidOperationException("Formatting test must not query a domain"));
+        using var dialog = DomainDialog((_, _) => throw new InvalidOperationException("Formatting test must not query a domain"));
         var grid = All(dialog).OfType<DataGridView>().Single();
         var errors = new List<string>();
         grid.DataError += (_, e) => { errors.Add(e.Exception?.ToString() ?? e.Context.ToString()); e.ThrowException = false; };
@@ -103,7 +109,7 @@ internal static class Program
     {
         LdapSearchRequest? observed = null;
         int searches = 0;
-        using var dialog = new LdapComputerSearchDialog((request, _) =>
+        using var dialog = DomainDialog((request, _) =>
         {
             searches++; observed = request;
             return Task.FromResult(new LdapSearchResult(true, [
@@ -143,7 +149,7 @@ internal static class Program
         Assert(searches == before && !import.Enabled && status.ForeColor == Color.Firebrick, "invalid custom filter is reported before a search starts");
 
         const string directoryError = "Computer suchen [LDAP://dc.example.test/DC=example,DC=test]: simulated LDAP bind error (0x80072020)";
-        using var failed = new LdapComputerSearchDialog((_, _) => Task.FromException<LdapSearchResult>(new InvalidOperationException(directoryError)));
+        using var failed = DomainDialog((_, _) => Task.FromException<LdapSearchResult>(new InvalidOperationException(directoryError)));
         _ = failed.Handle;
         var failedControls = All(failed).Where(c => c.Name.Length > 0).ToDictionary(c => c.Name);
         ((TextBox)failedControls["pattern"]).Text = "TEST-*";
@@ -152,7 +158,7 @@ internal static class Program
             && failedControls["find"].Enabled && !failedControls["stop"].Enabled && !failedControls["import"].Enabled,
             "original LDAP diagnostics reach the dialog and a failed search remains retryable");
 
-        using var waiting = new LdapComputerSearchDialog((_, token) =>
+        using var waiting = DomainDialog((_, token) =>
         {
             var completion = new TaskCompletionSource<LdapSearchResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             token.Register(() => completion.TrySetCanceled(token));
@@ -191,11 +197,91 @@ internal static class Program
                 .Invoke(grid, [new DataGridViewCellEventArgs(column, row)]);
     }
 
+    private static void NetworkDialogTests()
+    {
+        using var uiContext = new WindowsFormsSynchronizationContext();
+        NetworkSearchRequest? observed = null;
+        var discovery = new ComputerDiscovery(
+            directorySearch: (_, _) => throw new InvalidOperationException("Workgroup dialog must not query LDAP"),
+            domainAvailable: _ => Task.FromResult(false),
+            networkSearch: (request, progress, _) =>
+            {
+                observed = request;
+                progress?.Report("Lokales Netzwerk: 2 / 2 Adressen geprüft · 2 Treffer");
+                return Task.FromResult(new LdapSearchResult(true, [
+                    new("PC01-RST-POS-01", "", "", "IP-Adresse: 192.0.2.1"),
+                    new("PC02-RST-POS-02", "", "", "IP-Adresse: 192.0.2.2")
+                ], "Lokales Netzwerk: 192.0.2.0/30", false, ""));
+            });
+        using var dialog = new LdapComputerSearchDialog(discovery);
+        _ = dialog.Handle;
+        var controls = All(dialog).Where(c => c.Name.Length > 0).ToDictionary(c => c.Name);
+        var source = (ComboBox)controls["searchSource"];
+        var modes = (TabControl)controls["modes"];
+        _ = modes.Handle; // Native selection events require a created tab control.
+        var grid = (DataGridView)controls["results"];
+        var import = (Button)controls["import"];
+        Control content = dialog.Controls[0];
+        using var canvas = new Panel { Size = dialog.ClientSize, Font = dialog.Font };
+        canvas.Controls.Add(content);
+        canvas.CreateControl();
+        foreach (Control control in All(canvas)) _ = control.Handle;
+        for (int pass = 0; pass < 5; pass++) PerformLayout(canvas);
+        SynchronizationContext.SetSynchronizationContext(uiContext);
+        Assert(source.SelectedIndex == 0 && observed is null, "opening computer discovery defaults to automatic without scanning");
+        ((TextBox)controls["networkRange"]).Text = "192.0.2.0/30";
+        ((TextBox)controls["pattern"]).Text = "PC*-RST-POS-*";
+        Complete(dialog.SearchAsync());
+        Application.DoEvents();
+        Assert(observed?.Pattern == "PC*-RST-POS-*" && observed.Range == "192.0.2.0/30" && grid.Rows.Count == 2 && !import.Enabled,
+            "automatic workgroup discovery uses the same pattern and requires explicit result selection");
+        Assert(controls["searchStatus"].Text.Contains("2 Computer / Geräte gefunden") && controls["searchStatus"].Text.Contains("Lokales Netzwerk"),
+            "queued progress cannot replace the completed local search summary");
+        dialog.SetAllSelected(true);
+        source.SelectedIndex = 1;
+        Assert(!import.Enabled && !controls["networkRange"].Enabled && controls["domain"].Enabled, "changing the source invalidates old results and shows domain controls");
+        source.SelectedIndex = 2;
+        modes.SelectedIndex = 1;
+        Assert(modes.SelectedIndex == 0 && !controls["domain"].Enabled && !controls["searchBase"].Enabled && controls["networkRange"].Enabled,
+            $"local-only mode keeps name patterns and disables LDAP-specific controls: tab={modes.SelectedIndex}, domain={controls["domain"].Enabled}, base={controls["searchBase"].Enabled}, range={controls["networkRange"].Enabled}");
+        Complete(dialog.SearchAsync());
+        dialog.SetAllSelected(true);
+        grid.Rows[1].Cells["include"].Value = false;
+        Assert(dialog.GetSelectedHosts().SequenceEqual(new[] { "PC01-RST-POS-01" }), "a single network computer can be selected independently");
+        ((TextBox)controls["networkRange"]).Text = "192.0.2.0/29";
+        Assert(!import.Enabled, "editing the IP range invalidates the previous host selection");
+        Complete(dialog.SearchAsync());
+        dialog.SetAllSelected(true);
+        grid.Rows[1].Cells["include"].Value = false;
+        using (var bitmap = new Bitmap(canvas.Width, canvas.Height))
+        {
+            canvas.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+            bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "network-search-dialog.png"));
+        }
+        using var waiting = new LdapComputerSearchDialog(new ComputerDiscovery(domainAvailable: _ => Task.FromResult(false),
+            directorySearch: (_, _) => throw new InvalidOperationException("Cancellation test must not query LDAP"),
+            networkSearch: async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); }));
+        _ = waiting.Handle;
+        var waitingControls = All(waiting).Where(c => c.Name.Length > 0).ToDictionary(c => c.Name);
+        SynchronizationContext.SetSynchronizationContext(uiContext);
+        Task running = waiting.SearchAsync();
+        Assert(!waitingControls["searchSource"].Enabled && !waitingControls["networkRange"].Enabled && waitingControls["stop"].Enabled,
+            "running network discovery locks its inputs and enables cancellation");
+        waiting.CancelSearch();
+        Complete(running);
+        Assert(waitingControls["searchStatus"].Text.Contains("abgebrochen") && waitingControls["searchSource"].Enabled && !waitingControls["import"].Enabled,
+            "cancelling local discovery restores the dialog without selectable partial results");
+        // Closing the last dialog uninstalls the WinForms synchronization context;
+        // finish asynchronous UI tests before exercising the actual import/close.
+        import.PerformClick();
+        Assert(dialog.SelectedHosts.SequenceEqual(new[] { "PC01-RST-POS-01" }), "importing network results transfers only the checked hosts");
+    }
+
     private static void SelectionInteractionTests()
     {
         foreach (float scale in new[] { 1F, 1.25F, 1.5F, 2F })
         {
-            using var dialog = new LdapComputerSearchDialog((_, _) => Task.FromResult(new LdapSearchResult(true, [
+            using var dialog = DomainDialog((_, _) => Task.FromResult(new LdapSearchResult(true, [
                 new("A", "a.example.test", "Windows", "Test"),
                 new("B", "b.example.test", "Windows", "Test"),
                 new("C", "c.example.test", "Windows", "Test")
@@ -261,7 +347,7 @@ internal static class Program
     {
         foreach (float scale in new[] { 1F, 1.25F, 1.5F, 2F })
         {
-            using var dialog = new LdapComputerSearchDialog((_, _) => throw new InvalidOperationException("Layout test must not query a domain"));
+            using var dialog = DomainDialog((_, _) => throw new InvalidOperationException("Layout test must not query a domain"));
             dialog.Scale(new SizeF(scale, scale));
             dialog.Font = new Font("Segoe UI", 9F * scale);
             var controls = All(dialog).Where(c => c.Name.Length > 0).ToDictionary(c => c.Name);

@@ -50,6 +50,7 @@ function Invoke-DirectoryComputerSearch {
     if ($domain) { $prefix += $domain + '/' }
     $rootDse = $null; $entry = $null; $searcher = $null; $results = $null
     $step = 'Domäne ermitteln'
+    $missingContext = $false
     $path = $prefix + 'RootDSE'
     try {
         if (-not $base) {
@@ -59,7 +60,10 @@ function Invoke-DirectoryComputerSearch {
             $rootDse.psbase.RefreshCache(@('defaultNamingContext'))
             $base = [string]$rootDse.psbase.Properties['defaultNamingContext'][0]
         }
-        if (-not $base) { throw 'Es wurde keine Domäne gefunden. Bitte eine erreichbare Domäne oder einen Domaincontroller eintragen.' }
+        if (-not $base) {
+            $missingContext = $true
+            throw 'Es wurde keine Domäne gefunden. Bitte eine erreichbare Domäne oder einen Domaincontroller eintragen.'
+        }
         $step = 'Computer suchen'
         $path = $prefix + (ConvertTo-DirectorySearchPath $base)
         $entry = & $CreateEntry $path
@@ -103,7 +107,12 @@ function Invoke-DirectoryComputerSearch {
             if ($extended -and -not $detail.Contains($extended.Trim())) { $detail += ' ' + $extended.Trim() }
         }
         if ($failure -is [Runtime.InteropServices.COMException]) { $detail += ' (0x{0:X8})' -f $failure.ErrorCode }
-        throw [InvalidOperationException]::new(($step + ' [' + $path + ']: ' + $detail), $failure)
+        $reported = [InvalidOperationException]::new(($step + ' [' + $path + ']: ' + $detail), $failure)
+        # Only failed domain discovery allows the automatic network fallback.
+        # Access-denied errors and unsuccessful computer queries stay LDAP errors.
+        $reported.Data['DomainUnavailable'] = ($step -eq 'Domäne ermitteln' -and
+            ($missingContext -or $failure.HResult -eq -2147023541 -or $failure.HResult -eq -2147016646))
+        throw $reported
     } finally {
         Close-DirectorySearchResource $results
         Close-DirectorySearchResource $searcher
@@ -121,7 +130,13 @@ if (-not $LibraryOnly) {
         $result = Invoke-DirectoryComputerSearch -Request $request
         $result | ConvertTo-Json -Depth 6 -Compress | ForEach-Object { [Console]::Out.WriteLine($_) }
     } catch {
-        [pscustomobject]@{ Success=$false; Computers=@(); SearchBase=''; Truncated=$false; Error=$_.Exception.Message } |
+        $failure = $_.Exception
+        $domainUnavailable = $false
+        while ($null -ne $failure) {
+            if ($failure.Data['DomainUnavailable'] -eq $true) { $domainUnavailable = $true }
+            $failure = $failure.InnerException
+        }
+        [pscustomobject]@{ Success=$false; Computers=@(); SearchBase=''; Truncated=$false; Error=$_.Exception.Message; DomainUnavailable=$domainUnavailable } |
             ConvertTo-Json -Depth 3 -Compress | ForEach-Object { [Console]::Out.WriteLine($_) }
     }
 }

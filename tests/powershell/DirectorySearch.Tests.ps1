@@ -9,6 +9,7 @@ using System.Collections.Generic;
 public class LdapFixtureEntry : IDisposable {
     public string Path;
     public bool Disposed, FailDispose, FailReadProperties;
+    public int RootErrorCode;
     public string[] RefreshedProperties;
     private Dictionary<string,List<string>> properties = new Dictionary<string,List<string>>();
     public Dictionary<string,List<string>> Properties {
@@ -16,6 +17,7 @@ public class LdapFixtureEntry : IDisposable {
     }
     public void RefreshCache(string[] names) {
         RefreshedProperties = names;
+        if (RootErrorCode != 0) throw new System.Runtime.InteropServices.COMException("simulated domain discovery error", RootErrorCode);
         if (FailReadProperties) throw new InvalidOperationException("simulated naming context error");
     }
     public void Dispose() { Disposed = true; if (FailDispose) throw new InvalidOperationException("simulated entry cleanup failure"); }
@@ -84,6 +86,7 @@ $createEntry = {
     Set-FixtureProperty $entry 'defaultNamingContext' $script:fixture.Context
     $entry.FailDispose = [bool]$script:fixture.FailEntryDispose
     $entry.FailReadProperties = [bool]$script:fixture.FailRootRead
+    $entry.RootErrorCode = [int]$script:fixture.RootErrorCode
     $script:fixture.Entries.Add($entry)
     return $entry
 }
@@ -157,6 +160,28 @@ try { Invoke-DirectoryComputerSearch $request -CreateEntry $createEntry -CreateS
 catch { $message = $_.Exception.Message }
 Assert ($message -like '*simulated naming context error*' -and $message.Contains('LDAP://dc.branch.example.test/RootDSE')) 'RootDSE discovery failures retain their original cause and stage'
 Assert ($fixture.Entries.Count -eq 1 -and $fixture.Entries[0].Disposed) 'failed domain discovery still disposes its directory entry'
+
+function Test-DomainUnavailable($exception) {
+    while ($null -ne $exception) {
+        if ($exception.Data['DomainUnavailable'] -eq $true) { return $true }
+        $exception = $exception.InnerException
+    }
+    return $false
+}
+foreach ($code in @(-2147023541, -2147016646, -2147024891)) {
+    $script:fixture = New-Fixture 0
+    $fixture.RootErrorCode = $code
+    $unavailable = $false
+    try { Invoke-DirectoryComputerSearch $request -CreateEntry $createEntry -CreateSearcher $createSearcher | Out-Null }
+    catch { $unavailable = Test-DomainUnavailable $_.Exception }
+    Assert ($unavailable -eq ($code -ne -2147024891)) 'only missing-domain/server discovery codes allow network fallback; access denied stays an error'
+}
+$script:fixture = New-Fixture 0
+$fixture.Context = ''
+$unavailable = $false
+try { Invoke-DirectoryComputerSearch $request -CreateEntry $createEntry -CreateSearcher $createSearcher | Out-Null }
+catch { $unavailable = Test-DomainUnavailable $_.Exception }
+Assert $unavailable 'a missing domain naming context allows automatic network fallback'
 
 $script:offlineDisposed = $false
 $offlineFactory = {

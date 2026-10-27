@@ -761,7 +761,7 @@ public sealed class MainForm : Form
         var label = new Label
         {
             Text = "Computernamen (ein Computer pro Zeile). Über „Durchsuchen“ können mehrere Computer ausgewählt werden.\n" +
-                "Die Suche unterstützt frei wählbare Namensmuster und eigene LDAP-Filter über „Erweiterte Suche“.",
+                "Die Suche unterstützt Namensmuster in Domäne und lokalem Netzwerk sowie LDAP-Filter für Domänen.",
             AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(3, 3, 3, 8)
         };
         var hostNames = new TextBox
@@ -790,8 +790,7 @@ public sealed class MainForm : Form
             catch (Exception ex)
             {
                 MessageBox.Show(dialog,
-                    "Die Domänensuche konnte nicht geöffnet oder die Auswahl nicht übernommen werden. " +
-                    "Bitte die Verbindung zur Domäne und die Berechtigungen der aktuellen Windows-Anmeldung prüfen. " +
+                    "Die Computersuche konnte nicht geöffnet oder die Auswahl nicht übernommen werden. " +
                     "Computernamen können weiterhin manuell eingegeben werden.\n\n" + ex.Message,
                     "Computer durchsuchen", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }

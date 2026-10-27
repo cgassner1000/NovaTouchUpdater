@@ -9,7 +9,8 @@ internal sealed record LdapComputer(string Name, string DnsName, string Operatin
     public string Host => string.IsNullOrWhiteSpace(DnsName) ? Name : DnsName;
 }
 internal sealed record LdapSearchRequest(string Domain, string SearchBase, string Filter);
-internal sealed record LdapSearchResult(bool Success, LdapComputer[] Computers, string SearchBase, bool Truncated, string Error);
+internal sealed record LdapSearchResult(bool Success, LdapComputer[] Computers, string SearchBase, bool Truncated, string Error, bool DomainUnavailable = false);
+internal sealed class LdapDomainUnavailableException(string message) : InvalidOperationException(message);
 
 internal static class LdapComputerQuery
 {
@@ -113,7 +114,11 @@ internal static class LdapComputerSearch
             try { result = JsonSerializer.Deserialize<LdapSearchResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                 ?? throw new JsonException(); }
             catch (JsonException) { throw new InvalidOperationException("Die Domänensuche hat keine gültige Antwort geliefert. " + error.Trim()); }
-            if (!result.Success) throw new InvalidOperationException(result.Error);
+            if (!result.Success)
+            {
+                if (result.DomainUnavailable) throw new LdapDomainUnavailableException(result.Error);
+                throw new InvalidOperationException(result.Error);
+            }
             return result;
         }
         finally

@@ -42,4 +42,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\ServerS
 
 Die weiteren Befehle stehen bei den jeweiligen Funktionen in der Haupt-README. Alle Testdateien, Protokolle und Vorschaubilder entstehen unter `artifacts/test-results`. Build-Ausgaben liegen unter `artifacts/bin` und `artifacts/obj`; die Quellcodeordner bleiben frei von diesen erzeugten Dateien.
 
+`LdapSearch.Tests` umfasst auch den automatischen Wechsel zur lokalen Netzwerksuche, dieselben Namensmuster, IPv4-Bereiche und deren Überlappungen, Größenbegrenzung, Fortschritt, Abbruch, NetBIOS-Pakete sowie die Auswahlübernahme im Dialog. Domänenzugehörigkeit und Netzwerkantworten werden dabei simuliert; kein Test startet eine echte Netzwerksuche. `DirectorySearch.Tests.ps1` prüft zusätzlich, dass fehlende Domänen erkannt werden und Berechtigungsfehler weiterhin als LDAP-Fehler sichtbar bleiben.
+
 Die zusätzlichen Startoptionen der `AppRelease.Tests` prüfen einen veröffentlichten Test-Updater und dessen Neustart. Diese Integrationsprüfungen starten ausschließlich die separate Test-EXE unter `artifacts/test-results`; die Befehle sind in der Haupt-README beschrieben. Sie sind kein Update der eigentlichen Anwendung.

@@ -13,6 +13,9 @@
     <EmbeddedResource Include="$(RepositoryRoot)src/NovaTouchUpdater/Assets/NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
     <EmbeddedResource Include="$(RepositoryRoot)src/NovaTouchUpdater/Assets/NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/DirectoryServices/LdapComputerSearch.cs" Link="LdapComputerSearch.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/DirectoryServices/ComputerDiscovery.cs" Link="ComputerDiscovery.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/DirectoryServices/NetworkComputerSearch.cs" Link="NetworkComputerSearch.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/DirectoryServices/NetBiosNames.cs" Link="NetBiosNames.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Dialogs/LdapComputerSearchDialog.cs" Link="LdapComputerSearchDialog.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Layout/WindowLayout.cs" Link="WindowLayout.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Controls/WrappingFlowLayoutPanel.cs" Link="WrappingFlowLayoutPanel.cs" />

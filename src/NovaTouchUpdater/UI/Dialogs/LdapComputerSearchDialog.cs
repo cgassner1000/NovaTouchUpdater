@@ -2,7 +2,9 @@ namespace NovaTouchUpdater;
 
 internal sealed class LdapComputerSearchDialog : Form
 {
-    private readonly Func<LdapSearchRequest, CancellationToken, Task<LdapSearchResult>> search;
+    private readonly ComputerDiscovery discovery;
+    private readonly ComboBox source = new() { Name = "searchSource", Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly TextBox networkRange = new() { Name = "networkRange", Dock = DockStyle.Fill, PlaceholderText = "Leer = aktive IPv4-Netze; z. B. 192.168.1.0/24" };
     private readonly TextBox domain = new() { Name = "domain", Dock = DockStyle.Fill, PlaceholderText = "Leer = aktuelle Domäne" };
     private readonly TextBox searchBase = new() { Name = "searchBase", Dock = DockStyle.Fill, PlaceholderText = "Optional, z. B. OU=Kassen,DC=firma,DC=local" };
     private readonly TextBox pattern = new() { Name = "pattern", Dock = DockStyle.Fill, PlaceholderText = "z. B. PC*-RST-POS-* oder SERVER-*" };
@@ -26,14 +28,14 @@ internal sealed class LdapComputerSearchDialog : Form
 
     internal string[] SelectedHosts { get; private set; } = [];
 
-    internal LdapComputerSearchDialog(Func<LdapSearchRequest, CancellationToken, Task<LdapSearchResult>>? search = null)
+    internal LdapComputerSearchDialog(ComputerDiscovery? discovery = null)
     {
-        this.search = search ?? LdapComputerSearch.SearchAsync;
+        this.discovery = discovery ?? new ComputerDiscovery();
         SuspendLayout();
-        Text = "Computer in der Domäne suchen";
+        Text = "Computer suchen – Domäne oder lokales Netzwerk";
         Font = UiTheme.BodyFont();
-        ClientSize = new Size(960, 650);
-        MinimumSize = new Size(700, 480);
+        ClientSize = new Size(960, 730);
+        MinimumSize = new Size(700, 520);
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = false;
         ShowInTaskbar = false;
@@ -43,19 +45,27 @@ internal sealed class LdapComputerSearchDialog : Form
         for (int row = 0; row < 7; row++) layout.RowStyles.Add(new RowStyle(row == 4 ? SizeType.Percent : SizeType.AutoSize, row == 4 ? 100 : 0));
         layout.Controls.Add(new Label
         {
-            Text = "Gewünschte Computer per Zeile oder Kontrollkästchen auswählen. Die Suche verwendet die aktuelle Windows-Anmeldung.",
+            Text = "Automatisch: Domäne durchsuchen; ohne erkannte Domäne das lokale Netzwerk. Gewünschte Computer per Zeile oder Kontrollkästchen auswählen.",
             AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 3, 3, 10)
         }, 0, 0);
 
-        var scope = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 2 };
+        var scope = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 4 };
         scope.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         scope.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         scope.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         scope.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        scope.Controls.Add(new Label { Text = "Domäne / Domaincontroller:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        scope.Controls.Add(domain, 1, 0);
-        scope.Controls.Add(new Label { Text = "Suchbasis (DN):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-        scope.Controls.Add(searchBase, 1, 1);
+        scope.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        scope.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        source.Items.AddRange(["Automatisch (Domäne, sonst Netzwerk)", "Domäne (LDAP)", "Lokales Netzwerk"]);
+        source.SelectedIndex = 0;
+        scope.Controls.Add(new Label { Text = "Suchen in:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        scope.Controls.Add(source, 1, 0);
+        scope.Controls.Add(new Label { Text = "Domäne / Domaincontroller:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+        scope.Controls.Add(domain, 1, 1);
+        scope.Controls.Add(new Label { Text = "Suchbasis (DN):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+        scope.Controls.Add(searchBase, 1, 2);
+        scope.Controls.Add(new Label { Text = "IP-Bereich (optional):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
+        scope.Controls.Add(networkRange, 1, 3);
         layout.Controls.Add(scope, 0, 1);
 
         var names = new TabPage("Namensmuster") { Padding = new Padding(8) };
@@ -64,14 +74,14 @@ internal sealed class LdapComputerSearchDialog : Form
         nameLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         nameLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         nameLayout.Controls.Add(pattern, 0, 0);
-        nameLayout.Controls.Add(new Label { Text = "Das Muster ist frei wählbar. * steht für beliebig viele Zeichen. Leer oder * = alle Computer.", AutoSize = true, Dock = DockStyle.Fill }, 0, 1);
+        nameLayout.Controls.Add(new Label { Text = "Das Muster gilt für Domäne und Netzwerk. * steht für beliebig viele Zeichen. Leer oder * = alle gefundenen Geräte. Im Netzwerk können Firewalls oder fehlende Namen Treffer verhindern.", AutoSize = true, Dock = DockStyle.Fill }, 0, 1);
         names.Controls.Add(nameLayout);
-        var advanced = new TabPage("Erweiterte Suche (LDAP)") { Padding = new Padding(8) };
+        var advanced = new TabPage("Erweiterte Suche (LDAP, nur Domäne)") { Padding = new Padding(8) };
         var filterLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
         filterLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         filterLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         filterLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        filterLayout.Controls.Add(new Label { Text = "Eigenen LDAP-Filter eingeben. Die Suche wird zusätzlich auf Computer beschränkt.", AutoSize = true, Dock = DockStyle.Fill }, 0, 0);
+        filterLayout.Controls.Add(new Label { Text = "Nur für Domänen: eigenen LDAP-Filter eingeben. Die Suche wird zusätzlich auf Computer beschränkt.", AutoSize = true, Dock = DockStyle.Fill }, 0, 0);
         filterLayout.Controls.Add(customFilter, 0, 1);
         advanced.Controls.Add(filterLayout);
         modes.TabPages.Add(names);
@@ -136,7 +146,14 @@ internal sealed class LdapComputerSearchDialog : Form
             ToggleSelectedRow(cell.RowIndex);
             e.Handled = e.SuppressKeyPress = true;
         };
-        foreach (TextBox input in new[] { domain, searchBase, pattern, customFilter }) input.TextChanged += (_, _) => InvalidateResults();
+        foreach (TextBox input in new[] { domain, searchBase, pattern, customFilter, networkRange }) input.TextChanged += (_, _) => InvalidateResults();
+        source.SelectedIndexChanged += (_, _) =>
+        {
+            if (source.SelectedIndex == (int)ComputerSearchSource.LocalNetwork) modes.SelectedIndex = 0;
+            UpdateScopeControls();
+            InvalidateResults();
+        };
+        modes.Selecting += (_, e) => { if (source.SelectedIndex == (int)ComputerSearchSource.LocalNetwork && e.TabPageIndex == 1) e.Cancel = true; };
         modes.SelectedIndexChanged += (_, _) =>
         {
             if (modes.SelectedIndex == 1 && customFilter.TextLength == 0)
@@ -153,18 +170,29 @@ internal sealed class LdapComputerSearchDialog : Form
     internal async Task SearchAsync()
     {
         if (pending is not null || IsDisposed) return;
-        LdapSearchRequest request;
-        try { request = LdapComputerQuery.Create(domain.Text, searchBase.Text, modes.SelectedIndex == 0 ? pattern.Text : customFilter.Text, modes.SelectedIndex == 1); }
-        catch (ArgumentException ex) { SetStatus(ex.Message, true); return; }
+        var options = new ComputerSearchOptions((ComputerSearchSource)source.SelectedIndex, domain.Text, searchBase.Text,
+            modes.SelectedIndex == 0 ? pattern.Text : customFilter.Text, modes.SelectedIndex == 1, networkRange.Text);
         using var cancellation = new CancellationTokenSource();
         pending = cancellation;
         results.Rows.Clear();
         stale = true;
         SetSearching(true);
-        SetStatus("Domäne wird durchsucht …", false);
+        SetStatus("Suche wird vorbereitet …", false);
+        var progress = new SearchProgress(message =>
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            try
+            {
+                BeginInvoke((Action)(() =>
+                {
+                    if (!IsDisposed && ReferenceEquals(pending, cancellation) && !cancellation.IsCancellationRequested) SetStatus(message, false);
+                }));
+            }
+            catch (InvalidOperationException) { /* Dialog is closing. */ }
+        });
         try
         {
-            var result = await search(request, cancellation.Token);
+            var result = await discovery.SearchAsync(options, progress, cancellation.Token);
             cancellation.Token.ThrowIfCancellationRequested();
             if (IsDisposed) return;
             if (!result.Success) throw new InvalidOperationException(result.Error);
@@ -182,7 +210,7 @@ internal sealed class LdapComputerSearchDialog : Form
             stale = false;
             SetStatus(result.Truncated
                 ? $"Mindestens {results.Rows.Count} Treffer. Es werden die ersten {results.Rows.Count} angezeigt; bitte die Suche eingrenzen. Suchbasis: {result.SearchBase}"
-                : $"{results.Rows.Count} Computer gefunden. Suchbasis: {result.SearchBase}", false);
+                : $"{results.Rows.Count} Computer / Geräte gefunden. Suchbereich: {result.SearchBase}", false);
         }
         catch (OperationCanceledException) { if (!IsDisposed) SetStatus("Suche abgebrochen.", false); }
         catch (Exception ex) { if (!IsDisposed) SetStatus("Suche fehlgeschlagen: " + ex.Message, true); }
@@ -226,8 +254,16 @@ internal sealed class LdapComputerSearchDialog : Form
     {
         find.Enabled = !active;
         stop.Enabled = active;
-        domain.Enabled = searchBase.Enabled = modes.Enabled = results.Enabled = !active;
+        source.Enabled = modes.Enabled = results.Enabled = !active;
+        UpdateScopeControls();
         UpdateSelection();
+    }
+
+    private void UpdateScopeControls()
+    {
+        bool idle = pending is null;
+        domain.Enabled = searchBase.Enabled = idle && source.SelectedIndex != (int)ComputerSearchSource.LocalNetwork;
+        networkRange.Enabled = idle && source.SelectedIndex != (int)ComputerSearchSource.Domain;
     }
 
     private void UpdateSelection()
@@ -245,6 +281,10 @@ internal sealed class LdapComputerSearchDialog : Form
     }
 
     private static Button MakeButton(string text, string name) => new ModernButton { Name = name, Text = text };
+    private sealed class SearchProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string value) => report(value);
+    }
     private static FlowLayoutPanel Flow(params Control[] controls)
     {
         var panel = new WrappingFlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true, Margin = Padding.Empty };
