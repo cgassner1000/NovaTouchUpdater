@@ -106,6 +106,25 @@ internal static partial class Program
             Assert(independent.Requests.Count(r => r.Action == "update") == 2 && independent.Count(hosts[0].Host, UpdateComponents.Payment) == 1 && independent.Count(hosts[1].Host, UpdateComponents.ServerSuite) == 1,
                 "different hosts retain independent component selections");
         }
+
+        foreach (string outcome in new[] { "absent", "current", "mixed" })
+        {
+            var worker = new UpdateRunner();
+            using var form = UpdateForm(worker);
+            HostState host = Populate(form)[0];
+            host.Updates = new(UpdateComponents.All);
+            worker.Outcome = request =>
+            {
+                WorkerResult result = worker.Success(request);
+                result.Changed = outcome == "mixed" && worker.Kind(request) == UpdateComponents.Payment;
+                result.Skipped = outcome == "absent" || (outcome == "mixed" && worker.Kind(request) == UpdateComponents.Fiscal);
+                return result;
+            };
+            Update(form, host);
+            string expected = outcome == "absent" ? "Übersprungen" : outcome == "current" ? "Bereits aktuell / übersprungen" : "Erfolgreich";
+            Assert(host.Result == expected && !host.CanRetryUpdate && worker.Requests.Count(r => r.Action == "update") == 3,
+                $"host result combines component outcomes correctly: {outcome}");
+        }
     }
 
     private sealed class UpdateRunner : IWorkerRunner

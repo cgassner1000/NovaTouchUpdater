@@ -1317,7 +1317,10 @@ public sealed class MainForm : Form
                 "Fehlende Update-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        if (MessageBox.Show(this,
+        string componentSummary = "Geplante Komponenten:\n" + string.Join("\n", HostUpdateState.Each(needed).Select(component =>
+            $"{HostUpdateState.Label(component)}: {selected.Count(host => (ComponentsForUpdate(host, onlyFailed) & component) != 0)} Host(s)"));
+        if (onlyFailed) componentSummary += "\nBereits verifizierte Komponenten werden nicht wiederholt.";
+        if (MessageBox.Show(this, componentSummary + "\n\n" +
             $"Update für {selected.Length} Hosts starten?\n\nModus: {(chkForceUpdate.Checked ? "FORCE UPDATE (Versiongleichheit ignorieren)" : "Normal (gleiche Version überspringen)")}\nPayment Target: {(paymentVersion.Length == 0 ? "–" : paymentVersion)}\nFiscal Target: {(fiscalVersion.Length == 0 ? "–" : fiscalVersion)}\nServer Suite Target: {(serverSuiteVersion.Length == 0 ? "–" : serverSuiteVersion)}\nZielpfad: {txtRemotePath.Text.Trim()}\nZIP-Übertragung: {(chkSkipZipTransfer.Checked ? "deaktiviert (ZIPs auf Hosts werden geprüft)" : "aktiv")}\n\nNur Komponenten mit ausgewählter ZIP werden aktualisiert. Bei der Server Suite werden alle Instanzen angehalten und Dateien in apps\\nt3-server-suite sowie portable_python überschrieben oder neu angelegt. Zielordner und zusätzliche Client-Dateien bleiben erhalten. ZIP-Quellen: apps\\nt3-server-suite und installer\\python\\portable_python. Deaktivierte Dienste bleiben deaktiviert.",
             "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         CaptureCredentials();
