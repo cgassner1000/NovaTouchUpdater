@@ -18,7 +18,7 @@ $workerSource=Get-Content -LiteralPath (Join-Path $TestScriptsRoot 'RemoteWorker
 $tokens=$null; $parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseInput($workerSource, [ref]$tokens, [ref]$parseErrors)
 Assert ($parseErrors.Count -eq 0) ($parseErrors | Out-String)
-foreach ($node in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Emit','Progress','NewUploadPipeline','CopyRemoteFileWithProgress') }, $true)) {
+foreach ($node in $ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Emit','Progress','TestLocalSession','NewUploadPipeline','CopyRemoteFileWithProgress') }, $true)) {
     . ([scriptblock]::Create($node.Extent.Text))
 }
 
@@ -95,6 +95,16 @@ try {
     $events=@($writer.ToString() -split '\r?\n' | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
     Assert (@($events | Where-Object { $_.ProgressPercent -ge 99 }).Count -eq 0) 'Failed uploads must not report completion or start hash verification'
     Write-Output 'PASS upload failure and SDK pipeline cleanup'
+
+    $destination=FixturePath (Join-Path $fixture 'local-copy.bin')
+    $localSession=[pscustomobject]@{ NovaTouchLocal=$true }
+    $writer=[IO.StringWriter]::new(); $original=[Console]::Out
+    try { [Console]::SetOut($writer); CopyRemoteFileWithProgress $localSession $source $destination 'Local package' }
+    finally { [Console]::SetOut($original) }
+    Assert ((Get-FileHash -LiteralPath $source).Hash -eq (Get-FileHash -LiteralPath $destination).Hash) 'Direct local copying preserves every byte without creating a remote upload pipeline'
+    CopyRemoteFileWithProgress $localSession $source $source 'Same local file'
+    Assert ((Get-FileHash -LiteralPath $source).Hash -eq (Get-FileHash -LiteralPath $destination).Hash) 'Direct copying never truncates a package when source and target are identical'
+    Write-Output 'PASS direct local copy without WinRM or self-overwrite'
 
     # Replace only the clock in this extraction test so every data block can be
     # observed deterministically, without slow I/O or hundreds of MB of data.

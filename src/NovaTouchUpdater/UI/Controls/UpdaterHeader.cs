@@ -33,7 +33,7 @@ internal sealed class UpdaterHeader : TableLayoutPanel
         SetColumnSpan(title, 2);
         subtitle = new Label
         {
-            Text = "nt.payment  /  nt.fiscal  /  nt3 Server Suite    ·    parallele Remote-Updates",
+            Text = "ZIP- und MSI-Updates    ·    lokal und remote",
             AutoSize = true, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted, Margin = new Padding(0, 5, 0, 0)
         };
         Controls.Add(subtitle, 1, 1);

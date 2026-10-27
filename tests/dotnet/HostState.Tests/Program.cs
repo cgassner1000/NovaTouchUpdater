@@ -192,9 +192,17 @@ var retryHosts = Enumerable.Range(1, 3).Select(attempt => new HostState
 {
     Host = $"retry-{attempt}.invalid", Attempt = attempt, Phase = "Kopieren <Paket>", Error = "Fehler & Details"
 }).ToArray();
+var localMsi = new HostState { Host="LOCALHOST", Connection="Lokal", NtcVersion="2.0.0", RebootRequired=true,
+    InstalledPrograms=[new() { Kind="ntv", DisplayName="NovaTouch Voucher", Version="3.0.0" }] };
+string localReport = HtmlReport.Create([localMsi], "", "", now.LocalDateTime, true, "",
+    new Dictionary<string, string> { ["NovaTouch Control"]="2.0.0", ["<Paket>"]="1.0" }, "Lokal & Remote");
+Assert(localReport.Contains("NovaTouch NTC</th>") && localReport.Contains("class=\"ntc-ver\">2.0.0</td>") &&
+    localReport.Contains("NovaTouch Control Target: <strong>2.0.0</strong>") && localReport.Contains("&lt;Paket&gt;") &&
+    localReport.Contains("Lokal &amp; Remote") && localReport.Contains("Windows-Neustart erforderlich") &&
+    localReport.Contains("novatouch voucher 3.0.0"), "HTML includes local execution, NTC, encoded MSI targets, searchable additional programs and reboot requirements");
 string retryReport = HtmlReport.Create(retryHosts, "", "", now.LocalDateTime, false);
 var retryHeaders = Regex.Matches(retryReport, "<th(?: [^>]*)?>(.*?)</th>").Select(match => match.Groups[1].Value).ToArray();
-Assert(retryHeaders.Length == 10 && !retryHeaders.Contains("Versuch") && retryHeaders.TakeLast(3).SequenceEqual(new[] { "Information", "Details", "Status" }) &&
+Assert(retryHeaders.Length == 11 && !retryHeaders.Contains("Versuch") && retryHeaders.TakeLast(3).SequenceEqual(new[] { "Information", "Details", "Status" }) &&
     !retryReport.Contains("class=\"attempt\""), "HTML removes the separate attempt column while retaining information, protocol and status");
 foreach (int attempt in new[] { 1, 2, 3 })
 {

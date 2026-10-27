@@ -13,6 +13,8 @@ internal sealed class UpdaterConfig
     public string? Username { get; set; }
     public bool UseSsl { get; set; }
     public int HttpsPort { get; set; } = 5986;
+    public string ExecutionMode { get; set; } = "Remote";
+    public string? SoftwarePath { get; set; }
     public string? PasswordProtectionScope { get; set; }
     public string? EncryptedPassword { get; set; }
 
@@ -62,6 +64,7 @@ internal static class AppConfigStore
         {
             Hosts = NormalizeHosts(settings.Hosts), RemotePath = settings.RemotePath,
             Username = settings.Username, UseSsl = settings.UseSsl, HttpsPort = settings.HttpsPort,
+            ExecutionMode = settings.ExecutionMode, SoftwarePath = settings.SoftwarePath,
             PasswordProtectionScope = nameof(DataProtectionScope.LocalMachine),
             EncryptedPassword = EncryptPassword(password)
         };
@@ -90,6 +93,7 @@ internal static class AppConfigStore
     private static void Validate(UpdaterConfig settings)
     {
         if (settings.HttpsPort is < 1 or > 65535) throw new JsonException("HttpsPort muss zwischen 1 und 65535 liegen.");
+        if (settings.ExecutionMode is not ("Local" or "LocalAndRemote" or "Remote")) throw new JsonException("Ungültiger Ausführungsmodus in config.json.");
     }
 
     private static string[] NormalizeHosts(string[]? hosts) => (hosts ?? [])

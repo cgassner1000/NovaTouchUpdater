@@ -8,6 +8,7 @@ internal sealed class HostState
     private string phase = "Bereit";
 
     public string Host { get; init; } = "";
+    public bool IsLocal => Host.Equals("LOCALHOST", StringComparison.OrdinalIgnoreCase);
     public bool IsSelected { get; set; } = true;
     public ConnectionState ConnectionState { get; } = new();
     public string Connection { get => ConnectionState.Status; set => ConnectionState.SetForegroundStatus(value); }
@@ -16,6 +17,11 @@ internal sealed class HostState
     public string Fiscal { get; set; } = "–";
     public string ServerSuite { get; set; } = "–";
     public string PosVersion { get; set; } = "–";
+    public string NtcVersion { get; set; } = "–";
+    public string NtcBefore { get; set; } = "–";
+    public string PosBefore { get; set; } = "–";
+    public bool RebootRequired { get; set; }
+    public List<InstalledProgramInfo> InstalledPrograms { get; set; } = [];
     public string PaymentBefore { get; set; } = "–";
     public string FiscalBefore { get; set; } = "–";
     public string ServerSuiteBefore { get; set; } = "–";

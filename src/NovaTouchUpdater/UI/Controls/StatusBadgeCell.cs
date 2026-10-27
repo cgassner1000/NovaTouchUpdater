@@ -17,7 +17,7 @@ internal sealed class StatusBadgeCell : DataGridViewTextBoxCell
         }
         (Color foreground, Color background) = text switch
         {
-            "Verbunden" or "Erfolgreich" or "Wieder online" or "Dienste OK" or "POS OK" or "OK" => (UiTheme.Success, UiTheme.SuccessSoft),
+            "Lokal" or "Verbunden" or "Erfolgreich" or "Wieder online" or "Dienste OK" or "POS OK" or "OK" => (UiTheme.Success, UiTheme.SuccessSoft),
             "Nicht erreichbar" or "Fehler" => (UiTheme.Danger, UiTheme.DangerSoft),
             "Aktuell" => (UiTheme.Accent, UiTheme.AccentSoft),
             "Läuft" or "Neustart angefordert" => (UiTheme.Warning, UiTheme.WarningSoft),

@@ -47,3 +47,12 @@ Die weiteren Befehle stehen bei den jeweiligen Funktionen in der Haupt-README. A
 `MainForm.Tests --updates` prüft mit simulierten Workern die getrennten Updateergebnisse für Payment, Fiscal und Server Suite: automatische und manuelle Wiederholung nur fehlgeschlagener Komponenten, Force-Modus, Uploadvorbereitung, Wiederaufnahme nach Abbruch oder Neustart sowie die gemeinsame Statusanzeige bei erfolgreichen, aktuellen und nicht installierten Komponenten. `ServerSuiteUpdate.Tests.ps1` prüft die vollständigen Worker-Schritte mit künstlichen ZIPs und simulierten Diensten, auch für Wiederholungen bei bereits erreichter Versionsnummer. Echte Hosts und Windows-Dienste werden dabei nicht verändert.
 
 Die zusätzlichen Startoptionen der `AppRelease.Tests` prüfen einen veröffentlichten Test-Updater und dessen Neustart. Diese Integrationsprüfungen starten ausschließlich die separate Test-EXE unter `artifacts/test-results`; die Befehle sind in der Haupt-README beschrieben. Sie sind kein Update der eigentlichen Anwendung.
+
+`MainForm.Tests --local` prüft den Paketkatalog mit echten, eigens erzeugten MSI-Datenbanken (nur lesend), ZIPs mit MSIs, externe CAB-Dateien, Versionsauswahl, Pfadprüfung sowie die drei Ausführungsmodi und direkte lokale Requests mit simulierten Workern. Die erzeugten MSI-Testdateien werden für den folgenden PowerShell-Test unter `artifacts/test-results` behalten:
+
+```powershell
+dotnet run --project tests\dotnet\MainForm.Tests\MainForm.Tests.csproj -c Release -- --local
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\MsiUpdates.Tests.ps1
+```
+
+`MsiUpdates.Tests.ps1` prüft fehlende, gleiche, neuere und ältere Produkte, MSI-Versionsvergleiche, lokale und Remote-Ausführung, MSI in ZIP, externe CABs, erneute Metadatenprüfung, Installerfehler, Neustartbedarf und temporäre Bereinigung. `msiexec` wird dabei niemals gestartet: Der Prozessaufruf ist simuliert. `ServerSuiteUpdate.Tests.ps1` prüft zusätzlich den vollständigen lokalen ZIP-Dienstablauf und bricht ab, falls dabei ein WinRM-Aufruf versucht wird. Echte Programme oder Dienste werden nicht verändert.

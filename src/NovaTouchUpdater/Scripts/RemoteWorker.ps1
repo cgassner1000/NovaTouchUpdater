@@ -1,4 +1,4 @@
-﻿# Execution is local on the operator PC. Only authenticated PS remoting actions run on hosts.
+# Execution is local on the operator PC. Only authenticated PS remoting actions run on hosts.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -11,6 +11,23 @@ function Emit([hashtable]$message) {
 
 function Progress([string]$phase, [string]$message, [Nullable[int]]$percent = $null) {
     Emit @{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent }
+}
+
+function TestLocalSession($session) {
+    return $null -ne $session -and $null -ne $session.PSObject.Properties['NovaTouchLocal'] -and [bool]$session.NovaTouchLocal
+}
+
+function AssertLocalUpdateAccess {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Lokale Updates benötigen Administratorrechte. NovaTouchUpdater bitte als Administrator starten.' }
+}
+
+function InvokeWorkerCommand {
+    [CmdletBinding()]
+    param($Session, [scriptblock]$ScriptBlock, [object[]]$ArgumentList = @())
+    if (TestLocalSession $Session) { & $ScriptBlock @ArgumentList }
+    else { Invoke-Command -Session $Session -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction $ErrorActionPreference }
 }
 
 function NewUploadPipeline($session, [string]$localFile, [string]$remoteFile) {
@@ -29,6 +46,28 @@ function NewUploadPipeline($session, [string]$localFile, [string]$remoteFile) {
 }
 
 function CopyRemoteFileWithProgress($session, [string]$localFile, [string]$remoteFile, [string]$label) {
+    if (TestLocalSession $session) {
+        $sourcePath = [IO.Path]::GetFullPath($localFile)
+        $targetPath = [IO.Path]::GetFullPath($remoteFile)
+        if ($sourcePath.Equals($targetPath, [StringComparison]::OrdinalIgnoreCase)) { return }
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($targetPath))
+        $source = [IO.File]::OpenRead($sourcePath)
+        $target = $null
+        try {
+            $target = [IO.File]::Create($targetPath)
+            $buffer = New-Object byte[] (1024 * 1024)
+            $copied = 0L; $clock = [Diagnostics.Stopwatch]::StartNew()
+            Progress 'Lokales Kopieren' "$label : $([IO.Path]::GetFileName($localFile))" 0
+            while (($read = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $target.Write($buffer, 0, $read); $copied += $read
+                if ($clock.ElapsedMilliseconds -ge 200) {
+                    Progress 'Lokales Kopieren' "$label : $copied / $($source.Length) Bytes" ([int][Math]::Min(99, 100.0 * $copied / [Math]::Max(1, $source.Length)))
+                    $clock.Restart()
+                }
+            }
+        } finally { if ($null -ne $target) { $target.Dispose() }; $source.Dispose() }
+        return
+    }
     function PublishUploadProgress($pipeline, $state, [string]$message, [bool]$flush) {
         # Copy-Item reports progress after sending data blocks. Read its progress
         # stream without opening another remote session or changing the transfer.
@@ -161,6 +200,8 @@ function ReadSoftwareInventory {
 
     $posFound = $false
     $posVersions = @()
+    $programs = @()
+    $programNames = @{ 'NovaTouch POS'='pos'; 'NovaTouch Control'='ntc'; 'NovaTouch Voucher'='ntv'; 'NovaTouch Orderman SOL'='oman' }
     foreach ($path in @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
@@ -168,13 +209,15 @@ function ReadSoftwareInventory {
         if (-not (Test-Path -LiteralPath $path -ErrorAction Stop)) { continue }
         foreach ($key in Get-ChildItem -LiteralPath $path -ErrorAction Stop) {
             $program = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction Stop
-            if ($null -eq $program.PSObject.Properties['DisplayName'] -or
-                [string]$program.DisplayName -notmatch '^\s*NovaTouch\s+POS\s*$') { continue }
-            $posFound = $true
-            if ($null -ne $program.PSObject.Properties['DisplayVersion'] -and
-                -not [string]::IsNullOrWhiteSpace([string]$program.DisplayVersion)) {
-                $posVersions += ([string]$program.DisplayVersion).Trim()
-            }
+            if ($null -eq $program.PSObject.Properties['DisplayName']) { continue }
+            $displayName = (([string]$program.DisplayName).Trim() -replace '\s+', ' ')
+            if (-not $programNames.ContainsKey($displayName)) { continue }
+            $kind = $programNames[$displayName]
+            $version = if ($null -ne $program.PSObject.Properties['DisplayVersion']) { ([string]$program.DisplayVersion).Trim() } else { '' }
+            $code = if ($null -ne $key.PSObject.Properties['PSChildName']) { [string]$key.PSChildName } else { '' }
+            $location = if ($null -ne $program.PSObject.Properties['InstallLocation']) { [string]$program.InstallLocation } else { '' }
+            $programs += [pscustomobject]@{ Kind=$kind; DisplayName=$displayName; Version=$version; ProductCode=$code; InstallLocation=$location }
+            if ($kind -eq 'pos') { $posFound = $true; if ($version) { $posVersions += $version } }
         }
     }
 
@@ -184,6 +227,9 @@ function ReadSoftwareInventory {
         DotNet48Installed = ($release -ge 528040)
         PosVersion = if ($posVersions.Count -gt 0) { ($posVersions | Sort-Object -Unique) -join ', ' }
             elseif ($posFound) { 'Version unbekannt' } else { 'Nicht installiert' }
+        NtcVersion = if (@($programs | Where-Object Kind -eq 'ntc').Count -eq 0) { 'Nicht installiert' }
+            else { (@($programs | Where-Object Kind -eq 'ntc' | ForEach-Object { if ($_.Version) { $_.Version } else { 'Version unbekannt' } }) | Sort-Object -Unique) -join ', ' }
+        InstalledPrograms = @($programs)
     }
 }
 
@@ -230,7 +276,8 @@ try {
     $requestLine = [Console]::In.ReadLine()
     if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
     $req = $requestLine | ConvertFrom-Json
-    $sessionOptions = New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 180000
+    $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
+    $sessionOptions = if ($localExecution) { $null } else { New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 180000 }
     $sessionArgs = @{
         ComputerName = [string]$req.Host
         Port = 5985
@@ -249,12 +296,12 @@ try {
         $sessionArgs.Credential = New-Object System.Management.Automation.PSCredential([string]$req.Username, $secure)
     }
 
-    Progress 'Verbindung' 'WinRM-Verbindung wird aufgebaut'
+        Progress 'Verbindung' $(if ($localExecution) { 'Lokaler Zugriff ohne WinRM' } else { 'WinRM-Verbindung wird aufgebaut' })
     $session = $null
     try {
-        $session = New-PSSession @sessionArgs
+        $session = if ($localExecution) { [pscustomobject]@{ NovaTouchLocal=$true } } else { New-PSSession @sessionArgs }
         if ($req.Action -eq 'probe') {
-            Emit @{ Event='result'; Success=$true; Message='WinRM erreichbar und Anmeldung erfolgreich'; Services=@() }
+            Emit @{ Event='result'; Success=$true; Message=$(if ($localExecution) { 'Lokaler Zugriff bereit' } else { 'WinRM erreichbar und Anmeldung erfolgreich' }); Services=@() }
             exit 0
         }
         if ($req.Action -in @('check-upload-directory','clean-upload-directory')) {
@@ -263,11 +310,20 @@ try {
             if ($forUpdate) {
                 $uploadRequired=$false
                 if (-not [bool]$req.SkipZipTransfer) {
-                    $inventory=@(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
-                    $checkTargets=GetUpdateTargets $req
-                    $force=($null -ne $req.PSObject.Properties['ForceUpdate'] -and [bool]$req.ForceUpdate) -or
-                        ($null -ne $req.PSObject.Properties['RetryUpdate'] -and [bool]$req.RetryUpdate)
-                    $uploadRequired=@(SelectUpdateServices $inventory $checkTargets $force).Count -gt 0
+                    if ($req.PaymentZip -or $req.FiscalZip -or $req.ServerSuiteZip) {
+                        $inventory=@(InvokeWorkerCommand -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
+                        $checkTargets=GetUpdateTargets $req
+                        $force=($null -ne $req.PSObject.Properties['ForceUpdate'] -and [bool]$req.ForceUpdate) -or
+                            ($null -ne $req.PSObject.Properties['RetryUpdate'] -and [bool]$req.RetryUpdate)
+                        $uploadRequired=@(SelectUpdateServices $inventory $checkTargets $force).Count -gt 0
+                    }
+                    if ($null -ne $req.PSObject.Properties['MsiPackages'] -and @($req.MsiPackages).Count -gt 0) {
+                        $software = InvokeWorkerCommand -Session $session -ScriptBlock ${function:ReadSoftwareInventory} -ErrorAction Stop
+                        foreach ($package in $req.MsiPackages) {
+                            try { if ((GetMsiUpdateDecision @($software.InstalledPrograms) $package).Install) { $uploadRequired = $true } }
+                            catch { Progress 'MSI-Vorprüfung' ($package.ProductName + ': ' + $_.Exception.Message + '. Wird im Update für diese Komponente gemeldet.') }
+                        }
+                    }
                 }
                 if (-not $uploadRequired) {
                     Emit @{ Event='result'; Success=$true; UploadRequired=$false; Changed=$false; Message='Kein Update-Upload erforderlich'; Services=@() }
@@ -277,7 +333,7 @@ try {
             $snapshot=''
             if ($null -ne $req.PSObject.Properties['ExpectedDirectorySnapshot']) { $snapshot=[string]$req.ExpectedDirectorySnapshot }
             Progress 'Uploadziel' $(if ($clean) { 'Bestätigten Uploadordner bereinigen' } else { 'Inhalt des Uploadordners prüfen' })
-            $directory=Invoke-Command -Session $session -ArgumentList ([string]$req.RemoteInstallPath), $clean, $snapshot -ErrorAction Stop -ScriptBlock ${function:ManageUploadDirectory}
+            $directory=InvokeWorkerCommand -Session $session -ArgumentList ([string]$req.RemoteInstallPath), $clean, $snapshot -ErrorAction Stop -ScriptBlock ${function:ManageUploadDirectory}
             Emit @{ Event='result'; Success=$true; UploadRequired=$true; UploadDirectory=$directory; Changed=$directory.Cleaned;
                 Message=$(if ($clean) { 'Uploadordner bereinigt' } else { 'Uploadordner geprüft' }); Services=@() }
             exit 0
@@ -285,7 +341,7 @@ try {
         if ($req.Action -eq 'transfer') {
             $remotePath = [string]$req.RemoteInstallPath
             if ([string]::IsNullOrWhiteSpace($remotePath)) { throw 'RemoteInstallPath wurde nicht übergeben.' }
-            $remoteInfo = Invoke-Command -Session $session -ArgumentList $remotePath -ErrorAction Stop -ScriptBlock {
+            $remoteInfo = InvokeWorkerCommand -Session $session -ArgumentList $remotePath -ErrorAction Stop -ScriptBlock {
                 param([string]$dir)
                 $computer = [Environment]::MachineName
                 $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -316,7 +372,7 @@ try {
                 $remoteFile = Join-Path $remotePath (Split-Path -Path $localFile -Leaf)
                 $fileLabel = "Datei $($verified + 1)/$($files.Count)"
                 Progress 'Übertragung' ("$fileLabel : Prüfe $([IO.Path]::GetFileName($localFile))") 0
-                $remoteHash = Invoke-Command -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
+                $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
                     param([string]$path)
                     if (Test-Path -LiteralPath $path -PathType Leaf) {
                         (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
@@ -329,7 +385,7 @@ try {
                     catch {
                         throw "Dateiübertragung fehlgeschlagen ($remoteHost; $remoteFile): $($_.Exception.Message)"
                     }
-                    $remoteHash = Invoke-Command -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
+                    $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
                         param([string]$path)
                         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Datei fehlt nach der Übertragung: $path" }
                         (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
@@ -346,13 +402,17 @@ try {
 
         if ($req.Action -eq 'scan') {
             Progress 'Softwareprüfung' '.NET Framework 4.8 und NovaTouch POS werden geprüft'
-            $software = Invoke-Command -Session $session -ScriptBlock ${function:ReadSoftwareInventory} -ErrorAction Stop
+            $software = InvokeWorkerCommand -Session $session -ScriptBlock ${function:ReadSoftwareInventory} -ErrorAction Stop
+        }
+        if ($req.Action -eq 'update' -and $null -ne $req.PSObject.Properties['MsiPackage'] -and $null -ne $req.MsiPackage) {
+            Emit (InvokeMsiPackageUpdate $req $session)
+            exit 0
         }
         Progress 'Versionen' 'Dienste und installierte Versionen werden ausgelesen'
-        $services = @(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
+        $services = @(InvokeWorkerCommand -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
         if ($req.Action -eq 'scan') {
             Emit @{ Event='result'; Success=$true; Message='Versionen und Software geprüft'; Services=$services;
-                DotNet48Installed=$software.DotNet48Installed; PosVersion=$software.PosVersion }
+                DotNet48Installed=$software.DotNet48Installed; PosVersion=$software.PosVersion; NtcVersion=$software.NtcVersion; InstalledPrograms=@($software.InstalledPrograms) }
             exit 0
         }
         if ($req.Action -ne 'update') { throw ('Unbekannte Aktion: ' + $req.Action) }
@@ -388,6 +448,7 @@ try {
             Emit @{ Event='result'; Success=$true; Message=$(if ($noneInstalled) { 'Keine ausgewählten Dienste installiert - übersprungen' } else { 'Bereits auf Zielversion' }); Services=$services; Changed=$false; Skipped=$noneInstalled }
             exit 0
         }
+        if ($localExecution) { AssertLocalUpdateAccess }
 
         $skipZipTransfer = [bool]$req.SkipZipTransfer
         if ($skipZipTransfer) {
@@ -400,7 +461,7 @@ try {
 
         # Verzeichnis im Dateisystem des Hosts der bestehenden WinRM-Session anlegen.
         # System.IO umgeht eine moegliche falsche Provider-/Test-Path-Aufloesung.
-        $remoteInfo = Invoke-Command -Session $session -ArgumentList $remotePath -ErrorAction Stop -ScriptBlock {
+        $remoteInfo = InvokeWorkerCommand -Session $session -ArgumentList $remotePath -ErrorAction Stop -ScriptBlock {
             param([string]$dir)
             $computer = [Environment]::MachineName
             $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -438,7 +499,7 @@ try {
             $remoteFile = Join-Path $remotePath (Split-Path -Path $zip -Leaf)
             $fileLabel = "ZIP $($verifiedZips + 1)/$zipCount ($kind)"
             Progress 'Übertragung' ("$fileLabel : Prüfe $([IO.Path]::GetFileName($zip))") 0
-            $remoteHash = Invoke-Command -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
+            $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
                 param([string]$path)
                 if (Test-Path -LiteralPath $path -PathType Leaf) {
                     (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
@@ -453,7 +514,7 @@ try {
                 } catch {
                     throw "ZIP-Transfer fehlgeschlagen ($kind; $remoteHost; $remoteFile): $($_.Exception.Message)"
                 }
-                $remoteHash = Invoke-Command -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
+                $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
                     param([string]$path)
                     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
                         throw "ZIP fehlt auf $env:COMPUTERNAME nach Copy-Item: $path"
@@ -478,7 +539,7 @@ try {
         $fiscalRemoteZip = [string]$remoteZipFiles['fiscal']
         $serverSuiteRemoteZip = [string]$remoteZipFiles['serversuite']
         $stageArgs = @($remotePath, $kindsCsv, $paymentRemoteZip, $fiscalRemoteZip, $serverSuiteRemoteZip)
-        $stage = Invoke-Command -Session $session -ArgumentList $stageArgs -ErrorAction Stop -ScriptBlock ${function:PrepareUpdatePackages} |
+        $stage = InvokeWorkerCommand -Session $session -ArgumentList $stageArgs -ErrorAction Stop -ScriptBlock ${function:PrepareUpdatePackages} |
             ForEach-Object {
                 if ($null -ne $_ -and $null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') {
                     Progress ([string]$_.Phase) ([string]$_.Message) $_.ProgressPercent
@@ -491,14 +552,14 @@ try {
             Progress 'Update vorbereiten' ("Prüfe Dateien und Installationsziele für: " + $pendingNames)
             $wantedJson = ConvertTo-Json -InputObject @($pending) -Depth 12 -Compress
             $suiteTarget = if ($targets.ContainsKey('serversuite')) { [string]$targets.serversuite } else { '' }
-            Invoke-Command -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget -ErrorAction Stop -ScriptBlock ${function:InstallUpdatePackages} |
+            InvokeWorkerCommand -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget -ErrorAction Stop -ScriptBlock ${function:InstallUpdatePackages} |
                 ForEach-Object {
                     if ($null -ne $_ -and $null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') {
                         Progress ([string]$_.Phase) ([string]$_.Message) $_.ProgressPercent
                     }
                 }
             Progress 'Verifikation' 'Versionen und Dienststatus werden erneut kontrolliert'
-            $after = @(Invoke-Command -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
+            $after = @(InvokeWorkerCommand -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
             $mistakes = @()
             foreach ($oldSvc in $pending) {
                 $previousErrors = $mistakes.Count
@@ -523,10 +584,10 @@ try {
         }
         catch { $updateError = $_.Exception.Message; throw }
         finally {
-            Invoke-Command -Session $session -ArgumentList $stage, $remotePath -ScriptBlock ${function:RemoveUpdateStage} -ErrorAction SilentlyContinue | Out-Null
+            InvokeWorkerCommand -Session $session -ArgumentList $stage, $remotePath -ScriptBlock ${function:RemoveUpdateStage} -ErrorAction SilentlyContinue | Out-Null
         }
     }
-    finally { if ($null -ne $session) { Remove-PSSession -Session $session -ErrorAction SilentlyContinue } }
+    finally { if ($null -ne $session -and -not (TestLocalSession $session)) { Remove-PSSession -Session $session -ErrorAction SilentlyContinue } }
 }
 catch {
     $errorText = $_.Exception.Message
@@ -539,6 +600,8 @@ catch {
     if ($null -ne $software) {
         $result.DotNet48Installed = $software.DotNet48Installed
         $result.PosVersion = $software.PosVersion
+        $result.NtcVersion = $software.NtcVersion
+        $result.InstalledPrograms = @($software.InstalledPrograms)
     }
     Emit $result
     exit 1

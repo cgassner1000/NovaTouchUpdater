@@ -14,12 +14,15 @@ internal static partial class Program
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
             if (args.Contains("--updates")) { UpdateRetryTests(); return 0; }
+            if (args.Contains("--local")) { Complete(PackageCatalogTests()); LocalExecutionTests(); return 0; }
             if (!args.Contains("--layout"))
             {
                 FormattingTests();
                 SelectionTests();
                 ScanTests();
                 UpdateRetryTests();
+                Complete(PackageCatalogTests());
+                LocalExecutionTests();
             }
             LayoutTests();
             return 0;
@@ -220,9 +223,9 @@ internal static partial class Program
             foreach (var (control, font) in fonts) control.Font = new Font(font.FontFamily, font.SizeInPoints * scale, font.Style);
             table.ColumnHeadersDefaultCellStyle.Font = new Font(table.Font, FontStyle.Bold);
             form.MinimumSize = Size.Empty;
-            foreach (int width in new[] { 1560, 1000 })
+            foreach (int width in new[] { 1710, 1000 })
             {
-                form.ClientSize = new Size((int)(width * scale), (int)(920 * scale));
+                form.ClientSize = new Size((int)(width * scale), (int)(980 * scale));
                 Control content = form.Controls[0];
                 using var canvas = new Panel { Size = form.ClientSize, Font = form.Font };
                 canvas.Controls.Add(content);
@@ -239,7 +242,7 @@ internal static partial class Program
                 int rightEdge = table.ClientSize.Width - table.Controls.OfType<VScrollBar>().Where(scrollbar => scrollbar.Visible).Sum(scrollbar => scrollbar.Width);
                 Assert(status.Width > 0 && Math.Abs(status.Right - rightEdge) <= 1,
                     $"Status reaches the right table edge at {width}px / {scale:P0}: expected={rightEdge}, actual={status.Right}");
-                if (width == 1560)
+                if (width == 1710)
                 {
                     Assert(table.ColumnHeadersDefaultCellStyle.WrapMode == DataGridViewTriState.False &&
                         table.Columns.Cast<DataGridViewColumn>().Where(c => c.Name != "include").All(c => c.Width >= c.GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true)),

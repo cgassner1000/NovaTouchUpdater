@@ -5,6 +5,8 @@
   "EncryptedPassword": "",
   "UseSsl": false,
   "HttpsPort": 5986,
+  "ExecutionMode": "Remote",
+  "SoftwarePath": "",
   "Hosts": [
     "POS01",
     "POS02"

@@ -26,16 +26,16 @@ internal static partial class Program
 
     private static void UpdateRetryTests()
     {
-        foreach (UpdateComponents failing in HostUpdateState.Each(UpdateComponents.All))
+        foreach (UpdateComponents failing in HostUpdateState.Each(UpdateComponents.ZipServices))
         {
             var worker = new UpdateRunner();
             using var form = UpdateForm(worker, force: true);
             HostState host = Populate(form)[0];
-            host.Updates = new(UpdateComponents.All);
+            host.Updates = new(UpdateComponents.ZipServices);
             worker.Outcome = request => worker.Kind(request) == failing && worker.Count(host.Host, failing) == 1
                 ? new WorkerResult { Success = false, Error = "Simulated first install failure" } : worker.Success(request);
             Update(form, host);
-            Assert(HostUpdateState.Each(UpdateComponents.All).All(c => worker.Count(host.Host, c) == (c == failing ? 2 : 1)),
+            Assert(HostUpdateState.Each(UpdateComponents.ZipServices).All(c => worker.Count(host.Host, c) == (c == failing ? 2 : 1)),
                 $"automatic retries repeat only {HostUpdateState.Label(failing)}, including Force mode");
             WorkerRequest[] failedRequests = worker.Requests.Where(r => r.Action == "update" && worker.Kind(r) == failing).ToArray();
             Assert(failedRequests[0].RetryUpdate == false && failedRequests[1].RetryUpdate && worker.Requests.Where(r => r.Action == "update").All(r => r.ForceUpdate),
@@ -48,7 +48,7 @@ internal static partial class Program
         using (var form = UpdateForm(permanent))
         {
             HostState host = Populate(form)[0];
-            host.Updates = new(UpdateComponents.All);
+            host.Updates = new(UpdateComponents.ZipServices);
             bool repair = false;
             permanent.Outcome = request => permanent.Kind(request) == UpdateComponents.Fiscal && !repair
                 ? throw new IOException("Simulated fiscal installation failure") : permanent.Success(request);
@@ -58,7 +58,7 @@ internal static partial class Program
             Assert(host.UpdateFailed && host.CanRetryUpdate && host.Updates.Pending == UpdateComponents.Fiscal && host.Error.Contains("nt.fiscal") && host.Payment == "2.0.0" && host.ServerSuite == "2.0.0",
                 "partial inventory and the exact failed component remain visible after three attempts");
             Assert((UpdateComponents)Call(form, "ComponentsForUpdate", host, true)! == UpdateComponents.Fiscal &&
-                (UpdateComponents)Call(form, "ComponentsForUpdate", host, false)! == UpdateComponents.All,
+                (UpdateComponents)Call(form, "ComponentsForUpdate", host, false)! == UpdateComponents.ZipServices,
                 "manual retry retains pending components while an explicit new update selects a fresh run");
             Task preflight = (Task)Call(form, "PrepareUploadDirectoriesAsync", new[] { host }, true,
                 (Action<HostState, string>)((_, error) => throw new InvalidOperationException(error)), CancellationToken.None)!;
@@ -83,7 +83,7 @@ internal static partial class Program
         using (var form = UpdateForm(cancelling))
         {
             HostState host = Populate(form)[0];
-            host.Updates = new(UpdateComponents.All);
+            host.Updates = new(UpdateComponents.ZipServices);
             cancelling.Outcome = request => { var result = cancelling.Success(request); cancel.Cancel(); return result; };
             bool cancelled = false;
             try { Update(form, host, cancel.Token); } catch (OperationCanceledException) { cancelled = true; }
@@ -112,7 +112,7 @@ internal static partial class Program
             var worker = new UpdateRunner();
             using var form = UpdateForm(worker);
             HostState host = Populate(form)[0];
-            host.Updates = new(UpdateComponents.All);
+            host.Updates = new(UpdateComponents.ZipServices);
             worker.Outcome = request =>
             {
                 WorkerResult result = worker.Success(request);
@@ -144,7 +144,7 @@ internal static partial class Program
             if (kinds.Length != 1) throw new InvalidOperationException("An update request must contain exactly one component ZIP.");
             return kinds[0];
         }
-        private ServiceInfo[] Inventory(string host) => HostUpdateState.Each(UpdateComponents.All).Select(c => new ServiceInfo
+        private ServiceInfo[] Inventory(string host) => HostUpdateState.Each(UpdateComponents.ZipServices).Select(c => new ServiceInfo
         {
             Kind = c == UpdateComponents.Payment ? "payment" : c == UpdateComponents.Fiscal ? "fiscal" : "serversuite",
             Name = HostUpdateState.Label(c), ProductVersion = versions.GetValueOrDefault((host, c), "1.0.0"), State = "Running"

@@ -9,6 +9,9 @@ namespace NovaTouchUpdater;
 public sealed class WorkerRequest
 {
     public string Action { get; set; } = "";
+    public bool LocalExecution { get; set; }
+    public MsiPackageRequest? MsiPackage { get; set; }
+    public MsiPackageRequest[] MsiPackages { get; set; } = [];
     public string Host { get; set; } = "";
     public string[] Hosts { get; set; } = [];
     public int Parallelism { get; set; } = 40;
@@ -40,7 +43,30 @@ public sealed class WorkerRequest
 public sealed class TransferFileRequest
 {
     public string LocalPath { get; set; } = "";
+    public string RelativePath { get; set; } = "";
     public string Sha256 { get; set; } = "";
+}
+
+public sealed class MsiPackageRequest
+{
+    public string Kind { get; set; } = "";
+    public string PayloadPath { get; set; } = "";
+    public string Sha256 { get; set; } = "";
+    public string RelativeMsiPath { get; set; } = "";
+    public string ProductName { get; set; } = "";
+    public string ProductVersion { get; set; } = "";
+    public string ProductCode { get; set; } = "";
+    public string UpgradeCode { get; set; } = "";
+    public TransferFileRequest[] CompanionFiles { get; set; } = [];
+}
+
+public sealed class InstalledProgramInfo
+{
+    public string Kind { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string ProductCode { get; set; } = "";
+    public string InstallLocation { get; set; } = "";
 }
 
 public sealed class ServiceInfo
@@ -80,6 +106,9 @@ public sealed class WorkerResult
     public bool Skipped { get; set; }
     public bool? DotNet48Installed { get; set; }
     public string PosVersion { get; set; } = "";
+    public string NtcVersion { get; set; } = "";
+    public bool RebootRequired { get; set; }
+    public InstalledProgramInfo[] InstalledPrograms { get; set; } = [];
     public ServiceInfo[] Services { get; set; } = [];
     public bool UploadRequired { get; set; } = true;
     public UploadDirectoryInfo? UploadDirectory { get; set; }
@@ -116,7 +145,7 @@ public sealed class WorkerRunner : IWorkerRunner
         string script = reader.ReadToEnd();
         if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
         {
-            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory" })
+            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory", "MsiUpdates" })
             {
                 using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream($"NovaTouchUpdater.{helper}.ps1")
                     ?? throw new InvalidOperationException($"Die eingebetteten Schritte {helper} fehlen.");

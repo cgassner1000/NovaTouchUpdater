@@ -1,7 +1,11 @@
 namespace NovaTouchUpdater;
 
 [Flags]
-internal enum UpdateComponents { None = 0, Payment = 1, Fiscal = 2, ServerSuite = 4, All = Payment | Fiscal | ServerSuite }
+internal enum UpdateComponents
+{
+    None = 0, Payment = 1, Fiscal = 2, ServerSuite = 4, Pos = 8, Ntc = 16, Ntv = 32, Oman = 64,
+    ZipServices = Payment | Fiscal | ServerSuite, Msi = Pos | Ntc | Ntv | Oman, All = ZipServices | Msi
+}
 
 // One update run, including automatic attempts and later manual retries.
 // Only verified successes leave Pending; scans and commands do not reset it.
@@ -14,13 +18,18 @@ internal sealed class HostUpdateState(UpdateComponents components)
     private readonly Dictionary<UpdateComponents, string> errors = [];
 
     internal static IEnumerable<UpdateComponents> Each(UpdateComponents components) =>
-        new[] { UpdateComponents.Payment, UpdateComponents.Fiscal, UpdateComponents.ServerSuite }.Where(c => (components & c) != 0);
+        new[] { UpdateComponents.Payment, UpdateComponents.Fiscal, UpdateComponents.ServerSuite, UpdateComponents.Pos,
+            UpdateComponents.Ntc, UpdateComponents.Ntv, UpdateComponents.Oman }.Where(c => (components & c) != 0);
 
     internal static string Label(UpdateComponents component) => component switch
     {
         UpdateComponents.Payment => "nt.payment",
         UpdateComponents.Fiscal => "nt.fiscal",
         UpdateComponents.ServerSuite => "Server Suite",
+        UpdateComponents.Pos => "NovaTouch POS",
+        UpdateComponents.Ntc => "NovaTouch Control",
+        UpdateComponents.Ntv => "NovaTouch Voucher",
+        UpdateComponents.Oman => "NovaTouch Orderman SOL",
         _ => string.Join(", ", Each(component).Select(Label))
     };
 

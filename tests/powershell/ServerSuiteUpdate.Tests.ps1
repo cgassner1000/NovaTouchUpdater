@@ -81,15 +81,16 @@ function Copy-Item {
     if ($script:copyFailure -and $target.StartsWith($script:copyFailure + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Simulated copy failure' }
     Microsoft.PowerShell.Management\Copy-Item -LiteralPath $source -Destination $target -Recurse:$Recurse -Force:$Force -ErrorAction Stop
 }
-function New-PSSessionOption { param($OpenTimeout, $OperationTimeout) @{} }
+function New-PSSessionOption { param($OpenTimeout, $OperationTimeout) Assert (-not $script:request.LocalExecution) 'Local ZIP updates must not create WinRM options'; @{} }
 function New-PSSession {
     param($ComputerName, $Port, $SessionOption, $ErrorAction, [switch]$UseSSL)
+    Assert (-not $script:request.LocalExecution) 'Local ZIP updates must not create a WinRM session'
     $expectedPort = if ($script:request.UseSsl) { $script:request.HttpsPort } else { 5985 }
     Assert ($Port -eq $expectedPort -and $UseSSL.IsPresent -eq $script:request.UseSsl) 'Updates must use the selected WinRM transport and port'
     [pscustomobject]@{ Id=1 }
 }
-function Invoke-Command { param($Session, $ScriptBlock, [object[]]$ArgumentList, $ErrorAction) & $ScriptBlock @ArgumentList }
-function Remove-PSSession { param($Session, $ErrorAction) $script:sessionRemoved++ }
+function Invoke-Command { param($Session, $ScriptBlock, [object[]]$ArgumentList, $ErrorAction) Assert (-not $script:request.LocalExecution) 'Local ZIP updates must not invoke remote commands'; & $ScriptBlock @ArgumentList }
+function Remove-PSSession { param($Session, $ErrorAction) Assert (-not $script:request.LocalExecution) 'Local ZIP updates must not close a WinRM session'; $script:sessionRemoved++ }
 
 $source = Get-Content -LiteralPath (Join-Path $TestScriptsRoot 'RemoteWorker.ps1') -Raw -Encoding UTF8
 $tokens = $null; $parseErrors = $null
@@ -105,6 +106,7 @@ function Get-ItemProperty {
     [pscustomobject]@{ ImagePath=('"' + $svc[0].ExePath + '" --service') }
 }
 $readers = @{
+    AssertLocalUpdateAccess = 'function AssertLocalUpdateAccess { $script:adminChecks++ }'
     ReadInventory = @'
 function ReadInventory {
     $script:inventoryReads++
@@ -131,7 +133,7 @@ function CopyRemoteFileWithProgress($session, [string]$localFile, [string]$remot
 '@
 }
 # Replace from the end to preserve AST offsets. The entire real update flow remains.
-$nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('ReadInventory','ReadSoftwareInventory','CopyRemoteFileWithProgress') }, $true))
+$nodes = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $readers.ContainsKey($n.Name) }, $true))
 foreach ($node in @($nodes | Sort-Object { $_.Extent.StartOffset } -Descending)) {
     $source = $source.Remove($node.Extent.StartOffset, $node.Extent.EndOffset - $node.Extent.StartOffset).Insert($node.Extent.StartOffset, $readers[$node.Name])
 }
@@ -145,10 +147,10 @@ function ResetCase([string]$name) {
     $script:serviceStates = @{}; $script:installed = @(); $script:pythonRoots=@()
     $script:stopFailure=''; $script:startFailure=''; $script:copyFailure=''; $script:reparsePath=''
     $script:staleAfter=''; $script:stoppedAfter=''; $script:missingAfter=''
-    $script:inventoryReads=0; $script:sessionRemoved=0; $script:changedServiceSet=$false
+    $script:inventoryReads=0; $script:sessionRemoved=0; $script:changedServiceSet=$false; $script:adminChecks=0
     $script:useRealInventory=$false
     $script:checkLiveProgress=$false; $script:workerOutput=$null
-    $script:request = @{ Host='example.invalid'; Action='update'; Username=''; Password=''; UseSsl=$false;
+    $script:request = @{ Host='example.invalid'; Action='update'; LocalExecution=$false; Username=''; Password=''; UseSsl=$false;
         PaymentZip=''; PaymentVersion=''; PaymentSha256=''; FiscalZip=''; FiscalVersion=''; FiscalSha256='';
         ServerSuiteZip=''; ServerSuiteVersion='2026.4.9792'; ServerSuiteSha256='';
         RemoteInstallPath=(Join-Path $script:case 'remote'); SkipZipTransfer=$false; ForceUpdate=$false }
@@ -227,7 +229,7 @@ function RunWorker([bool]$success=$true, [string]$errorPattern='') {
     $result = $results[0]
     Assert ($result.Success -eq $success) "Unexpected result: $($result | ConvertTo-Json -Compress -Depth 5)"
     if ($errorPattern) { Assert ($result.Error -match $errorPattern) "Wrong error: $($result.Error)" }
-    Assert ($script:sessionRemoved -eq 1) 'Remote session must always be closed'
+    Assert ($script:sessionRemoved -eq $(if ($script:request.LocalExecution) { 0 } else { 1 })) 'Only remote sessions must be closed'
     Assert (@(Get-ChildItem -LiteralPath $script:case -Filter '.novatouch-updater-stage-*' -Directory -Recurse).Count -eq 0) 'Staging must be removed after success or failure'
     $result
 }
@@ -245,6 +247,14 @@ function NoServiceOrTargetChanges {
 function Passed([string]$message) { Write-Output ('PASS ' + $message) }
 
 try {
+    ResetCase 'local-suite'
+    Service 'a' 'one'; Service 'b' 'two'; Package
+    $script:request.LocalExecution=$true; $script:request.Host='LOCALHOST'
+    $result = RunWorker
+    Assert ($result.Changed -and $result.Services.Count -eq 2 -and $script:adminChecks -eq 1) 'Local suite updates verify every instance and require administrative access only when needed'
+    Assert (@($script:events | Where-Object { $_ -like 'stop:*' }).Count -eq 2 -and @($script:events | Where-Object { $_ -like 'start:*' }).Count -eq 2) 'Local suite updates stop and restart all detected services without WinRM'
+    Passed 'local suite update runs directly without any WinRM calls'
+
     ResetCase 'multiple'
     $script:checkLiveProgress=$true
     Service 'a' 'one'; Service 'b' 'two' '2026.4.9792.0'; Service 'c' 'one'; Service 'disabled' 'three' '2026.3.9700' 'Disabled' 'Lib\site-packages\win32\PythonService.exe'

@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 
 namespace NovaTouchUpdater;
 
-public sealed class MainForm : Form
+public sealed partial class MainForm : Form
 {
     private readonly List<HostState> hosts = [];
     private readonly object logLock = new();
@@ -103,7 +103,7 @@ public sealed class MainForm : Form
         Text = $"NovaTouch Updater v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}";
         Font = UiTheme.BodyFont();
         BackColor = UiTheme.Background;
-        ClientSize = new Size(1560, 920);
+        ClientSize = new Size(1710, 980);
         MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterScreen;
         string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovaTouchUpdater", "Logs");
@@ -111,6 +111,7 @@ public sealed class MainForm : Form
         logFile = preview ? "" : Path.Combine(logDir, "Update-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
         ConstructUi();
         WindowLayout.CompleteInitialization(this);
+        executionMode.SelectedIndexChanged += (_, _) => UpdateExecutionSelection();
         if (!preview) LoadStartupConfig();
         // Erst nach dem ersten Layout die endgültigen Spaltenbreiten berechnen.
         connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
@@ -125,6 +126,7 @@ public sealed class MainForm : Form
         {
             ApplyColumnWeights();
             if (preview) return;
+            if (!string.IsNullOrWhiteSpace(softwarePath.Text)) await LoadSoftwarePackagesAsync();
             connectionTimer.Start();
             releaseTimer.Start();
             _ = CheckAppReleaseAsync();
@@ -133,7 +135,7 @@ public sealed class MainForm : Form
         UpdateButtons();
         FormClosing += (_, e) =>
         {
-            if (busy || selfUpdating)
+            if (busy || selfUpdating || loadingPackages)
             {
                 e.Cancel = true;
                 MessageBox.Show(this, selfUpdating ? "Die neue Updater-Version wird vorbereitet. Bitte den Abschluss abwarten oder 'Abbrechen' klicken." : "Ein Update-/Prüfdurchlauf ist noch aktiv. Bitte zuerst 'Abbrechen' klicken und den Abschluss der aktiven Hosts abwarten.",
@@ -158,6 +160,8 @@ public sealed class MainForm : Form
             connectionCancellation?.Cancel();
             connectionRunner.Dispose();
             runner.Dispose();
+            packageCancellation?.Cancel();
+            packageCatalog.Dispose();
         };
     }
 
@@ -175,6 +179,7 @@ public sealed class MainForm : Form
             txtUser.Text = config.Username ?? "";
             chkSsl.Checked = config.UseSsl;
             nHttpsPort.Value = config.HttpsPort;
+            softwarePath.Text = config.SoftwarePath ?? "";
 
             txtPassword.Text = loaded.Password;
 
@@ -187,6 +192,8 @@ public sealed class MainForm : Form
                 RebuildRows();
                 UpdateSummary();
             }
+            executionMode.SelectedIndex = Enum.TryParse<UpdateExecutionMode>(config.ExecutionMode, out var mode) ? (int)mode : (int)UpdateExecutionMode.Remote;
+            UpdateExecutionSelection();
             if (loaded.PasswordWarning is not null)
                 MessageBox.Show(this, loaded.PasswordWarning, "Passwort neu eingeben", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -207,8 +214,9 @@ public sealed class MainForm : Form
             AppConfigStore.Save(configPath, new UpdaterConfig
             {
                 // Save every loaded host, including rows hidden by a filter.
-                Hosts = hosts.Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
-                Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value
+                Hosts = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
+                Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
+                SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString()
             }, txtPassword.Text);
             Log("SYSTEM", $"Config gespeichert: {configPath} ({hosts.Count} Hosts)");
             MessageBox.Show(this, "Config gespeichert",
@@ -324,13 +332,14 @@ public sealed class MainForm : Form
         txtRemotePath.TextAlign = HorizontalAlignment.Left;
         txtRemotePath.Margin = new Padding(3, 2, 8, 2);
         targetPath.Controls.Add(txtRemotePath, 1, 0);
-        var hostCard = Section("Hosts", Stack(hostList, lblFile));
+        var localCard = CreateLocalUpdateCard();
+        localCard.Margin = new Padding(0, 0, 8, 12);
+        configuration.Controls.Add(localCard, 0, 0);
+        var hostCard = Section("Remote-Hosts", Stack(hostList, lblFile));
         hostCard.Name = "hostsCard";
         hostCard.Margin = new Padding(0, 0, 0, 12);
-        configuration.Controls.Add(hostCard, 0, 0);
-        configuration.SetColumnSpan(hostCard, 2);
-        var filesContent = Stack(PanelRow(btnPayment, lblPayment),
-            PanelRow(btnFiscal, lblFiscal), PanelRow(btnServerSuite, lblServerSuite), targetPath);
+        configuration.Controls.Add(hostCard, 1, 0);
+        var filesContent = Stack(CreatePackageSelectionGrid(), targetPath);
         var files = Section("Update-Dateien", filesContent);
         files.Name = "filesCard";
         files.Margin = new Padding(0, 0, 8, 0);
@@ -381,7 +390,7 @@ public sealed class MainForm : Form
         }, 1, 0);
         httpsOptions.Controls.Add(nHttpsPort, 2, 0);
         optionBar.Controls.Add(httpsOptions);
-        chkForceUpdate.Text = "Force Up-Downgrade";
+        chkForceUpdate.Text = "Force Up-Downgrade (ZIPs)";
         chkForceUpdate.AutoSize = true;
         chkForceUpdate.Anchor = AnchorStyles.Left;
         chkForceUpdate.Margin = new Padding(3);
@@ -391,15 +400,17 @@ public sealed class MainForm : Form
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
         chkSkipZipTransfer.Anchor = AnchorStyles.Left;
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
-        tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts (WinRM und Versionsprüfung).");
+        tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts. LOCALHOST wird direkt geprüft; Remote-Hosts über WinRM.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
-        tips.SetToolTip(btnSaveConfig, "Aktuell geladene Hosts, Zielpfad, Benutzer, Passwort und HTTPS speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
+        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, Benutzer, Passwort und HTTPS speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Absoluter Windows-Zielpfad auf den Clients.");
-        tips.SetToolTip(chkSkipZipTransfer, "Lokale ZIPs bestimmen weiterhin die Zielversion. ZIPs auf den Clients werden bei Updates nicht übertragen.");
+        tips.SetToolTip(chkSkipZipTransfer, "ZIP- und MSI-Pakete müssen bereits im Remote-Zielpfad liegen; sie werden anhand der lokalen Auswahl und SHA256 geprüft. Lokale Updates stellen ihre Pakete direkt bereit.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
-        var settingsContent = Stack(login, optionBar, chkSkipZipTransfer, chkForceUpdate);
+        executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
+        executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
+        var settingsContent = Stack(FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode), login, optionBar, chkSkipZipTransfer, chkForceUpdate);
         var settings = Section("Verbindung & Ausführung", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(8, 0, 0, 0);
@@ -416,16 +427,18 @@ public sealed class MainForm : Form
             stacked = needsStack;
             configuration.SuspendLayout();
             configuration.ColumnCount = stacked ? 1 : 2;
-            configuration.RowCount = stacked ? 3 : 2;
+            configuration.RowCount = stacked ? 4 : 2;
             configuration.ColumnStyles.Clear();
             configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, stacked ? 100 : 55));
             if (!stacked) configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
             configuration.RowStyles.Clear();
             configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            if (stacked) configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            configuration.SetColumnSpan(hostCard, stacked ? 1 : 2);
-            configuration.SetCellPosition(settings, stacked ? new TableLayoutPanelCellPosition(0, 2) : new TableLayoutPanelCellPosition(1, 1));
+            if (stacked) { configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize)); configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize)); }
+            configuration.SetCellPosition(localCard, new TableLayoutPanelCellPosition(0, 0));
+            configuration.SetCellPosition(hostCard, stacked ? new TableLayoutPanelCellPosition(0, 1) : new TableLayoutPanelCellPosition(1, 0));
+            configuration.SetCellPosition(files, stacked ? new TableLayoutPanelCellPosition(0, 2) : new TableLayoutPanelCellPosition(0, 1));
+            configuration.SetCellPosition(settings, stacked ? new TableLayoutPanelCellPosition(0, 3) : new TableLayoutPanelCellPosition(1, 1));
             files.Margin = stacked ? new Padding(0, 0, 0, 10) : new Padding(0, 0, 8, 0);
             settings.Margin = stacked ? Padding.Empty : new Padding(8, 0, 0, 0);
             configuration.ResumeLayout(true);
@@ -500,6 +513,7 @@ public sealed class MainForm : Form
         table.Columns.Add("fiscal", "Fiscal");
         table.Columns.Add("serversuite", "Server Suite");
         table.Columns.Add("pos", "NovaTouch POS");
+        table.Columns.Add("ntc", "NovaTouch NTC");
         table.Columns.Add("information", "Information");
         table.Columns["information"].CellTemplate = new InformationProgressCell();
         table.Columns.Add("result", "Status");
@@ -524,6 +538,7 @@ public sealed class MainForm : Form
         table.Columns["serversuite"].MinimumWidth = 125;
         table.Columns["serversuite"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         table.Columns["pos"].MinimumWidth = 110;
+        table.Columns["ntc"].MinimumWidth = 110;
         table.Columns["information"].MinimumWidth = 200;
         table.Columns["result"].MinimumWidth = 100;
         table.Columns["hostname"].DefaultCellStyle.Font = new Font(Font, FontStyle.Bold);
@@ -600,7 +615,7 @@ public sealed class MainForm : Form
         btnServerSuite.Click += (_, _) => ChooseServerSuite();
         btnWinRm.Click += (_, _) =>
         {
-            HostState[] targets = SelectedHosts();
+            HostState[] targets = SelectedRemoteHosts();
             if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
             using var dialog = new WinRmTestForm(targets.Select(h => h.Host).ToArray(),
                 txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked, (int)nHttpsPort.Value);
@@ -612,7 +627,7 @@ public sealed class MainForm : Form
         btnSendCommand.Click += async (_, _) => await SendCommandAsync();
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
         btnExport.Click += (_, _) => ExportHtml();
-        btnCancel.Click += (_, _) => cancellation?.Cancel();
+        btnCancel.Click += (_, _) => { cancellation?.Cancel(); packageCancellation?.Cancel(); };
 
         main.Layout += (_, _) =>
         {
@@ -659,7 +674,7 @@ public sealed class MainForm : Form
             table.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             // Minimum widths are a shared budget, not independent limits that
             // can push Status outside the viewport. Narrow windows wrap text.
-            int[] preferredMinimums = [0, 140, 104, 76, 90, 90, 112, 128, 220, 94];
+            int[] preferredMinimums = [0, 140, 104, 76, 90, 90, 112, 128, 128, 220, 94];
             float scale = table.DeviceDpi / 96F * table.Font.SizeInPoints / 9.5F;
             int scrollbarWidth = table.Controls.OfType<VScrollBar>().Where(scrollbar => scrollbar.Visible).Sum(scrollbar => scrollbar.Width);
             int borderWidth = table.BorderStyle == BorderStyle.None ? 0 : SystemInformation.BorderSize.Width * 2;
@@ -685,6 +700,7 @@ public sealed class MainForm : Form
             table.Columns["fiscal"].FillWeight = 6;
             table.Columns["serversuite"].FillWeight = 9;
             table.Columns["pos"].FillWeight = 10;
+            table.Columns["ntc"].FillWeight = 10;
             table.Columns["information"].FillWeight = 32;
             table.Columns["result"].FillWeight = 8;
 
@@ -769,7 +785,7 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill, Multiline = true, AcceptsReturn = true,
             ScrollBars = ScrollBars.Vertical, WordWrap = false
         };
-        hostNames.Lines = hosts.Select(h => h.Host).ToArray();
+        hostNames.Lines = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray();
         var buttons = FlowRow();
         buttons.FlowDirection = FlowDirection.RightToLeft;
         buttons.Padding = new Padding(8);
@@ -862,7 +878,7 @@ public sealed class MainForm : Form
         UpdateButtons();
     }
 
-    private HostState[] SelectedHosts() => hosts.Where(host => host.IsSelected).ToArray();
+    private HostState[] SelectedHosts() => ExecutionHosts().Where(host => host.IsSelected).ToArray();
 
     private HostState[] UpdateTargets(bool onlyFailed) => SelectedHosts()
         .Where(host => onlyFailed ? host.CanRetryUpdate : host.Scanned).ToArray();
@@ -893,10 +909,13 @@ public sealed class MainForm : Form
 
     private void RebuildRows()
     {
+        if (Mode != UpdateExecutionMode.Remote && !hosts.Any(h => h.IsLocal))
+            hosts.Insert(0, new HostState { Host = "LOCALHOST", Connection = "Lokal", Phase = "Lokaler Rechner – ohne WinRM" });
         table.Rows.Clear();
         foreach (HostState host in hosts) host.Row = null;
         foreach (HostState host in hosts)
         {
+            if ((Mode == UpdateExecutionMode.Local && !host.IsLocal) || (Mode == UpdateExecutionMode.Remote && host.IsLocal)) continue;
             bool include = statusFilter.SelectedIndex switch
             {
                 1 => host.Result == "Fehler",
@@ -947,7 +966,7 @@ public sealed class MainForm : Form
 
     private async Task TransferFilesAsync()
     {
-        HostState[] targets = SelectedHosts();
+        HostState[] targets = SelectedRemoteHosts();
         if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
         string remotePath = txtRemotePath.Text.Trim();
         if (!Regex.IsMatch(remotePath, @"^[A-Za-z]:\\"))
@@ -1070,7 +1089,7 @@ public sealed class MainForm : Form
 
     private async Task SendCommandAsync()
     {
-        HostState[] targets = SelectedHosts();
+        HostState[] targets = SelectedRemoteHosts();
         if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
 
         using var dialog = new CommandDialog(targets.Length);
@@ -1201,11 +1220,14 @@ public sealed class MainForm : Form
         activeSkipZipTransfer = chkSkipZipTransfer.Checked;
     }
 
-    private WorkerRequest Request(string action, HostState host, UpdateComponents components = UpdateComponents.All) => new()
+    private WorkerRequest Request(string action, HostState host, UpdateComponents components = UpdateComponents.All)
     {
+        var request = new WorkerRequest
+        {
         Action = action, Host = host.Host,
-        Username = activeUser, Password = activePassword, UseSsl = activeSsl, HttpsPort = activeHttpsPort, ForceUpdate = activeForceUpdate,
-        RemoteInstallPath = activeRemoteInstallPath, SkipZipTransfer = activeSkipZipTransfer,
+        LocalExecution = host.IsLocal,
+        Username = host.IsLocal ? "" : activeUser, Password = host.IsLocal ? "" : activePassword, UseSsl = !host.IsLocal && activeSsl, HttpsPort = activeHttpsPort, ForceUpdate = activeForceUpdate,
+        RemoteInstallPath = host.IsLocal ? LocalWorkspace : activeRemoteInstallPath, SkipZipTransfer = !host.IsLocal && activeSkipZipTransfer,
         PaymentZip = (components & UpdateComponents.Payment) != 0 ? paymentZip : "",
         PaymentVersion = (components & UpdateComponents.Payment) != 0 ? paymentVersion : "",
         PaymentSha256 = (components & UpdateComponents.Payment) != 0 ? paymentHash : "",
@@ -1215,18 +1237,25 @@ public sealed class MainForm : Form
         ServerSuiteZip = (components & UpdateComponents.ServerSuite) != 0 ? serverSuiteZip : "",
         ServerSuiteVersion = (components & UpdateComponents.ServerSuite) != 0 ? serverSuiteVersion : "",
         ServerSuiteSha256 = (components & UpdateComponents.ServerSuite) != 0 ? serverSuiteHash : ""
-    };
+        };
+        request.MsiPackages = msiPackages.Where(pair => (pair.Key & components) != 0).Select(pair => pair.Value).ToArray();
+        if (action == "update" && (components & UpdateComponents.Msi) != UpdateComponents.None && (components & UpdateComponents.ZipServices) == UpdateComponents.None)
+            request.MsiPackage = request.MsiPackages.Single();
+        return request;
+    }
 
     private UpdateComponents SelectedUpdateComponents() =>
         (string.IsNullOrWhiteSpace(paymentZip) ? UpdateComponents.None : UpdateComponents.Payment) |
         (string.IsNullOrWhiteSpace(fiscalZip) ? UpdateComponents.None : UpdateComponents.Fiscal) |
-        (string.IsNullOrWhiteSpace(serverSuiteZip) ? UpdateComponents.None : UpdateComponents.ServerSuite);
+        (string.IsNullOrWhiteSpace(serverSuiteZip) ? UpdateComponents.None : UpdateComponents.ServerSuite) |
+        msiPackages.Keys.Aggregate(UpdateComponents.None, (mask, component) => mask | component);
 
     private UpdateComponents ComponentsForUpdate(HostState host, bool onlyFailed) =>
         onlyFailed && host.Updates is { Pending: not UpdateComponents.None } state ? state.Pending : SelectedUpdateComponents();
 
     private bool ValidateCredentials()
     {
+        if (SelectedRemoteHosts().Length == 0) return true;
         if (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)
         {
             MessageBox.Show(this, "Bitte das Passwort für den angegebenen Benutzer eingeben. Bei leerem Benutzernamen wird die aktuelle Windows-Anmeldung verwendet.");
@@ -1259,12 +1288,12 @@ public sealed class MainForm : Form
                 Mark(host, h =>
                 {
                     h.Connection = "Prüfung läuft"; h.Phase = "Verbindung"; h.Result = "Offen"; h.Error = ""; h.Scanned = false;
-                    h.DotNet48Installed = null; h.PosVersion = "–";
+                    h.DotNet48Installed = null; h.PosVersion = h.NtcVersion = "–";
                 });
                 var result = await DoWorkerAsync(host, "probe", token);
                 Mark(host, h =>
                 {
-                    h.Connection = result.Success ? "Verbunden" : "Nicht erreichbar";
+                    h.Connection = result.Success ? (h.IsLocal ? "Lokal" : "Verbunden") : "Nicht erreichbar";
                     h.Phase = result.Success ? "Verbunden" : "Verbindungsfehler";
                     h.Error = result.Success ? "" : FriendlyError(result);
                     h.Result = result.Success ? "Offen" : "Fehler";
@@ -1272,8 +1301,8 @@ public sealed class MainForm : Form
                 CountCompleted();
             }, ct);
             if (ct.IsCancellationRequested) return;
-            ResetProgress(targets.Count(h => h.Connection == "Verbunden"));
-            await ParallelPhaseAsync(targets.Where(h => h.Connection == "Verbunden").ToArray(), (int)nScan.Value, async (host, token) =>
+            ResetProgress(targets.Count(h => h.Connection is "Verbunden" or "Lokal"));
+            await ParallelPhaseAsync(targets.Where(h => h.Connection is "Verbunden" or "Lokal").ToArray(), (int)nScan.Value, async (host, token) =>
             {
                 Mark(host, h => h.Phase = "Versionen werden gelesen");
                 var result = await DoWorkerAsync(host, "scan", token);
@@ -1281,7 +1310,7 @@ public sealed class MainForm : Form
                 {
                     h.Scanned = result.Success;
                     ReadScanInventory(h, result);
-                    if (result.Success) { h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; }
+                    if (result.Success) { h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; h.PosBefore = h.PosVersion; h.NtcBefore = h.NtcVersion; }
                     h.Phase = result.Success ? "Scan abgeschlossen" : "Scan fehlgeschlagen";
                     h.Result = result.Success ? "Bereit" : "Fehler";
                     h.Error = result.Success ? "" : FriendlyError(result);
@@ -1294,11 +1323,11 @@ public sealed class MainForm : Form
     private async Task RunUpdatesAsync(bool onlyFailed)
     {
         if (busy || selfUpdating || SelectedHosts().Length == 0 || !ValidateCredentials()) return;
-        if (string.IsNullOrWhiteSpace(paymentZip) && string.IsNullOrWhiteSpace(fiscalZip) && string.IsNullOrWhiteSpace(serverSuiteZip))
+        if (SelectedUpdateComponents() == UpdateComponents.None)
         {
-            MessageBox.Show(this, "Mindestens eine Update-ZIP auswählen."); return;
+            MessageBox.Show(this, "Mindestens ein Update-Paket auswählen oder den Softwareordner einlesen."); return;
         }
-        if (!Regex.IsMatch(txtRemotePath.Text.Trim(), @"^[A-Za-z]:\\"))
+        if (SelectedRemoteHosts().Length > 0 && !Regex.IsMatch(txtRemotePath.Text.Trim(), @"^[A-Za-z]:\\"))
         {
             MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad auf den Clients eingeben, z. B. C:\\install\\Novacom.",
                 "Zielpfad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1313,15 +1342,11 @@ public sealed class MainForm : Form
         UpdateComponents missing = needed & ~SelectedUpdateComponents();
         if (missing != UpdateComponents.None)
         {
-            MessageBox.Show(this, "Für die Wiederholung bitte die Update-ZIP auswählen: " + HostUpdateState.Label(missing),
+            MessageBox.Show(this, "Für die Wiederholung bitte das Update-Paket auswählen: " + HostUpdateState.Label(missing),
                 "Fehlende Update-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        string componentSummary = "Geplante Komponenten:\n" + string.Join("\n", HostUpdateState.Each(needed).Select(component =>
-            $"{HostUpdateState.Label(component)}: {selected.Count(host => (ComponentsForUpdate(host, onlyFailed) & component) != 0)} Host(s)"));
-        if (onlyFailed) componentSummary += "\nBereits verifizierte Komponenten werden nicht wiederholt.";
-        if (MessageBox.Show(this, componentSummary + "\n\n" +
-            $"Update für {selected.Length} Hosts starten?\n\nModus: {(chkForceUpdate.Checked ? "FORCE UPDATE (Versiongleichheit ignorieren)" : "Normal (gleiche Version überspringen)")}\nPayment Target: {(paymentVersion.Length == 0 ? "–" : paymentVersion)}\nFiscal Target: {(fiscalVersion.Length == 0 ? "–" : fiscalVersion)}\nServer Suite Target: {(serverSuiteVersion.Length == 0 ? "–" : serverSuiteVersion)}\nZielpfad: {txtRemotePath.Text.Trim()}\nZIP-Übertragung: {(chkSkipZipTransfer.Checked ? "deaktiviert (ZIPs auf Hosts werden geprüft)" : "aktiv")}\n\nNur Komponenten mit ausgewählter ZIP werden aktualisiert. Bei der Server Suite werden alle Instanzen angehalten und Dateien in apps\\nt3-server-suite sowie portable_python überschrieben oder neu angelegt. Zielordner und zusätzliche Client-Dateien bleiben erhalten. ZIP-Quellen: apps\\nt3-server-suite und installer\\python\\portable_python. Deaktivierte Dienste bleiben deaktiviert.",
+        if (MessageBox.Show(this, UpdateConfirmation(selected, needed, onlyFailed),
             "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         CaptureCredentials();
         lastUpdateForce = activeForceUpdate;
@@ -1336,6 +1361,7 @@ public sealed class MainForm : Form
             paymentHash = (needed & UpdateComponents.Payment) != 0 ? await WorkerRunner.Sha256Async(paymentZip, ct) : "";
             fiscalHash = (needed & UpdateComponents.Fiscal) != 0 ? await WorkerRunner.Sha256Async(fiscalZip, ct) : "";
             serverSuiteHash = (needed & UpdateComponents.ServerSuite) != 0 ? await WorkerRunner.Sha256Async(serverSuiteZip, ct) : "";
+            await HashMsiPackagesAsync(needed, ct);
             Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; Zielpfad: {activeRemoteInstallPath}; ZIP-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
             ResetProgress(selected.Length);
             var ready = selected;
@@ -1377,7 +1403,7 @@ public sealed class MainForm : Form
                         if (attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
                         continue;
                     }
-                    Mark(host, h => h.Connection = "Verbunden");
+                    Mark(host, h => h.Connection = h.IsLocal ? "Lokal" : "Verbunden");
                     var scan = await DoWorkerAsync(host, "scan", token);
                     Mark(host, h => ReadScanInventory(h, scan));
                     if (!scan.Success)
@@ -1404,6 +1430,7 @@ public sealed class MainForm : Form
                             state.Complete(component, result);
                             h.Services = result.Services.ToList();
                             ReadVersions(h);
+                            if ((component & UpdateComponents.Msi) != UpdateComponents.None) ReadMsiInventory(h, result);
                             h.Phase = HostUpdateState.Label(component) + ": " + (result.Skipped ? result.Message : "verifiziert");
                         }
                         else
@@ -1428,7 +1455,7 @@ public sealed class MainForm : Form
                 {
                     h.Error = "";
                     h.Result = state.AllSkipped ? "Übersprungen" : state.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
-                    h.Phase = state.AllSkipped ? "Keine ausgewählten Dienste installiert – übersprungen" : "Verifiziert";
+                    h.Phase = state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
                     if (state.Changed) h.SetProgress(100);
                 }
             });
@@ -1452,7 +1479,7 @@ public sealed class MainForm : Form
         // Do not repeatedly authenticate while credentials are being edited.
         if (txtUser.Focused || txtPassword.Focused || nHttpsPort.ContainsFocus || (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)) return;
 
-        var targets = SelectedHosts().ToDictionary(h => h.Host, h => (Host: h, Revision: h.ConnectionState.Revision), StringComparer.OrdinalIgnoreCase);
+        var targets = SelectedRemoteHosts().ToDictionary(h => h.Host, h => (Host: h, Revision: h.ConnectionState.Revision), StringComparer.OrdinalIgnoreCase);
         if (targets.Count == 0) return;
         var received = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         int generation = connectionGeneration;
@@ -1523,12 +1550,13 @@ public sealed class MainForm : Form
         Action<HostState, string> failed, CancellationToken ct)
     {
         var checks = new ConcurrentDictionary<HostState, WorkerResult>();
+        foreach (HostState local in targets.Where(h => h.IsLocal)) checks[local] = new WorkerResult { Success = true, UploadRequired = false };
         void Progress(HostState host, WorkerEvent ev)
         {
             Log(host.Host, ev.Phase + ": " + ev.Message);
             Mark(host, h => h.ApplyProgress(ev));
         }
-        await Parallel.ForEachAsync(targets,
+        await Parallel.ForEachAsync(targets.Where(h => !h.IsLocal),
             new ParallelOptions { MaxDegreeOfParallelism=(int)nUpdate.Value, CancellationToken=ct }, async (host, token) =>
         {
             try
@@ -1664,7 +1692,7 @@ public sealed class MainForm : Form
     private void ReadScanInventory(HostState h, WorkerResult result)
     {
         h.DotNet48Installed = result.DotNet48Installed;
-        h.PosVersion = string.IsNullOrWhiteSpace(result.PosVersion) ? "–" : DisplayText.Clean(result.PosVersion);
+        ReadMsiInventory(h, result);
         h.Services = result.Services.ToList();
         if (result.Success) ReadVersions(h);
         else { h.Payment = "–"; h.Fiscal = "–"; h.ServerSuite = "–"; }
@@ -1711,6 +1739,8 @@ public sealed class MainForm : Form
         cells["serversuite"].Value = h.ServerSuite;
         cells["serversuite"].ToolTipText = DisplayText.ServiceInstances(h.Services.Where(s => s.Kind == "serversuite"), h.ServerSuite);
         cells["pos"].Value = h.PosVersion;
+        cells["ntc"].Value = h.NtcVersion;
+        cells["ntc"].ToolTipText = string.Join(Environment.NewLine, h.InstalledPrograms.Select(p => p.DisplayName + ": " + p.Version));
         // Bei mehreren abweichenden Versionsständen bleibt der volle Inhalt per Tooltip lesbar.
         cells["payment"].ToolTipText = h.Payment;
         cells["fiscal"].ToolTipText = h.Fiscal;
@@ -1727,12 +1757,13 @@ public sealed class MainForm : Form
 
     private void UpdateSummary()
     {
-        lblSelection.Text = $"{hosts.Count(h => h.IsSelected)} von {hosts.Count} ausgewählt";
-        lblSummary.Text = $"Hosts: {hosts.Count}    |    Verbunden: {hosts.Count(h => h.Connection == "Verbunden")}    |    " +
-            $"Aktualisiert: {hosts.Count(h => h.Result == "Erfolgreich")}    |    " +
-            $"Bereits aktuell: {hosts.Count(h => h.Result == "Bereits aktuell / übersprungen")}    |    " +
-            $"Befehle OK: {hosts.Count(h => h.CommandSucceeded)}    |    " +
-            $"Fehler: {hosts.Count(h => h.Result == "Fehler")}";
+        HostState[] active = ExecutionHosts().ToArray();
+        lblSelection.Text = $"{active.Count(h => h.IsSelected)} von {active.Length} ausgewählt";
+        lblSummary.Text = $"Hosts: {active.Length}    |    Verbunden / lokal: {active.Count(h => h.Connection is "Verbunden" or "Lokal")}    |    " +
+            $"Aktualisiert: {active.Count(h => h.Result == "Erfolgreich")}    |    " +
+            $"Bereits aktuell: {active.Count(h => h.Result == "Bereits aktuell / übersprungen")}    |    " +
+            $"Befehle OK: {active.Count(h => h.CommandSucceeded)}    |    " +
+            $"Fehler: {active.Count(h => h.Result == "Fehler")}";
     }
 
     private void ResetProgress(int count)
@@ -1818,27 +1849,30 @@ public sealed class MainForm : Form
 
     private void UpdateButtons()
     {
-        bool idle = !busy && !selfUpdating;
+        bool idle = !busy && !selfUpdating && !loadingPackages;
         HostState[] selected = SelectedHosts();
+        bool remote = Mode != UpdateExecutionMode.Local;
         updateNotice.Enabled = idle;
-        btnImport.Enabled = idle; btnAddHost.Enabled = idle; btnSaveConfig.Enabled = idle;
-        btnRemoveHost.Enabled = idle && table.CurrentRow?.Tag is HostState;
+        btnImport.Enabled = btnAddHost.Enabled = idle && remote; btnSaveConfig.Enabled = idle;
+        btnRemoveHost.Enabled = idle && table.CurrentRow?.Tag is HostState { IsLocal: false };
         btnPayment.Enabled = idle; btnFiscal.Enabled = idle; btnServerSuite.Enabled = idle;
         btnSelectAll.Enabled = btnClearSelection.Enabled = idle && hosts.Count > 0;
-        lblSelection.Text = $"{selected.Length} von {hosts.Count} ausgewählt";
+        lblSelection.Text = $"{selected.Length} von {ExecutionHosts().Count()} ausgewählt";
         if (table.Columns.Contains("include")) table.Columns["include"].ReadOnly = !idle;
-        btnWinRm.Enabled = idle && selected.Length > 0;
+        btnWinRm.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnScan.Enabled = idle && selected.Length > 0;
         btnUpdate.Enabled = idle && selected.Any(h => h.Scanned);
-        btnTransfer.Enabled = idle && selected.Length > 0;
-        btnSendCommand.Enabled = idle && selected.Length > 0;
+        btnTransfer.Enabled = idle && selected.Any(h => !h.IsLocal);
+        btnSendCommand.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnRetry.Enabled = idle && selected.Any(h => h.CanRetryUpdate);
         btnExport.Enabled = idle && hosts.Count > 0;
-        btnCancel.Enabled = busy || selfUpdating;
-        nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle; chkForceUpdate.Enabled = idle;
-        nHttpsPort.Enabled = idle && chkSsl.Checked;
-        txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle;
-        txtUser.Enabled = idle; txtPassword.Enabled = idle; statusFilter.Enabled = idle;
+        btnCancel.Enabled = busy || selfUpdating || loadingPackages;
+        nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle && remote; chkForceUpdate.Enabled = idle;
+        nHttpsPort.Enabled = idle && remote && chkSsl.Checked;
+        txtRemotePath.Enabled = idle && remote; chkSkipZipTransfer.Enabled = idle && remote;
+        txtUser.Enabled = txtPassword.Enabled = idle && remote; statusFilter.Enabled = idle;
+        executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = readPackages.Enabled = idle;
+        foreach (var controls in msiControls.Values) controls.Button.Enabled = idle;
     }
 
     private void Log(string host, string msg)
@@ -1876,7 +1910,8 @@ public sealed class MainForm : Form
             string filename = "NovaTouchUpdate-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") +
                 "-" + Guid.NewGuid().ToString("N")[..8] + ".html";
             string previewFile = Path.Combine(previewDir, filename);
-            string report = HtmlReport.Create(hosts, paymentVersion, fiscalVersion, DateTime.Now, lastUpdateForce, serverSuiteVersion);
+            string report = HtmlReport.Create(ExecutionHosts().ToArray(), paymentVersion, fiscalVersion, DateTime.Now, lastUpdateForce, serverSuiteVersion,
+                msiPackages.Values.ToDictionary(p => p.ProductName, p => p.ProductVersion), executionMode.Text);
             File.WriteAllText(previewFile, report, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             Process.Start(new ProcessStartInfo(previewFile) { UseShellExecute = true });
         }

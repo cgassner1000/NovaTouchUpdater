@@ -10,7 +10,8 @@ internal static class HtmlReport
 {
     private static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
 
-    public static string Create(IReadOnlyList<HostState> hosts, string paymentTarget, string fiscalTarget, DateTime createdAt, bool forceUpdate, string serverSuiteTarget = "")
+    public static string Create(IReadOnlyList<HostState> hosts, string paymentTarget, string fiscalTarget, DateTime createdAt, bool forceUpdate, string serverSuiteTarget = "",
+        IReadOnlyDictionary<string, string>? msiTargets = null, string executionMode = "")
     {
         int count = hosts.Count;
         int updated = hosts.Count(x => x.Result == "Erfolgreich");
@@ -55,14 +56,19 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 <body>
 <header class="hero">
   <h1>NovaTouch Updater</h1>
-  <p>Update-Ergebnisbericht · nt.payment / nt.fiscal / nt3 Server Suite</p>
+  <p>Update-Ergebnisbericht · lokal und remote · Dienste und NovaTouch-MSI-Pakete</p>
 """);
         sb.Append("  <div class=\"stamp\">Erstellt: ").Append(E(createdAt.ToString("dd.MM.yyyy HH:mm:ss"))).AppendLine("</div>");
         sb.AppendLine("</header><main><section class=\"meta\" aria-label=\"Zielversionen\">");
         sb.Append("<span class=\"chip\">Payment Target: <strong>").Append(E(Show(paymentTarget))).AppendLine("</strong></span>");
         sb.Append("<span class=\"chip\">Fiscal Target: <strong>").Append(E(Show(fiscalTarget))).AppendLine("</strong></span>");
         sb.Append("<span class=\"chip\">Server Suite Target: <strong>").Append(E(Show(serverSuiteTarget))).AppendLine("</strong></span>");
-        sb.Append("<span class=\"chip\">Update-Modus: <strong>").Append(forceUpdate ? "Force Update" : "Normal").AppendLine("</strong></span>");
+        if (msiTargets is not null)
+            foreach (var (name, version) in msiTargets)
+                sb.Append("<span class=\"chip\">").Append(E(name)).Append(" Target: <strong>").Append(E(version)).AppendLine("</strong></span>");
+        if (!string.IsNullOrWhiteSpace(executionMode))
+            sb.Append("<span class=\"chip\">Ausführung: <strong>").Append(E(executionMode)).AppendLine("</strong></span>");
+        sb.Append("<span class=\"chip\">ZIP-Modus: <strong>").Append(forceUpdate ? "Force Up-Downgrade" : "Normal").AppendLine("</strong></span>");
         sb.Append("<span class=\"chip\">Erfolgsquote: <strong>").Append(percent).AppendLine(" %</strong></span>");
         sb.AppendLine("</section><section class=\"stats\" aria-label=\"Zusammenfassung\">");
         Card(sb, "Hosts gesamt", count, "");
@@ -93,7 +99,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 </div>
 <div class="scroll"><table id="hostTable">
 <thead><tr>
-  <th>Hostname</th><th>Verbindung</th><th class="framework">.NET 4.8</th><th class="ver-head">Payment (vorher → nachher)</th><th class="ver-head">Fiscal (vorher → nachher)</th><th class="ver-head">Server Suite (vorher → nachher)</th><th>NovaTouch POS</th>
+  <th>Hostname</th><th>Verbindung</th><th class="framework">.NET 4.8</th><th class="ver-head">Payment (vorher → nachher)</th><th class="ver-head">Fiscal (vorher → nachher)</th><th class="ver-head">Server Suite (vorher → nachher)</th><th>NovaTouch POS</th><th>NovaTouch NTC</th>
   <th>Information</th><th>Details</th><th>Status</th>
 </tr></thead><tbody>
 """);
@@ -109,7 +115,9 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
             string search = string.Join(' ', new[] { host.Host, host.Connection, DisplayText.Clean(host.PaymentBefore), DisplayText.Clean(host.Payment),
                 DisplayText.Clean(host.FiscalBefore), DisplayText.Clean(host.Fiscal), DisplayText.DotNet48Description(host.DotNet48Installed),
                 DisplayText.Clean(host.ServerSuiteBefore), DisplayText.Clean(host.ServerSuite), DisplayText.ServiceInstances(host.Services.Where(s => s.Kind == "serversuite"), host.ServerSuite),
-                DisplayText.Clean(host.PosVersion), DisplayText.WithAttempt(DisplayText.Clean(host.Phase), host.Attempt),
+                DisplayText.Clean(host.PosVersion), DisplayText.Clean(host.NtcVersion),
+                string.Join(' ', host.InstalledPrograms.Select(p => p.DisplayName + " " + p.Version)),
+                DisplayText.WithAttempt(DisplayText.Clean(host.Phase), host.Attempt),
                 host.Result, DisplayText.Clean(host.Error) }).ToLowerInvariant();
             sb.Append("<tr data-kind=\"").Append(kind).Append("\" data-search=\"").Append(E(search)).AppendLine("\">");
             sb.Append("<td class=\"host\">").Append(E(host.Host)).AppendLine("</td>");
@@ -132,12 +140,16 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
                 sb.Append("<div class=\"dim\">").Append(E(instance.Name)).Append(": ").Append(E(DisplayText.ServiceVersions([instance]))).Append("</div>");
             sb.AppendLine("</td>");
             sb.Append("<td class=\"pos-ver\">").Append(E(DisplayText.Clean(host.PosVersion))).AppendLine("</td>");
+            sb.Append("<td class=\"ntc-ver\">").Append(E(DisplayText.Clean(host.NtcVersion))).AppendLine("</td>");
             // Der aktuelle Schritt und die bisherigen Fehler-/Informationstexte teilen sich eine Spalte.
             sb.Append("<td class=\"info-cell\">");
             if (!string.IsNullOrWhiteSpace(host.Phase) || host.Attempt > 1)
                 sb.Append("<div class=\"info-phase\">").Append(E(DisplayText.WithAttempt(DisplayText.Clean(host.Phase), host.Attempt))).Append("</div>");
             if (!string.IsNullOrWhiteSpace(host.Error) && !host.Error.Equals(host.Phase, StringComparison.OrdinalIgnoreCase))
                 sb.Append("<div class=\"info-error\">").Append(E(DisplayText.Clean(host.Error))).Append("</div>");
+            foreach (InstalledProgramInfo program in host.InstalledPrograms)
+                sb.Append("<div class=\"dim\">").Append(E(program.DisplayName)).Append(": ").Append(E(program.Version)).Append("</div>");
+            if (host.RebootRequired) sb.Append("<div class=\"info-error\">Windows-Neustart erforderlich</div>");
             sb.AppendLine("</td>");
             sb.Append("<td class=\"log\"><details><summary>Protokoll</summary><pre>");
             sb.Append(E(host.Log.Count == 0 ? "Kein Hostprotokoll vorhanden." : string.Join(Environment.NewLine, host.Log.Select(DisplayText.Clean))));
