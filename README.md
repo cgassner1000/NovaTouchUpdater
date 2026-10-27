@@ -1,40 +1,5 @@
 # NovaTouch Updater — WinForms / .NET 8
 
-Quellcode für eine eigenständige Windows-GUI zur parallelen Verwaltung von Updates der Windows-Dienste `nt.payment*`, `nt.fiscal*` und aller Instanzen `nt3_server_suite*`, basierend auf den gelieferten PowerShell-Skripten.
-
-## Dateiaufbau
-
-```text
-NovaTouchUpdater/
-├── NovaTouchUpdater.slnx       Visual-Studio-Projektmappe mit Anwendung und Tests
-├── Build-win64.cmd            Eigenständige Windows-EXE erstellen
-├── version.txt                Zentrale Versionseinstellung mit Anleitung
-├── Directory.Build.props      Gemeinsame Build- und Ausgabeordner
-├── config/                    Beispielkonfiguration ohne Zugangsdaten
-├── src/NovaTouchUpdater/      Anwendung und Projektdatei
-│   ├── Program.cs             Programmeinstieg
-│   ├── UI/                    Hauptfenster, Dialoge, Steuerelemente, Layout und Design
-│   ├── Configuration/         Config laden/speichern und Passwortverschlüsselung
-│   ├── Models/                Hostzustand, Verbindungszustand und Paketnamen
-│   ├── DirectoryServices/     Domänensuche und LDAP
-│   ├── Remoting/              PowerShell-Prozessausführung und JSON-Protokoll
-│   ├── Updates/               GitHub-Versionsprüfung und Selbstaktualisierung
-│   ├── Reporting/             HTML-Bericht
-│   ├── Common/                Gemeinsame Textaufbereitung
-│   ├── Scripts/               Eingebettete PowerShell-Worker und Updateabläufe
-│   └── Assets/                Programmsymbol und Bildressourcen
-├── tests/                     Automatische Entwicklungsprüfungen; siehe tests/README.md
-│   ├── dotnet/                C#-Tests für Zustände, Konfiguration und Oberfläche
-│   ├── powershell/            Tests der Worker mit simulierten Diensten und Hosts
-│   └── Shared/                Gemeinsame Testpfade
-└── artifacts/                 Erzeugte Dateien; nicht in Git
-    ├── bin/                   Kompilierte Anwendungen und Testprogramme
-    ├── obj/                   Build-Zwischendateien
-    ├── publish/win-x64/       Fertige NovaTouchUpdater.exe
-    ├── test-results/          Testdateien, Protokolle und Vorschaubilder
-    └── legacy/                Frühere Build-Ausgaben und Vorschaudateien
-```
-
 Die Tests prüfen unter anderem Versionsvergleiche, alle Server-Suite-Instanzen, den Erhalt bestehender Dateien, Fehlerfälle und die Darstellung bei verschiedenen Skalierungen. Sie gehören zur Entwicklung und werden nicht in die fertige Anwendung eingebaut. Die PowerShell-Worker unter `src/NovaTouchUpdater/Scripts` werden weiterhin mit denselben Ressourcennamen in die EXE eingebettet.
 
 Eine vorhandene persönliche `config.json` im Hauptordner bleibt dort und wird für lokale Builds neben die EXE kopiert. Die Anwendung selbst lädt und speichert ihre Config weiterhin neben der gestarteten EXE. Die Beispielkonfiguration liegt unter `config/config.example.json`; erzeugte Dateien und persönliche Einstellungen sind in Git ignoriert.
@@ -86,6 +51,39 @@ dotnet publish .\src\NovaTouchUpdater\NovaTouchUpdater.csproj -c Release -r win-
 Ergebnis im Ordner `artifacts\publish\win-x64\`.
 
 Build und lokale Tests sind unter Windows ausführbar. Die automatisierten Update-Tests verwenden Testordner und simulierte Dienste/WinRM-Aufrufe; sie ersetzen keinen Update-Test auf einem echten Testclient.
+
+## Dateiaufbau
+
+```text
+NovaTouchUpdater/
+├── NovaTouchUpdater.slnx       Visual-Studio-Projektmappe mit Anwendung und Tests
+├── Build-win64.cmd            Eigenständige Windows-EXE erstellen
+├── version.txt                Zentrale Versionseinstellung mit Anleitung
+├── Directory.Build.props      Gemeinsame Build- und Ausgabeordner
+├── config/                    Beispielkonfiguration ohne Zugangsdaten
+├── src/NovaTouchUpdater/      Anwendung und Projektdatei
+│   ├── Program.cs             Programmeinstieg
+│   ├── UI/                    Hauptfenster, Dialoge, Steuerelemente, Layout und Design
+│   ├── Configuration/         Config laden/speichern und Passwortverschlüsselung
+│   ├── Models/                Hostzustand, Verbindungszustand und Paketnamen
+│   ├── DirectoryServices/     Domänensuche und LDAP
+│   ├── Remoting/              PowerShell-Prozessausführung und JSON-Protokoll
+│   ├── Updates/               GitHub-Versionsprüfung und Selbstaktualisierung
+│   ├── Reporting/             HTML-Bericht
+│   ├── Common/                Gemeinsame Textaufbereitung
+│   ├── Scripts/               Eingebettete PowerShell-Worker und Updateabläufe
+│   └── Assets/                Programmsymbol und Bildressourcen
+├── tests/                     Automatische Entwicklungsprüfungen; siehe tests/README.md
+│   ├── dotnet/                C#-Tests für Zustände, Konfiguration und Oberfläche
+│   ├── powershell/            Tests der Worker mit simulierten Diensten und Hosts
+│   └── Shared/                Gemeinsame Testpfade
+└── artifacts/                 Erzeugte Dateien; nicht in Git
+    ├── bin/                   Kompilierte Anwendungen und Testprogramme
+    ├── obj/                   Build-Zwischendateien
+    ├── publish/win-x64/       Fertige NovaTouchUpdater.exe
+    ├── test-results/          Testdateien, Protokolle und Vorschaubilder
+    └── legacy/                Frühere Build-Ausgaben und Vorschaudateien
+```
 
 ## Bedienung
 
