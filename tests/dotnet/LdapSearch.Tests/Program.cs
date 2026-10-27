@@ -10,6 +10,7 @@ internal static class Program
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             FilterTests();
             ProtocolTests().GetAwaiter().GetResult();
+            FormattingTests();
             DialogTests();
             SelectionInteractionTests();
             LayoutTests();
@@ -29,6 +30,23 @@ internal static class Program
         try { action(); }
         catch (ArgumentException) { Console.WriteLine("PASS " + message); return; }
         throw new InvalidOperationException(message);
+    }
+
+    private static void FormattingTests()
+    {
+        using var dialog = new LdapComputerSearchDialog((_, _) => throw new InvalidOperationException("Formatting test must not query a domain"));
+        var grid = All(dialog).OfType<DataGridView>().Single();
+        var errors = new List<string>();
+        grid.DataError += (_, e) => { errors.Add(e.Exception?.ToString() ?? e.Context.ToString()); e.ThrowException = false; };
+        int row = grid.Rows.Add();
+        var checkbox = grid.Rows[row].Cells["include"];
+        Assert(checkbox.FormattedValue is false, "empty domain-selection cells format as unchecked checkboxes");
+        foreach (bool value in new[] { true, false })
+        {
+            checkbox.Value = value;
+            Assert(checkbox.FormattedValue is bool formatted && formatted == value, "domain-selection cells retain boolean display values");
+        }
+        Assert(errors.Count == 0, "domain-selection formatting raises no DataGridView errors: " + string.Join("\n", errors));
     }
 
     private static void FilterTests()

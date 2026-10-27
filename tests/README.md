@@ -28,7 +28,7 @@ Ein C#-Testprogramm ausführen, beispielsweise die Status- und Berichtstests:
 dotnet run --project tests\dotnet\HostState.Tests\HostState.Tests.csproj -c Release
 ```
 
-`MainForm.Tests` prüft die Hostauswahl, den Erhalt beim Filtern und Sortieren, die Sperre während eines Durchlaufs sowie die Spaltenbreiten bei 100–200 % Skalierung. Die tatsächlichen Prüf- und Überwachungsabläufe erhalten dabei simulierte Worker; weder die persönliche Config noch reale Hosts werden verwendet.
+`MainForm.Tests` prüft die Hostauswahl, den Erhalt beim Filtern und Sortieren, die Sperre während eines Durchlaufs sowie die Spaltenbreiten bei 100–200 % Skalierung. Zusätzlich werden die Zelltypen beim Neuaufbau und bei kurzzeitig leeren Checkboxen geprüft; `--formatting` führt nur diese Formatierungsprüfung aus. `LdapSearch.Tests` prüft auch die Checkbox-Formatierung der Domänensuche. Die tatsächlichen Prüf- und Überwachungsabläufe erhalten dabei simulierte Worker; weder die persönliche Config noch reale Hosts werden verwendet.
 
 ```powershell
 dotnet run --project tests\dotnet\MainForm.Tests\MainForm.Tests.csproj -c Release

@@ -488,7 +488,8 @@ public sealed class MainForm : Form
         {
             Name = "include", HeaderText = "", SortMode = DataGridViewColumnSortMode.NotSortable,
             Resizable = DataGridViewTriState.False,
-            DefaultCellStyle = new DataGridViewCellStyle { Padding = new Padding(1, 0, 1, 0), Alignment = DataGridViewContentAlignment.MiddleCenter }
+            // Checkbox-Leerwerte müssen bool bleiben, auch während eines Zeilen-Neuaufbaus.
+            DefaultCellStyle = new DataGridViewCellStyle { NullValue = false, Padding = new Padding(1, 0, 1, 0), Alignment = DataGridViewContentAlignment.MiddleCenter }
         });
         table.Columns.Add("hostname", "Hostname");
         table.Columns.Add("connection", "Verbindung");
@@ -906,7 +907,7 @@ public sealed class MainForm : Form
                 _ => true
             };
             if (!include) continue;
-            int idx = table.Rows.Add();
+            int idx = table.Rows.Add(host.IsSelected);
             host.Row = table.Rows[idx];
             host.Row.Tag = host;
             PaintRow(host);

@@ -95,7 +95,7 @@ internal sealed class LdapComputerSearchDialog : Form
         results.Columns.Add(new DataGridViewCheckBoxColumn
         {
             Name = "include", HeaderText = "Auswahl", AutoSizeMode = DataGridViewAutoSizeColumnMode.DisplayedCells,
-            DefaultCellStyle = new DataGridViewCellStyle { Padding = Padding.Empty, Alignment = DataGridViewContentAlignment.MiddleCenter }
+            DefaultCellStyle = new DataGridViewCellStyle { NullValue = false, Padding = Padding.Empty, Alignment = DataGridViewContentAlignment.MiddleCenter }
         });
         foreach (var column in new[] { ("name", "Computer"), ("dns", "DNS-Name"), ("os", "Betriebssystem"), ("description", "Beschreibung") })
             results.Columns.Add(new DataGridViewTextBoxColumn { Name = column.Item1, HeaderText = column.Item2, ReadOnly = true, SortMode = DataGridViewColumnSortMode.Automatic });

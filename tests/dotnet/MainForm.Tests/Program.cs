@@ -12,8 +12,10 @@ internal static class Program
         try
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            if (args.Contains("--formatting")) { FormattingTests(); return 0; }
             if (!args.Contains("--layout"))
             {
+                FormattingTests();
                 SelectionTests();
                 ScanTests();
             }
@@ -69,6 +71,46 @@ internal static class Program
         ((IDataGridViewEditingCell)table.CurrentCell).EditingCellFormattedValue = selected;
         table.NotifyCurrentCellDirty(true);
         table.EndEdit();
+    }
+
+    private static void FormattingTests()
+    {
+        using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
+        var table = Field<DataGridView>(form, "table");
+        var errors = new List<string>();
+        table.DataError += (_, e) =>
+        {
+            errors.Add($"row={e.RowIndex}, column={table.Columns[e.ColumnIndex].Name}, context={e.Context}: {e.Exception}");
+            e.ThrowException = false; // Record failures instead of opening the native error dialog in a test.
+        };
+        Control content = form.Controls[0];
+        using var canvas = new Panel { Size = form.ClientSize, Font = form.Font };
+        canvas.Controls.Add(content);
+        canvas.CreateControl();
+        foreach (Control control in All(canvas)) _ = control.Handle;
+        try
+        {
+            HostState[] hosts = Populate(form);
+            // A row can be formatted before its values are assigned during loading or rebuilding.
+            int empty = table.Rows.Add();
+            Assert(table.Rows[empty].Cells["include"].FormattedValue is false,
+                "a temporarily empty selection cell formats as an unchecked checkbox");
+            table.Rows.RemoveAt(empty);
+            EditSelection(form, hosts[0], false);
+            Call(form, "PaintRow", hosts[0]);
+            Call(form, "RebuildRows");
+            Call(form, "SetAllHostsSelected", true);
+            Call(form, "SetAllHostsSelected", false);
+            Assert(table.Rows.Cast<DataGridViewRow>().SelectMany(row => row.Cells.Cast<DataGridViewCell>())
+                .All(cell => cell.FormattedValue is { } value && cell.FormattedValueType.IsInstanceOfType(value)),
+                "every host cell has the correct display type after rebuilding and changing selection");
+            Assert(errors.Count == 0, "loading, rebuilding and formatting host rows raises no DataGridView errors: " + string.Join("\n", errors));
+        }
+        finally
+        {
+            canvas.Controls.Remove(content);
+            form.Controls.Add(content);
+        }
     }
 
     private static void SelectionTests()
