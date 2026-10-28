@@ -4,6 +4,7 @@
   "PasswordProtectionScope": "LocalMachine",
   "EncryptedPassword": "",
   "UseSsl": false,
+  "ScanOnStartup": true,
   "HttpsPort": 5986,
   "ExecutionMode": "Remote",
   "SoftwarePath": "",

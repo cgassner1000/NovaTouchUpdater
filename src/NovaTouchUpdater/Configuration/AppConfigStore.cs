@@ -12,6 +12,7 @@ internal sealed class UpdaterConfig
     public string? RemotePath { get; set; }
     public string? Username { get; set; }
     public bool UseSsl { get; set; }
+    public bool ScanOnStartup { get; set; } = true;
     public int HttpsPort { get; set; } = 5986;
     public string ExecutionMode { get; set; } = "Remote";
     public string? SoftwarePath { get; set; }
@@ -65,6 +66,7 @@ internal static class AppConfigStore
             Hosts = NormalizeHosts(settings.Hosts), RemotePath = settings.RemotePath,
             Username = settings.Username, UseSsl = settings.UseSsl, HttpsPort = settings.HttpsPort,
             ExecutionMode = settings.ExecutionMode, SoftwarePath = settings.SoftwarePath,
+            ScanOnStartup = settings.ScanOnStartup,
             PasswordProtectionScope = nameof(DataProtectionScope.LocalMachine),
             EncryptedPassword = EncryptPassword(password)
         };

@@ -36,6 +36,12 @@ dotnet run --project tests\dotnet\HostState.Tests\HostState.Tests.csproj -c Rele
 
 `MainForm.Tests --parallel` prüft den Prüfablauf mit gezielt angehaltenen simulierten Verbindungen und Versionsabfragen. Ein bereits verbundener Host muss Versionen lesen und fertig werden können, während eine andere Verbindung noch wartet. Geprüft werden außerdem die gemeinsame Parallelitätsgrenze für beide Schritte, sofortige Ergebnisse, unabhängige Verbindungs- und Lesefehler, einmaliger Fortschritt je Host, die Hostauswahl sowie Abbruch ohne Start weiterer Schritte oder Hosts. Die Hintergrundüberwachung wird nach dem Durchlauf wieder freigegeben. Es werden keine echten Verbindungen aufgebaut oder Pakete übertragen.
 
+`MainForm.Tests --startup` prüft die speicherbare Startprüfung in allen drei Ausführungsmodi: Config-Rundlauf durch das Formular, Ein-/Ausschalten, ausgewählte Hosts, freigegebene Update-Schaltfläche und manuelle Prüfung bei ausgeschalteter Automatik. Ohne geladene Config oder ohne Ziele starten keine Versionsabfragen. Alle Worker sind simuliert.
+
+`MainForm.Tests --toggles` prüft das Neuzeichnen der Kippschalter bei 100–200 % Skalierung mit aktivierten Windows-Designs. Ein mit fremdem Text vorbelegter Zeichenpuffer muss vollständig ersetzt werden; auch Textwechsel, Schalterzustände, mehrzeilige Beschriftungen, deaktivierte Schalter und geänderte Hintergrundfarben dürfen keine alten Pixel hinterlassen. Vorschaubilder liegen unter `artifacts/test-results/toggle-*.png`.
+
+`MainForm.Tests --winrm` prüft die Reihenfolge der WinRM-Diagnose: lokale Vorbereitung mit allen geladenen Remote-Hosts vor den Tests der ausgewählten Hosts, unveränderte Protokoll-/Port-/Anmeldedaten, Fehleranzeige und Abbruch ohne anschließende Remote-Tests. `WinRmPreparation.Tests.ps1` simuliert lokale Dienste, WSMan und TrustedHosts vollständig. Geprüft werden Ergänzung und Erhalt bestehender Einträge, Duplikate, fehlender oder gestoppter Dienst, defekter lokaler Endpunkt, fehlende Rechte, Richtlinien sowie ungültige Hostnamen. Keine dieser Prüfungen ändert reale TrustedHosts oder Dienste.
+
 ```powershell
 dotnet run --project tests\dotnet\MainForm.Tests\MainForm.Tests.csproj -c Release
 ```

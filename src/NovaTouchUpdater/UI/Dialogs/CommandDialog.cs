@@ -2,11 +2,11 @@ namespace NovaTouchUpdater;
 
 internal sealed class CommandDialog : Form
 {
-    private readonly CheckBox payment = new() { Name = "payment" };
-    private readonly CheckBox fiscal = new() { Name = "fiscal" };
-    private readonly CheckBox serverSuite = new() { Name = "serverSuite" };
-    private readonly CheckBox terminal = new() { Name = "terminal" };
-    private readonly CheckBox pos = new() { Name = "pos" };
+    private readonly CheckBox payment = new ModernToggleSwitch { Name = "payment" };
+    private readonly CheckBox fiscal = new ModernToggleSwitch { Name = "fiscal" };
+    private readonly CheckBox serverSuite = new ModernToggleSwitch { Name = "serverSuite" };
+    private readonly CheckBox terminal = new ModernToggleSwitch { Name = "terminal" };
+    private readonly CheckBox pos = new ModernToggleSwitch { Name = "pos" };
     private readonly Label selection = new() { Name = "selection", AutoSize = true, Dock = DockStyle.Fill };
     private readonly Button execute = new ModernButton
     {
@@ -148,7 +148,7 @@ internal sealed class CommandDialog : Form
         choice.AccessibleDescription = description;
         if (windowsRestart) choice.ForeColor = UiTheme.Warning;
         var detail = Paragraph(description);
-        detail.Margin = new Padding(24, 0, 0, 0);
+        detail.Margin = new Padding(50, 0, 0, 0);
         var card = new SurfaceCard { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 2 };
         card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         card.RowStyles.Add(new RowStyle(SizeType.AutoSize));

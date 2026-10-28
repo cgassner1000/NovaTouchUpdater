@@ -156,6 +156,79 @@ internal static class UiTheme
 
 internal enum ButtonRole { Normal, Primary, Accent, Danger }
 
+// Retain the native checkbox's checked state, keyboard and accessibility behavior.
+internal sealed class ModernToggleSwitch : CheckBox
+{
+    private bool hovered;
+    private float SwitchScale => Math.Max(DeviceDpi / 96F, Font.SizeInPoints / 9.5F);
+    private TextFormatFlags TextFlags => TextFormatFlags.WordBreak | TextFormatFlags.NoPadding |
+        (ShowKeyboardCues ? TextFormatFlags.Default : TextFormatFlags.HidePrefix) |
+        (UseMnemonic ? TextFormatFlags.Default : TextFormatFlags.NoPrefix) |
+        (RightToLeft == RightToLeft.Yes ? TextFormatFlags.RightToLeft | TextFormatFlags.Right : TextFormatFlags.Default);
+
+    internal ModernToggleSwitch()
+    {
+        AutoSize = true;
+        Cursor = Cursors.Hand;
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+            ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+    }
+
+    public override Size GetPreferredSize(Size proposedSize)
+    {
+        if (SystemInformation.HighContrast) return base.GetPreferredSize(proposedSize);
+        float scale = SwitchScale;
+        int switchWidth = (int)Math.Ceiling(40 * scale);
+        int gap = string.IsNullOrEmpty(Text) ? 0 : (int)Math.Ceiling(10 * scale);
+        int chrome = Padding.Horizontal + switchWidth + gap + 2;
+        int width = proposedSize.Width;
+        if (MaximumSize.Width > 0 && (width <= 0 || width > MaximumSize.Width)) width = MaximumSize.Width;
+        Size text = string.IsNullOrEmpty(Text) ? Size.Empty : TextRenderer.MeasureText(Text, Font,
+            new Size(width > 0 ? Math.Max(1, width - chrome) : int.MaxValue, int.MaxValue), TextFlags);
+        return new Size(chrome + text.Width,
+            Padding.Vertical + Math.Max((int)Math.Ceiling(24 * scale), text.Height + 2));
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (SystemInformation.HighContrast) { base.OnPaint(e); return; }
+        // ButtonBase marks the control opaque and skips OnPaintBackground.
+        // Clear the shared buffer so previous controls and labels cannot bleed through.
+        e.Graphics.Clear(BackColor);
+        float scale = SwitchScale;
+        float trackWidth = 40 * scale, trackHeight = 22 * scale;
+        bool rtl = RightToLeft == RightToLeft.Yes;
+        float x = rtl ? Width - Padding.Right - trackWidth - 1 : Padding.Left + 1;
+        var track = new RectangleF(x, Padding.Top + (Height - Padding.Vertical - trackHeight) / 2F,
+            trackWidth, trackHeight);
+        Color fill = !Enabled ? Color.FromArgb(224, 228, 234)
+            : Checked ? (hovered ? Color.FromArgb(217, 94, 14) : Color.FromArgb(234, 111, 25))
+            : hovered ? Color.FromArgb(148, 163, 184) : Color.FromArgb(174, 185, 200);
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var shape = UiTheme.RoundRectangle(track, trackHeight / 2F);
+        using var trackBrush = new SolidBrush(fill);
+        e.Graphics.FillPath(trackBrush, shape);
+        float inset = 3 * scale, diameter = trackHeight - inset * 2;
+        float thumbX = Checked != rtl ? track.Right - inset - diameter : track.Left + inset;
+        using var thumbBrush = new SolidBrush(Enabled ? Color.White : Color.FromArgb(247, 248, 250));
+        e.Graphics.FillEllipse(thumbBrush, thumbX, track.Top + inset, diameter, diameter);
+        int labelSpace = (int)Math.Ceiling(trackWidth + 10 * scale) + 2;
+        var textBounds = new Rectangle(Padding.Left + (rtl ? 0 : labelSpace), Padding.Top,
+            Math.Max(0, Width - Padding.Horizontal - labelSpace), Math.Max(0, Height - Padding.Vertical));
+        TextRenderer.DrawText(e.Graphics, Text, Font, textBounds,
+            Enabled ? ForeColor : SystemColors.GrayText, TextFlags | TextFormatFlags.VerticalCenter);
+        if (Focused && ShowFocusCues)
+            ControlPaint.DrawFocusRectangle(e.Graphics, new Rectangle(0, 0, Width - 1, Height - 1), ForeColor, BackColor);
+    }
+
+    protected override void OnCheckedChanged(EventArgs e) { Invalidate(); base.OnCheckedChanged(e); }
+    protected override void OnMouseEnter(EventArgs e) { hovered = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hovered = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+    protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+    protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+}
+
 // Keep the native Button's keyboard, mnemonic, DialogResult and accessibility
 // behavior; only its painting changes. Sizes remain driven by text and DPI.
 internal sealed class ModernButton : Button

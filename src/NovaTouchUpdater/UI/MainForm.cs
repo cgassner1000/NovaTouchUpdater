@@ -28,6 +28,7 @@ public sealed partial class MainForm : Form
     private bool changingHostSelection;
     private bool selfUpdating;
     private bool checkingRelease;
+    private bool startupConfigLoaded;
     private AppRelease? availableRelease;
     private readonly HttpClient releaseHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
     private readonly CancellationTokenSource appLifetime = new();
@@ -49,19 +50,20 @@ public sealed partial class MainForm : Form
     private readonly NumericUpDown nScan = new();
     private readonly NumericUpDown nUpdate = new();
     private readonly NumericUpDown nHttpsPort = new();
-    private readonly CheckBox chkSsl = new();
-    private readonly CheckBox chkForceUpdate = new();
-    private readonly CheckBox chkSkipZipTransfer = new();
+    private readonly CheckBox chkSsl = new ModernToggleSwitch();
+    private readonly CheckBox chkForceUpdate = new ModernToggleSwitch();
+    private readonly CheckBox chkSkipZipTransfer = new ModernToggleSwitch();
+    private readonly CheckBox chkScanOnStartup = new ModernToggleSwitch { Checked = true };
     private readonly ProgressBar progress = new ModernProgressBar();
     private readonly Button btnImport = Button("Hostliste laden");
     private readonly Button btnAddHost = Button("Host hinzufügen");
     private readonly Button btnRemoveHost = Button("Entfernen");
-    private readonly Button btnSaveConfig = Button("Config speichern");
+    private readonly Button btnSaveConfig = Button("Konfiguration speichern");
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
     private readonly Button btnServerSuite = Button("Server-Suite-ZIP wählen");
     private readonly Button btnWinRm = Button("Test WinRM");
-    private readonly Button btnScan = Button("1. Prüfen + Versionen");
+    private readonly Button btnScan = Button("Prüfen");
     private readonly Button btnUpdate = Button("2. Updates starten");
     private readonly Button btnTransfer = Button("Upload");
     private readonly Button btnSendCommand = Button("Befehl senden");
@@ -130,7 +132,7 @@ public sealed partial class MainForm : Form
             connectionTimer.Start();
             releaseTimer.Start();
             _ = CheckAppReleaseAsync();
-            await RefreshConnectionsAsync();
+            await RunStartupChecksAsync();
         };
         UpdateButtons();
         FormClosing += (_, e) =>
@@ -191,6 +193,7 @@ public sealed partial class MainForm : Form
         txtRemotePath.Text = string.IsNullOrWhiteSpace(config.RemotePath) ? activeRemoteInstallPath : config.RemotePath;
         txtUser.Text = config.Username ?? "";
         chkSsl.Checked = config.UseSsl;
+        chkScanOnStartup.Checked = config.ScanOnStartup;
         nHttpsPort.Value = config.HttpsPort;
         softwarePath.Text = config.SoftwarePath ?? "";
         txtPassword.Text = loaded.Password;
@@ -205,6 +208,16 @@ public sealed partial class MainForm : Form
         }
         executionMode.SelectedIndex = Enum.TryParse<UpdateExecutionMode>(config.ExecutionMode, out var mode) ? (int)mode : (int)UpdateExecutionMode.Remote;
         UpdateExecutionSelection();
+        startupConfigLoaded = true;
+    }
+
+    private async Task RunStartupChecksAsync()
+    {
+        if (connectionClosing || IsDisposed) return;
+        if (startupConfigLoaded && chkScanOnStartup.Checked && SelectedHosts().Length > 0)
+            await RunScansAsync();
+        else
+            await RefreshConnectionsAsync();
     }
 
     private UpdaterConfig CaptureConfig() => new()
@@ -212,7 +225,8 @@ public sealed partial class MainForm : Form
         // Save every loaded remote host, including rows hidden by a filter.
         Hosts = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
         Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
-        SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString()
+        SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(),
+        ScanOnStartup = chkScanOnStartup.Checked
     };
 
     private void SaveConfig()
@@ -222,14 +236,14 @@ public sealed partial class MainForm : Form
         try
         {
             AppConfigStore.Save(configPath, CaptureConfig(), txtPassword.Text);
-            Log("SYSTEM", $"Config gespeichert: {configPath} ({hosts.Count} Hosts)");
-            MessageBox.Show(this, "Config gespeichert",
-                "Config gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Log("SYSTEM", $"Konfiguration gespeichert: {configPath} ({hosts.Count} Hosts)");
+            MessageBox.Show(this, "Konfiguration gespeichert",
+                "Konfiguration gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or CryptographicException)
         {
-            MessageBox.Show(this, "Die Config konnte nicht gespeichert werden. Eine vorhandene Datei bleibt erhalten.\n" + ex.Message,
-                "Config speichern", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, "Die Konfiguration konnte nicht gespeichert werden. Eine vorhandene Datei bleibt erhalten.\n" + ex.Message,
+                "Konfiguration speichern", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -310,7 +324,7 @@ public sealed partial class MainForm : Form
         main.Controls.Add(configuration, 0, 1);
 
         var hostList = FlowRow();
-        foreach (Button btn in new[] { btnImport, btnAddHost, btnRemoveHost, btnSaveConfig })
+        foreach (Button btn in new[] { btnImport, btnAddHost, btnRemoveHost })
         {
             btn.Margin = new Padding(0, 0, 5, 0);
             hostList.Controls.Add(btn);
@@ -341,8 +355,8 @@ public sealed partial class MainForm : Form
         configuration.Controls.Add(localCard, 0, 0);
         var hostCard = Section("Remote-Hosts", Stack(hostList, lblFile));
         hostCard.Name = "hostsCard";
-        hostCard.Margin = new Padding(0, 0, 0, 12);
-        configuration.Controls.Add(hostCard, 1, 0);
+        hostCard.Margin = new Padding(8, 0, 0, 0);
+        configuration.Controls.Add(hostCard, 1, 1);
         var filesContent = Stack(CreatePackageSelectionGrid(), targetPath);
         var files = Section("Update-Dateien", filesContent);
         files.Name = "filesCard";
@@ -403,28 +417,37 @@ public sealed partial class MainForm : Form
         chkSkipZipTransfer.AutoSize = true;
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
         chkSkipZipTransfer.Anchor = AnchorStyles.Left;
+        chkScanOnStartup.Text = "Bei Programmstart prüfen";
+        chkScanOnStartup.AutoSize = true;
+        chkScanOnStartup.Anchor = AnchorStyles.Left;
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts. LOCALHOST wird direkt geprüft; Remote-Hosts über WinRM.");
         tips.SetToolTip(btnScan, "Nur Verbindung und installierte Versionen prüfen. Es werden keine Update-Dateien kopiert und keine Programme installiert.");
+        tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Zum Ergänzen von TrustedHosts sind Administratorrechte erforderlich.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
-        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, Benutzer, Passwort und HTTPS speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
+        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, Benutzer, Passwort, HTTPS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
+        tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Ablage für ZIPs, MSIs und temporäre Update-Dateien. Gilt für LOCALHOST und für jeden ausgewählten Remote-Host. Wird bei einem nötigen Update angelegt und mit der Config gespeichert.");
         tips.SetToolTip(chkSkipZipTransfer, "ZIP- und MSI-Pakete müssen bereits im Remote-Zielpfad liegen; sie werden anhand der lokalen Auswahl und SHA256 geprüft. Lokale Updates stellen ihre Pakete direkt bereit.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
         executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
-        var settingsContent = Stack(FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode), login, optionBar, chkSkipZipTransfer, chkForceUpdate);
-        var settings = Section("Verbindung & Ausführung", settingsContent);
+        btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
+        var settingsContent = Stack(FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
+            login, optionBar, chkScanOnStartup, chkSkipZipTransfer, chkForceUpdate, FlowRow(btnSaveConfig));
+        var settings = Section("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
-        settings.Margin = new Padding(8, 0, 0, 0);
-        configuration.Controls.Add(settings, 1, 1);
+        settings.Margin = new Padding(0, 0, 0, 12);
+        configuration.Controls.Add(settings, 1, 0);
+        localCard.TabIndex = 0; settings.TabIndex = 1; files.TabIndex = 2; hostCard.TabIndex = 3;
         bool stacked = false;
         configuration.Layout += (_, _) =>
         {
             // Bei großen Schriften oder schmalen Fenstern beide Bereiche untereinander anordnen.
-            int optionsWidth = Math.Max(chkSkipZipTransfer.PreferredSize.Width, httpsOptions.PreferredSize.Width);
+            int optionsWidth = Math.Max(chkScanOnStartup.PreferredSize.Width,
+                Math.Max(chkSkipZipTransfer.PreferredSize.Width, httpsOptions.PreferredSize.Width));
             int comfortableWidth = Math.Max(optionsWidth + settings.Padding.Horizontal,
                 TextRenderer.MeasureText(settings.Controls[0].Text, settings.Controls[0].Font).Width * 2);
             bool needsStack = configuration.ClientSize.Width * .45F < comfortableWidth + settings.Padding.Left;
@@ -441,11 +464,11 @@ public sealed partial class MainForm : Form
             configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             if (stacked) { configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize)); configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize)); }
             configuration.SetCellPosition(localCard, new TableLayoutPanelCellPosition(0, 0));
-            configuration.SetCellPosition(hostCard, stacked ? new TableLayoutPanelCellPosition(0, 1) : new TableLayoutPanelCellPosition(1, 0));
+            configuration.SetCellPosition(hostCard, stacked ? new TableLayoutPanelCellPosition(0, 3) : new TableLayoutPanelCellPosition(1, 1));
             configuration.SetCellPosition(files, stacked ? new TableLayoutPanelCellPosition(0, 2) : new TableLayoutPanelCellPosition(0, 1));
-            configuration.SetCellPosition(settings, stacked ? new TableLayoutPanelCellPosition(0, 3) : new TableLayoutPanelCellPosition(1, 1));
+            configuration.SetCellPosition(settings, stacked ? new TableLayoutPanelCellPosition(0, 1) : new TableLayoutPanelCellPosition(1, 0));
             files.Margin = stacked ? new Padding(0, 0, 0, 10) : new Padding(0, 0, 8, 0);
-            settings.Margin = stacked ? Padding.Empty : new Padding(8, 0, 0, 0);
+            hostCard.Margin = stacked ? Padding.Empty : new Padding(8, 0, 0, 0);
             configuration.ResumeLayout(true);
         };
 
@@ -618,7 +641,8 @@ public sealed partial class MainForm : Form
             HostState[] targets = SelectedRemoteHosts();
             if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
             using var dialog = new WinRmTestForm(targets.Select(h => h.Host).ToArray(),
-                txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked, (int)nHttpsPort.Value);
+                txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked, (int)nHttpsPort.Value,
+                hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray());
             dialog.ShowDialog(this);
         };
         btnScan.Click += async (_, _) => await RunScansAsync();
@@ -1808,6 +1832,7 @@ public sealed partial class MainForm : Form
         btnExport.Enabled = idle && hosts.Count > 0;
         btnCancel.Enabled = busy || selfUpdating || loadingPackages;
         nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle && remote; chkForceUpdate.Enabled = idle;
+        chkScanOnStartup.Enabled = idle;
         nHttpsPort.Enabled = idle && remote && chkSsl.Checked;
         txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle && remote;
         txtUser.Enabled = txtPassword.Enabled = idle && remote; statusFilter.Enabled = idle;

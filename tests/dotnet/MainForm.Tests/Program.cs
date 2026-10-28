@@ -12,16 +12,22 @@ internal static partial class Program
         try
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
             if (args.Contains("--updates")) { UpdateRetryTests(); return 0; }
             if (args.Contains("--staging")) { PackageStagingTests(); return 0; }
             if (args.Contains("--local")) { Complete(PackageCatalogTests()); LocalExecutionTests(); return 0; }
             if (args.Contains("--columns")) { ColumnSizingTests(); return 0; }
             if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
+            if (args.Contains("--startup")) { StartupChecksTests(); return 0; }
+            if (args.Contains("--winrm")) { WinRmPreparationTests(); return 0; }
             if (!args.Contains("--layout"))
             {
+                TogglePaintingTests();
                 FormattingTests();
                 SelectionTests();
+                StartupChecksTests();
+                WinRmPreparationTests();
                 ScanTests();
                 ScanPipelineTests();
                 UpdateRetryTests();

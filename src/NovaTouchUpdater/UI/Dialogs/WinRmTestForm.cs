@@ -6,30 +6,50 @@ internal sealed class WinRmTestForm : Form
     private readonly DataGridView grid = new();
     private readonly TextBox details = new();
     private readonly Label summary = new();
+    private readonly Label localStatus = new() { Name = "localWinRmStatus", AutoSize = true, Dock = DockStyle.Fill };
     private readonly Button cancel = new ModernButton { Text = "Abbrechen" };
     private readonly CancellationTokenSource cancellation = new();
     private bool running = true;
     private int completed;
+    private readonly string protocol;
+    private readonly int parallelism;
+    private readonly WorkerRequest preparation;
+    private readonly WorkerRequest[] diagnostics;
+    private readonly DataGridViewRow[] rows;
+    private string preparationDetails = "";
+    private bool preparationFailed;
 
-    public WinRmTestForm(string[] hosts, string username, string password, int parallelism, bool useSsl, int httpsPort = 5986)
+    public WinRmTestForm(string[] hosts, string username, string password, int parallelism, bool useSsl, int httpsPort = 5986,
+        string[]? trustedHosts = null)
     {
         SuspendLayout();
-        string protocol = useSsl ? $"HTTPS / {httpsPort}" : "HTTP / 5985";
+        protocol = useSsl ? $"HTTPS / {httpsPort}" : "HTTP / 5985";
+        this.parallelism = Math.Clamp(parallelism, 1, 150);
+        preparation = new WorkerRequest { Action = "winrm-prepare", Hosts = (trustedHosts ?? hosts).ToArray() };
+        diagnostics = hosts.Select(host => new WorkerRequest
+        {
+            Action = "winrm-test", Host = host, Username = username, Password = password, UseSsl = useSsl, HttpsPort = httpsPort
+        }).ToArray();
         Text = "Test WinRM – " + (useSsl ? "HTTPS" : "HTTP");
         Size = new Size(1100, 700);
         MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterParent;
         Font = UiTheme.BodyFont();
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 1, Padding = new Padding(10) };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5, ColumnCount = 1, Padding = new Padding(10) };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 60));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 40));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         summary.Dock = DockStyle.Fill;
         summary.AutoSize = true;
-        summary.Text = $"{hosts.Length} Hosts; maximal {parallelism} Hosts parallel. Es wird ausschließlich {protocol} geprüft.\nZeile auswählen für vollständige Details. Der Testbefehl gibt ausschließlich einen konstanten Text zurück.";
+        summary.Text = $"{hosts.Length} Hosts; maximal {this.parallelism} Hosts parallel. Remote-Protokoll: {protocol}.\nZuerst lokales WinRM prüfen und TrustedHosts ergänzen, danach die ausgewählten Remote-Hosts testen.";
         layout.Controls.Add(summary, 0, 0);
+        localStatus.Text = "Lokales WinRM prüfen und TrustedHosts vorbereiten …";
+        localStatus.Margin = new Padding(3, 8, 3, 10);
+        layout.Controls.Add(localStatus, 0, 1);
+        grid.Name = "winRmResults";
         grid.Dock = DockStyle.Fill;
         grid.MinimumSize = new Size(0, 120);
         grid.ReadOnly = true;
@@ -44,19 +64,20 @@ internal sealed class WinRmTestForm : Form
         foreach (string title in new[] { "Host", "Protokoll / Port", "TCP", "New-PSSession", "Invoke-Command", "Ergebnis" })
             grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = title, SortMode = DataGridViewColumnSortMode.NotSortable });
         grid.Columns[5].CellTemplate = new StatusBadgeCell();
-        layout.Controls.Add(grid, 0, 1);
+        layout.Controls.Add(grid, 0, 2);
+        details.Name = "winRmDetails";
         details.Dock = DockStyle.Fill;
         details.MinimumSize = new Size(0, 90);
         details.Multiline = true;
         details.ReadOnly = true;
         details.ScrollBars = ScrollBars.Both;
         details.WordWrap = false;
-        layout.Controls.Add(details, 0, 2);
+        layout.Controls.Add(details, 0, 3);
         cancel.Anchor = AnchorStyles.Right;
-        layout.Controls.Add(cancel, 0, 3);
+        layout.Controls.Add(cancel, 0, 4);
         Controls.Add(WindowLayout.CreateScrollArea(layout, grid, details));
         WindowLayout.CompleteInitialization(this);
-        var rows = hosts.Select(host =>
+        rows = hosts.Select(host =>
             grid.Rows[grid.Rows.Add(host, protocol, "Wartet", "Wartet", "Wartet", "Wartet")]).ToArray();
         grid.SelectionChanged += (_, _) => ShowDetails();
         cancel.Click += (_, _) => { if (running) { cancellation.Cancel(); cancel.Enabled = false; } else Close(); };
@@ -67,62 +88,75 @@ internal sealed class WinRmTestForm : Form
             cancellation.Cancel();
             cancel.Enabled = false;
         };
-        FormClosed += (_, _) => cancellation.Dispose();
-        Shown += async (_, _) =>
+        Disposed += (_, _) => cancellation.Dispose();
+        Shown += async (_, _) => await RunDiagnosticsAsync();
+    }
+
+    internal async Task RunDiagnosticsAsync(IWorkerRunner? worker = null)
+    {
+        try
         {
-            try
-            {
-                using var runner = new WorkerRunner("NovaTouchUpdater.WinRmWorker.ps1");
-                await Parallel.ForEachAsync(Enumerable.Range(0, hosts.Length),
-                    new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = cancellation.Token },
-                    async (index, token) =>
-                    {
-                        token.ThrowIfCancellationRequested();
-                        var row = rows[index];
-                        Post(() => row.Cells[5].Value = "Läuft");
-                        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-                        timeout.CancelAfter(TimeSpan.FromSeconds(60));
-                        WorkerResult result;
-                        try
-                        {
-                            result = await runner.RunAsync(new WorkerRequest
-                            {
-                                Action = "winrm-test", Host = hosts[index], Username = username,
-                                Password = password, UseSsl = useSsl, HttpsPort = httpsPort
-                            }, _ => { }, timeout.Token);
-                        }
-                        catch (OperationCanceledException) when (!token.IsCancellationRequested)
-                        {
-                            result = new WorkerResult { Error = "Gesamtzeitlimit von 60 Sekunden für dieses Protokoll überschritten. Der lokale Testprozess wurde beendet; noch laufende Schritte sind nicht bestätigt." };
-                        }
-                        Post(() => DisplayResult(row, result));
-                    });
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex)
-            {
-                details.Text = ex.ToString();
-                MessageBox.Show(this, ex.Message, "WinRM-Test", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally
-            {
-                password = "";
-                running = false;
-                foreach (var row in rows)
-                    if (row.Cells[5].Value is "Wartet" or "Läuft")
-                    {
-                        row.Cells[5].Value = cancellation.IsCancellationRequested ? "Abgebrochen" : "Nicht abgeschlossen";
-                        row.Tag = $"{row.Cells[0].Value} – {row.Cells[1].Value}\r\n{row.Cells[5].Value}. Es liegt kein vollständiges Testergebnis vor.";
-                        for (int column = 2; column <= 4; column++) row.Cells[column].Value = "Nicht bestätigt";
-                    }
-                summary.Text = $"{completed} von {hosts.Length} Hosttests abgeschlossen" +
-                    (cancellation.IsCancellationRequested ? " – abgebrochen." : ".") +
-                    $"\nGeprüft wurde ausschließlich {protocol}. Zeile auswählen für vollständige Details.";
-                cancel.Enabled = true;
-                cancel.Text = "Schließen";
-                ShowDetails();
-            }
-        };
+            cancellation.Token.ThrowIfCancellationRequested();
+            using var runner = worker ?? new WorkerRunner("NovaTouchUpdater.WinRmWorker.ps1");
+            WorkerResult ready = await RunWithTimeoutAsync(runner, preparation, cancellation.Token);
+            preparationDetails = $"Lokale WinRM-Vorbereitung\r\n{ready.Message}\r\n{ready.Error}";
+            localStatus.Text = ready.Success ? ready.Message : "Lokale WinRM-Vorbereitung fehlgeschlagen – siehe Details.";
+            localStatus.ForeColor = ready.Success ? UiTheme.Success : UiTheme.Danger;
+            ShowDetails();
+            if (!ready.Success) { preparationFailed = true; return; }
+            await Parallel.ForEachAsync(Enumerable.Range(0, diagnostics.Length),
+                new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = cancellation.Token },
+                async (index, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    var row = rows[index];
+                    Post(() => row.Cells[5].Value = "Läuft");
+                    WorkerResult result = await RunWithTimeoutAsync(runner, diagnostics[index], token);
+                    Post(() => DisplayResult(row, result));
+                });
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            if (preparationDetails.Length == 0) localStatus.Text = "Lokale Vorbereitung abgebrochen.";
+        }
+        catch (Exception ex)
+        {
+            preparationFailed = true;
+            preparationDetails += "\r\n" + ex;
+            localStatus.Text = "WinRM-Test fehlgeschlagen – siehe Details.";
+            localStatus.ForeColor = UiTheme.Danger;
+        }
+        finally
+        {
+            foreach (var request in diagnostics) request.Password = "";
+            running = false;
+            foreach (var row in rows)
+                if (row.Cells[5].Value is "Wartet" or "Läuft")
+                {
+                    row.Cells[5].Value = cancellation.IsCancellationRequested ? "Abgebrochen"
+                        : preparationFailed ? "Nicht gestartet" : "Nicht abgeschlossen";
+                    row.Tag = $"{row.Cells[0].Value} – {row.Cells[1].Value}\r\n{row.Cells[5].Value}. Es liegt kein vollständiges Testergebnis vor.";
+                    for (int column = 2; column <= 4; column++) row.Cells[column].Value = "Nicht bestätigt";
+                }
+            summary.Text = $"{completed} von {diagnostics.Length} Hosttests abgeschlossen" +
+                (cancellation.IsCancellationRequested ? " – abgebrochen." : ".") +
+                (preparationFailed ? "\nRemote-Tests wurden wegen eines Fehlers nicht fortgesetzt."
+                    : $"\nRemote-Protokoll: {protocol}. Zeile auswählen für vollständige Details.");
+            cancel.Enabled = true;
+            cancel.Text = "Schließen";
+            ShowDetails();
+        }
+    }
+
+    private static async Task<WorkerResult> RunWithTimeoutAsync(IWorkerRunner runner, WorkerRequest request, CancellationToken token)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(60));
+        try { return await runner.RunAsync(request, _ => { }, timeout.Token); }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            return new WorkerResult { Error = "Gesamtzeitlimit von 60 Sekunden überschritten. Der lokale Testprozess wurde beendet; noch laufende Schritte sind nicht bestätigt." };
+        }
     }
 
     private void Post(Action action) => Invoke(action);
@@ -140,5 +174,6 @@ internal sealed class WinRmTestForm : Form
         ShowDetails();
     }
 
-    private void ShowDetails() => details.Text = grid.CurrentRow?.Tag as string ?? "Für diese Zeile liegt noch kein Ergebnis vor.";
+    private void ShowDetails() => details.Text = preparationDetails + "\r\n\r\n" +
+        (grid.CurrentRow?.Tag as string ?? "Für diese Zeile liegt noch kein Ergebnis vor.");
 }
