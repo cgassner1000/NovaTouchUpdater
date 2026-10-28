@@ -408,7 +408,7 @@ public sealed partial class MainForm : Form
         }, 1, 0);
         httpsOptions.Controls.Add(nHttpsPort, 2, 0);
         optionBar.Controls.Add(httpsOptions);
-        chkForceUpdate.Text = "Force Up-Downgrade (ZIPs)";
+        chkForceUpdate.Text = "Force Up-Downgrade (Dienste)";
         chkForceUpdate.AutoSize = true;
         chkForceUpdate.Anchor = AnchorStyles.Left;
         chkForceUpdate.Margin = new Padding(3);
