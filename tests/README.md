@@ -74,7 +74,7 @@ Die Suchtests prüfen außerdem einzelne JSON-Treffermeldungen vor dem Abschluss
 
 Die zusätzlichen Startoptionen der `AppRelease.Tests` prüfen einen veröffentlichten Test-Updater und dessen Neustart. Diese Integrationsprüfungen starten ausschließlich die separate Test-EXE unter `artifacts/test-results`; die Befehle sind in der Haupt-README beschrieben. Sie sind kein Update der eigentlichen Anwendung.
 
-`MainForm.Tests --local` prüft den Paketkatalog mit echten, eigens erzeugten MSI-Datenbanken (nur lesend), ZIPs mit MSIs, externe CAB-Dateien, Versionsauswahl, Pfadprüfung sowie die drei Ausführungsmodi und direkte lokale Requests mit simulierten Workern. Die erzeugten MSI-Testdateien werden für den folgenden PowerShell-Test unter `artifacts/test-results` behalten:
+`MainForm.Tests --local` prüft den Paketkatalog mit echten, eigens erzeugten MSI-Datenbanken (nur lesend), ZIPs mit MSIs, externe CAB-Dateien, rekursive Suche über mehrere Ordnerebenen, Versionsauswahl zwischen Haupt- und Unterordnern, Fehlerhinweise mit relativen Pfaden, Pfadprüfung sowie die drei Ausführungsmodi und direkte lokale Requests mit simulierten Workern. Die erzeugten MSI-Testdateien werden für den folgenden PowerShell-Test unter `artifacts/test-results` behalten:
 
 ```powershell
 dotnet run --project tests\dotnet\MainForm.Tests\MainForm.Tests.csproj -c Release -- --local

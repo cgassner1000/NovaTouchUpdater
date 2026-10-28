@@ -3,7 +3,7 @@ namespace NovaTouchUpdater;
 public sealed partial class MainForm
 {
     private readonly ComboBox executionMode = new() { Name = "executionMode", DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
-    private readonly TextBox softwarePath = new() { Name = "softwarePath", Dock = DockStyle.Fill, PlaceholderText = "Ordner mit allen Update-Paketen" };
+    private readonly TextBox softwarePath = new() { Name = "softwarePath", Dock = DockStyle.Fill, PlaceholderText = "Paketordner (inkl. Unterordner)" };
     private readonly Label packageStatus = new() { Name = "packageStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Pakete einlesen. Lokale Paketablage erst mit Updates starten." };
     private readonly Button browseSoftware = Button("Durchsuchen");
     private readonly Button readPackages = Button("Pakete einlesen");
@@ -73,7 +73,7 @@ public sealed partial class MainForm
         selector.Controls.Add(FlowRow(browseSoftware, readPackages), 1, 0);
         var card = Section("Installations-Pakete", Stack(new Label
         {
-            Text = "Softwareordner mit ZIP- und MSI-Paketen:", AutoSize = true, Dock = DockStyle.Fill
+            Text = "Softwareordner mit ZIP- und MSI-Paketen (inkl. Unterordner):", AutoSize = true, Dock = DockStyle.Fill
         }, selector, packageStatus));
         card.Name = "localUpdateCard";
         browseSoftware.Click += async (_, _) =>

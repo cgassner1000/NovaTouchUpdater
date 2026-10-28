@@ -22,10 +22,11 @@ internal sealed class SoftwarePackageCatalog : IDisposable
             ct.ThrowIfCancellationRequested();
             string extension = System.IO.Path.GetExtension(file);
             if (!extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) && !extension.Equals(".msi", StringComparison.OrdinalIgnoreCase)) continue;
-            progress?.Report("Pakete lesen: " + System.IO.Path.GetFileName(file));
+            string relativePath = System.IO.Path.GetRelativePath(folder, file);
+            progress?.Report("Pakete lesen: " + relativePath);
             try { candidates.AddRange(await ReadFileAsync(file, ct).ConfigureAwait(false)); }
             catch (Exception ex) when (ex is IOException or InvalidDataException or System.ComponentModel.Win32Exception or UnauthorizedAccessException or ArgumentException)
-            { warnings.Add(System.IO.Path.GetFileName(file) + ": " + ex.Message); }
+            { warnings.Add(relativePath + ": " + ex.Message); }
         }
         return new(candidates.GroupBy(p => p.Component).Select(group => group.OrderByDescending(p => NumericVersion(p.Version))
             .ThenByDescending(p => File.GetLastWriteTimeUtc(p.Path)).ThenBy(p => p.Path, StringComparer.OrdinalIgnoreCase).First()).ToArray(), warnings.ToArray());

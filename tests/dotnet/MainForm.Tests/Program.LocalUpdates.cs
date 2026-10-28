@@ -9,31 +9,39 @@ internal static partial class Program
     {
         string root = Path.Combine(TestWorkspace.Artifacts, "local-msi-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        string msiFolder = Path.Combine(root, "MSI", "2026", "Aktuell"), zipFolder = Path.Combine(root, "ZIP", "Aktuell");
+        Directory.CreateDirectory(msiFolder);
+        Directory.CreateDirectory(zipFolder);
         var msiPaths = new Dictionary<string, string>();
         foreach (var pair in new Dictionary<string, string> { ["pos"] = "NovaTouch POS", ["ntc"] = "NovaTouch Control", ["ntv"] = "NovaTouch Voucher", ["oman"] = "NovaTouch Orderman SOL" })
         {
-            string file = Path.Combine(root, pair.Key + ".msi");
+            string file = Path.Combine(msiFolder, pair.Key + ".msi");
             MsiFixture.Create(file, pair.Value, "2.0.0", pair.Key == "ntv" ? "data.cab" : null);
             msiPaths[pair.Key] = file;
             MsiMetadata metadata = MsiPackageReader.Read(file);
             Assert(metadata.ProductName == pair.Value && metadata.ProductVersion == "2.0.0" && Guid.TryParse(metadata.ProductCode, out _) && metadata.Component.ToString().Equals(pair.Key, StringComparison.OrdinalIgnoreCase),
                 "real Windows Installer metadata identifies " + pair.Value + " without installing it");
         }
-        File.WriteAllText(Path.Combine(root, "data.cab"), "fixture only, never installed");
+        File.WriteAllText(Path.Combine(msiFolder, "data.cab"), "fixture only, never installed");
         foreach (string file in new[] { "nt.payment_1.0.0.zip", "nt.payment_2.0.0.zip", "nt.fiscal_2.0.0.zip", "nt.server.suite-2026.4.9792.zip" })
-            using (var archive = ZipFile.Open(Path.Combine(root, file), ZipArchiveMode.Create)) archive.CreateEntry("fixture.txt");
+            using (var archive = ZipFile.Open(Path.Combine(file.Contains("1.0.0") ? root : zipFolder, file), ZipArchiveMode.Create)) archive.CreateEntry("fixture.txt");
         using (var archive = ZipFile.Open(Path.Combine(root, "arbitrary-control-name.zip"), ZipArchiveMode.Create))
             archive.CreateEntryFromFile(msiPaths["ntc"], "installer/Control.msi");
-        File.WriteAllText(Path.Combine(root, "broken.msi"), "not an MSI");
+        string brokenMsi = Path.Combine(msiFolder, "broken.msi");
+        File.WriteAllText(brokenMsi, "not an MSI");
         using var catalog = new SoftwarePackageCatalog();
         SoftwareCatalogResult result = await catalog.ReadAsync(root, null, CancellationToken.None);
-        Assert(result.Packages.Length == 7 && result.Packages.Single(p => p.Component == UpdateComponents.Payment).Version == "2.0.0" && result.Warnings.Length == 1,
-            "a software directory selects all seven supported components and the latest service ZIP");
+        Assert(result.Packages.Length == 7 && result.Packages.Single(p => p.Component == UpdateComponents.Payment) is { Version: "2.0.0" } payment &&
+            payment.Path == Path.Combine(zipFolder, "nt.payment_2.0.0.zip") && result.Warnings.Length == 1,
+            "recursive discovery finds all seven components across multiple folder levels and selects a newer nested ZIP over the root version");
+        Assert(result.Warnings[0].StartsWith(Path.GetRelativePath(root, brokenMsi) + ": ", StringComparison.OrdinalIgnoreCase),
+            "an unreadable nested package is reported with its relative folder path while discovery continues");
         SoftwarePackage[] zipped = await catalog.ReadFileAsync(Path.Combine(root, "arbitrary-control-name.zip"), CancellationToken.None);
         Assert(zipped is [{ Component: UpdateComponents.Ntc, Msi.RelativeMsiPath: "installer/Control.msi" }],
             "MSI packages inside arbitrarily named ZIPs are identified by product metadata");
-        Assert(result.Packages.Single(p => p.Component == UpdateComponents.Ntv).Msi!.CompanionFiles is [{ RelativePath: "data.cab" }],
-            "external MSI cabinet files are retained as verified companion files");
+        Assert(result.Packages.Single(p => p.Component == UpdateComponents.Ntv).Msi!.CompanionFiles is [{ RelativePath: "data.cab" } cabinet] &&
+            cabinet.LocalPath == Path.Combine(msiFolder, "data.cab"),
+            "a deeply nested MSI retains its external cabinet from the same source folder");
         using (var archive = ZipFile.Open(Path.Combine(root, "bad-path.zip"), ZipArchiveMode.Create)) archive.CreateEntryFromFile(msiPaths["ntc"], "../Control.msi");
         bool rejected = false;
         try { await catalog.ReadFileAsync(Path.Combine(root, "bad-path.zip"), CancellationToken.None); } catch (InvalidDataException) { rejected = true; }
@@ -51,7 +59,9 @@ internal static partial class Program
         Directory.CreateDirectory(root);
         foreach (string name in new[] { "nt.payment_2.0.0.zip", "nt.fiscal_2.0.0.zip", "nt.server.suite-2026.4.9792.zip" })
             File.WriteAllText(Path.Combine(root, name), "fixture only");
-        MsiFixture.Create(Path.Combine(root, "control.msi"), "NovaTouch Control", "2.0.0", null);
+        string nested = Path.Combine(root, "MSI", "NTC");
+        Directory.CreateDirectory(nested);
+        MsiFixture.Create(Path.Combine(nested, "control.msi"), "NovaTouch Control", "2.0.0", null);
         using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
         Populate(form);
         Field<TextBox>(form, "softwarePath").Text = root;
@@ -60,7 +70,7 @@ internal static partial class Program
         var folderButton = Field<Button>(form, "useFolderPackages");
         UpdateComponents folderComponents = UpdateComponents.ZipServices | UpdateComponents.Ntc;
         Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Split(Environment.NewLine).Length == 4,
-            "folder discovery selects and lists all four fixture packages");
+            "folder discovery selects and lists root ZIPs and the MSI in a nested folder");
         string individual = Path.Combine(root, "nt.payment_1.0.0.zip");
         Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Payment, individual, "1.0.0"));
         Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.Payment && list.Text.Contains("1.0.0") &&
