@@ -146,7 +146,7 @@ public sealed class WorkerRunner : IWorkerRunner
         string script = reader.ReadToEnd();
         if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
         {
-            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory", "MsiUpdates", "SoftwareDatabase" })
+            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory", "MsiUpdates" })
             {
                 using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream($"NovaTouchUpdater.{helper}.ps1")
                     ?? throw new InvalidOperationException($"Die eingebetteten Schritte {helper} fehlen.");

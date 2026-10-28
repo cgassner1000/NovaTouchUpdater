@@ -1338,11 +1338,21 @@ public sealed partial class MainForm : Form
         }
         await InBatchAsync(selected, async ct =>
         {
-            paymentHash = (needed & UpdateComponents.Payment) != 0 ? await WorkerRunner.Sha256Async(paymentZip, ct) : "";
-            fiscalHash = (needed & UpdateComponents.Fiscal) != 0 ? await WorkerRunner.Sha256Async(fiscalZip, ct) : "";
-            serverSuiteHash = (needed & UpdateComponents.ServerSuite) != 0 ? await WorkerRunner.Sha256Async(serverSuiteZip, ct) : "";
-            await HashMsiPackagesAsync(needed | (selected.Any(h => h.IsLocal && NeedsDatabasePublication(h))
-                ? UpdateComponents.Msi : UpdateComponents.None), ct);
+            foreach (HostState host in selected)
+                Mark(host, h => { h.Result = "Läuft"; h.Phase = "Paketdateien werden geprüft"; });
+            try { await PrepareUpdatePackageHashesAsync(needed, ct); }
+            catch (Exception ex)
+            {
+                foreach (HostState host in selected)
+                    Mark(host, h =>
+                    {
+                        h.Result = ex is OperationCanceledException ? "Abgebrochen" : "Fehler";
+                        h.Phase = "Paketprüfung " + (ex is OperationCanceledException ? "abgebrochen" : "fehlgeschlagen");
+                        h.UpdateFailed = true;
+                        h.Error = ex is OperationCanceledException ? "" : ex.Message;
+                    });
+                throw;
+            }
             Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; LOKAL: {(activeSkipLocalPackageCopy ? "direkte Quellen" : activeLocalInstallPath)}; Remote-Zielpfad: {activeRemoteInstallPath}; Remote-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
             ResetProgress(selected.Length);
             var ready = selected;
@@ -1377,12 +1387,15 @@ public sealed partial class MainForm : Form
                 if (!host.Scanned)
                 {
                     Mark(host, h => { h.DotNet48Installed = null; h.PosVersion = "–"; });
-                    var probe = await DoWorkerAsync(host, "probe", token);
-                    if (!probe.Success)
+                    if (!host.IsLocal)
                     {
-                        Mark(host, h => { h.Connection = "Nicht erreichbar"; h.Error = FriendlyError(probe); });
-                        if (attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
-                        continue;
+                        var probe = await DoWorkerAsync(host, "probe", token);
+                        if (!probe.Success)
+                        {
+                            Mark(host, h => { h.Connection = "Nicht erreichbar"; h.Error = FriendlyError(probe); });
+                            if (attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
+                            continue;
+                        }
                     }
                     Mark(host, h => h.Connection = h.IsLocal ? "Lokal" : "Verbunden");
                     var scan = await DoWorkerAsync(host, "scan", token);
@@ -1435,11 +1448,9 @@ public sealed partial class MainForm : Form
                 else
                 {
                     h.Error = "";
-                    bool published = h.IsLocal && state.DatabasePackagesPublished;
-                    h.Result = published || state.Changed ? "Erfolgreich" : state.AllSkipped ? "Übersprungen" : "Bereits aktuell / übersprungen";
-                    h.Phase = state.AllSkipped ? (published ? "zzzSoftware bereitgestellt – keine lokale Installation erforderlich" : "Keine ausgewählten Komponenten installiert – übersprungen")
-                        : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : published ? "Verifiziert – zzzSoftware bereitgestellt" : "Verifiziert";
-                    if (state.Changed || published) h.SetProgress(100);
+                    h.Result = state.AllSkipped ? "Übersprungen" : state.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
+                    h.Phase = state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
+                    if (state.Changed) h.SetProgress(100);
                 }
             });
         }
@@ -1651,6 +1662,7 @@ public sealed partial class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null; busy = false;
+            preparedPackageHashes = null;
             activePassword = "";
             RebuildRows();
             UpdateSummary(); UpdateButtons();

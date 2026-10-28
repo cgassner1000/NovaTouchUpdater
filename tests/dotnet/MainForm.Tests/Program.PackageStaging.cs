@@ -43,12 +43,11 @@ internal static partial class Program
             worker.Requests.Clear();
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
             WorkerRequest staged = worker.Requests.Single(r => r.Action == "stage-packages");
-            WorkerRequest published = worker.Requests.First();
-            Assert(published.Action == "publish-msi-packages" && published.LocalExecution && published.MsiPackages.Length == 3 &&
-                published.MsiPackages.Any(p => p.Kind == "pos") && published.PaymentZip == "" && published.TransferFiles.Length == 0,
-                "database publication includes every selected MSI, independently of installed products, and no service ZIPs");
-            Assert(staged.LocalExecution && worker.Requests.ElementAt(1).Action == "stage-packages" && worker.Requests.Count(r => r.Action == "update") == 4,
+            Assert(staged.LocalExecution && worker.Requests.First().Action == "stage-packages" && worker.Requests.Count(r => r.Action == "update") == 4,
                 "the confirmed update execution stages all chosen LOCALHOST packages before individual component updates");
+            Assert(worker.Requests.All(r => r.Action != "publish-msi-packages") &&
+                !((string)Call(form, "UpdateConfirmation", (object)new[] { local }, components, false)!).Contains("zzzSoftware"),
+                "local updates and their confirmation contain no database upload or database prerequisite");
             Assert(staged.TransferFiles.Length == 4 && staged.TransferFiles.Any(f => f.RelativePath == @"cabinets\data.cab") &&
                 staged.TransferFiles.Select(f => f.RelativePath).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 4 && staged.TransferFiles.All(f => f.Sha256.Length == 64),
                 "local staging includes ZIPs, MSI payloads and companion cabinets while deduplicating a shared ZIP");
@@ -60,8 +59,8 @@ internal static partial class Program
             local.Updates = new(components);
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
             Assert(worker.Requests.Single(r => r.Action == "stage-packages") is { LocalExecution: true, SkipZipTransfer: false } &&
-                local.Result == "Erfolgreich" && local.Phase.Contains("zzzSoftware bereitgestellt"),
-                "LOCALHOST reports successful publication for absent products; installation is skipped and the remote transfer option stays remote-only");
+                local.Result == "Übersprungen" && !local.Phase.Contains("zzzSoftware"),
+                "absent products are skipped without a database upload and the remote transfer option stays remote-only");
 
             remote[0].Updates = new(components);
             worker.Requests.Clear();
@@ -74,7 +73,7 @@ internal static partial class Program
             worker.Requests.Clear(); worker.Installed = true; worker.FailStaging = true;
             local.Updates = new(components);
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.Count == 5 && worker.Requests.First().Action == "publish-msi-packages" && worker.Requests.All(r => r.LocalExecution && r.SkipLocalPackageCopy && !r.SkipZipTransfer) &&
+            Assert(worker.Requests.Count == 4 && worker.Requests.All(r => r.Action == "update" && r.LocalExecution && r.SkipLocalPackageCopy && !r.SkipZipTransfer) &&
                 worker.Requests.Any(r => r.PaymentZip == payment) && worker.Requests.Any(r => r.MsiPackage?.PayloadPath == ntc),
                 "direct local updates skip bulk copying and retain the original ZIP and MSI sources");
             Field<CheckBox>(form, "chkSkipLocalPackageCopy").Checked = false;
@@ -82,22 +81,20 @@ internal static partial class Program
             Call(form, "CaptureCredentials");
             worker.Requests.Clear(); local.Updates = new(components);
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.Count == 5 && worker.Requests.First().Action == "publish-msi-packages" && worker.Requests.All(r => r.SkipLocalPackageCopy && r.RemoteInstallPath == ""),
+            Assert(worker.Requests.Count == 4 && worker.Requests.All(r => r.Action == "update" && r.SkipLocalPackageCopy && r.RemoteInstallPath == ""),
                 "an empty local destination also skips all bulk copying");
             Field<TextBox>(form, "txtRemotePath").Text = Path.Combine(root, "target");
             Call(form, "CaptureCredentials");
 
-            worker.Requests.Clear(); worker.FailPublication = true;
-            local.Updates = new(components);
+            worker.Requests.Clear(); worker.FailStaging = false; local.Scanned = false; local.Updates = new(components);
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.Count == 1 && worker.Requests.First().Action == "publish-msi-packages" && local.UpdateFailed &&
-                local.Updates.Pending == components && !local.Updates.DatabasePackagesPublished,
-                "a database publication failure blocks every local copy and installation and remains retryable");
-            worker.FailPublication = false;
+            Assert(worker.Requests.First().Action == "stage-packages", "local copying still happens before installation inventory is refreshed");
+            Assert(worker.Requests.Count(r => r.Action == "scan") == 1 && worker.Requests.All(r => r.Action != "probe"),
+                "an unscanned local host skips the redundant PowerShell connectivity probe");
             worker.Requests.Clear(); worker.FailStaging = true;
             local.Updates = new(components);
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.Select(r => r.Action).SequenceEqual(["publish-msi-packages", "stage-packages"]) && local.Result == "Fehler" && local.UpdateFailed && local.Updates.Pending == components,
+            Assert(worker.Requests.Select(r => r.Action).SequenceEqual(["stage-packages"]) && local.Result == "Fehler" && local.UpdateFailed && local.Updates.Pending == components,
                 "a failed local package copy prevents installation and retains unfinished components for retry");
 
             worker.Requests.Clear(); worker.FailStaging = false;
@@ -108,12 +105,6 @@ internal static partial class Program
             Assert(worker.Requests.Single(r => r.Action == "stage-packages").TransferFiles.Length == 2 &&
                 worker.Requests.Single(r => r.Action == "update").MsiPackage?.Kind == "ntc" && worker.Requests.All(r => r.Action != "publish-msi-packages"),
                 "local retries stage and update only the pending component without needing completed package sources");
-            worker.Requests.Clear(); worker.FailPublication = true;
-            local.Updates = new(UpdateComponents.Ntc) { DatabasePackagesPublished=true, DatabasePackageSelection=local.Updates.DatabasePackageSelection };
-            packages[UpdateComponents.Ntc].ProductVersion = "2.0.0";
-            Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.Count == 1 && worker.Requests.First().Action == "publish-msi-packages",
-                "changing the MSI selection invalidates a previously successful database publication");
         }
         finally
         {
@@ -127,15 +118,13 @@ internal static partial class Program
         internal ConcurrentQueue<WorkerRequest> Requests { get; } = new();
         internal bool Installed { get; set; } = true;
         internal bool FailStaging { get; set; }
-        internal bool FailPublication { get; set; }
         public Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> onProgress, CancellationToken ct)
         {
             Requests.Enqueue(request);
-            if (request.Action is not ("probe" or "scan" or "publish-msi-packages" or "stage-packages" or "update")) throw new InvalidOperationException("Unexpected request in update fixture");
-            if (request.Action is "stage-packages" or "publish-msi-packages" && !request.LocalExecution) throw new InvalidOperationException("Bulk staging must never target a remote host");
+            if (request.Action is not ("probe" or "scan" or "stage-packages" or "update")) throw new InvalidOperationException("Unexpected request in update fixture");
+            if (request.Action == "stage-packages" && !request.LocalExecution) throw new InvalidOperationException("Bulk staging must never target a remote host");
             if (request.Host == "PC-C.invalid") return Task.FromResult(new WorkerResult { Success=false, Error="Offline test fixture" });
             if (request.Action == "stage-packages" && FailStaging) return Task.FromResult(new WorkerResult { Success=false, Error="Copy fixture failure" });
-            if (request.Action == "publish-msi-packages" && FailPublication) return Task.FromResult(new WorkerResult { Success=false, Error="Database fixture failure" });
             return Task.FromResult(new WorkerResult { Success=true, Changed=request.Action == "stage-packages", Skipped=request.Action == "update" && !Installed,
                 NtcVersion=Installed ? "9.0.0" : "Nicht installiert",
                 InstalledPrograms=Installed ? [new() { Kind="ntc", DisplayName="NovaTouch Control", Version="9.0.0" }] : [] });

@@ -244,16 +244,6 @@ public sealed partial class MainForm
         host.RebootRequired |= result.RebootRequired;
     }
 
-    private async Task HashMsiPackagesAsync(UpdateComponents needed, CancellationToken ct)
-    {
-        foreach (var (component, package) in msiPackages.Where(pair => (pair.Key & needed) != 0))
-        {
-            package.Sha256 = await WorkerRunner.Sha256Async(package.PayloadPath, ct);
-            foreach (var file in package.CompanionFiles) file.Sha256 = await WorkerRunner.Sha256Async(file.LocalPath, ct);
-            Log("SYSTEM", $"MSI {component}: {package.ProductName} {package.ProductVersion}");
-        }
-    }
-
     private string UpdateConfirmation(HostState[] selected, UpdateComponents needed, bool onlyFailed)
     {
         var text = new System.Text.StringBuilder();
@@ -276,8 +266,6 @@ public sealed partial class MainForm
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Zielordner und zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen, einschließlich portable_python. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
-        if (selected.Any(h => h.IsLocal) && msiPackages.Count > 0)
-            text.AppendLine("LOKAL: vor der Installation alle ausgewählten MSIs in zzzSoftware aller Anwendungs-Namespaces der NTC/POS-Verbindungen hochladen. ZIP-Dateien werden nicht hochgeladen.");
         if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
             ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
             : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +

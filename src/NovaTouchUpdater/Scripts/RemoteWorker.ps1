@@ -280,11 +280,8 @@ try {
     if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
     $req = $requestLine | ConvertFrom-Json
     $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
-    if ($req.Action -in @('stage-packages','publish-msi-packages') -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
-    if ($req.Action -eq 'publish-msi-packages') {
-        PublishSelectedSoftwarePackages -Packages @($req.MsiPackages)
-        exit 0
-    }
+    if ($req.Action -eq 'publish-msi-packages') { throw 'Der zzzSoftware-Upload ist deaktiviert.' }
+    if ($req.Action -eq 'stage-packages' -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
     $requestedPath = if ($null -ne $req.PSObject.Properties['RemoteInstallPath']) { [string]$req.RemoteInstallPath } else { '' }
     $skipLocalPackageCopy = $localExecution -and ([string]::IsNullOrWhiteSpace($requestedPath) -or
         ($null -ne $req.PSObject.Properties['SkipLocalPackageCopy'] -and [bool]$req.SkipLocalPackageCopy))

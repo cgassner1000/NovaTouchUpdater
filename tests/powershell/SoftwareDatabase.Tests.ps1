@@ -23,6 +23,7 @@ function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
 function Get-CimInstance {
     param($ClassName,$Filter,$ErrorAction,$ComputerName)
     if ($ClassName -ne 'Win32_Service' -or $ComputerName) { throw 'Unexpected service query' }
+    $script:serviceQueries++
     $script:services
 }
 function Get-ItemProperty { throw 'Database publication must not depend on uninstall registration' }
@@ -32,6 +33,7 @@ function Stop-Service { throw 'Database publication must never stop services' }
 function Start-Service { throw 'Database publication must never start services' }
 $script:results = [Collections.Generic.List[object]]::new()
 $script:progress = [Collections.Generic.List[string]]::new()
+$script:serviceQueries = 0
 try {
     $ntcRoot = Join-Path $fixture 'Control'; $posRoot = Join-Path $fixture 'POS'
     foreach ($root in @($ntcRoot, $posRoot)) { [void][IO.Directory]::CreateDirectory((Join-Path $root 'bin')) }
@@ -137,7 +139,7 @@ try {
     ExpectFailure { PublishSelectedSoftwarePackages @($pos) } 'missing NTC/POS update services prevent local installation'
     Assert (@(Get-ChildItem -LiteralPath (Join-Path $fixture 'NovaTouchUpdater') -Directory).Count -eq 0) 'temporary MSI extraction is also cleaned on errors'
 
-    # Exercise the actual worker's action dispatch with the same in-memory provider.
+    # The reference upload routine is isolated; the app must reject this action.
     $source = [IO.File]::ReadAllText((Join-Path $TestScriptsRoot 'RemoteWorker.ps1'))
     $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$null, [ref]$null)
     $inventory = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ReadSoftwareInventory' }, $true)
@@ -146,12 +148,14 @@ try {
     $source = $source.Replace('$requestLine = [Console]::In.ReadLine()', '$requestLine = $script:requestJson').Replace('exit 0','return').Replace('exit 1','return')
     $worker = [scriptblock]::Create($source); $script:services = @($ntcService)
     foreach ($local in @($true,$false)) {
+        $queriesBefore = $script:serviceQueries; $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
         $script:requestJson = @{ Action='publish-msi-packages'; LocalExecution=$local; MsiPackages=@($ntc,$pos); Host='fixture.invalid' } | ConvertTo-Json -Depth 8 -Compress
         $writer = [IO.StringWriter]::new(); $previous = [Console]::Out
         try { [Console]::SetOut($writer); & $worker } finally { [Console]::SetOut($previous) }
         $events = @($writer.ToString() -split '\r?\n' | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
         $result = @($events | Where-Object Event -eq 'result')
-        Assert ($result.Count -eq 1 -and $result[0].Success -eq $local) 'the actual worker dispatches local publication and rejects remote publication before connecting'
+        Assert ($result.Count -eq 1 -and -not $result[0].Success -and $result[0].Error.Contains('deaktiviert') -and
+            $script:serviceQueries -eq $queriesBefore -and [SoftwareDatabaseFixture.Database]::Events.Count -eq $eventsBefore) 'the application rejects disabled database uploads before service queries, database connections or remote connections'
     }
     Write-Host 'PASS SoftwareDatabase tests completed without connecting to a database or running an installer'
 } finally {
