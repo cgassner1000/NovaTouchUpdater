@@ -276,6 +276,8 @@ public sealed partial class MainForm
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Zielordner und zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen, einschließlich portable_python. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
+        if (selected.Any(h => h.IsLocal) && msiPackages.Count > 0)
+            text.AppendLine("LOKAL: vor der Installation alle ausgewählten MSIs in zzzSoftware aller Anwendungs-Namespaces der NTC/POS-Verbindungen hochladen. ZIP-Dateien werden nicht hochgeladen.");
         if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
             ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
             : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +

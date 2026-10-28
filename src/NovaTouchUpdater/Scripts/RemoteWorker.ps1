@@ -216,7 +216,10 @@ function ReadSoftwareInventory {
             $version = if ($null -ne $program.PSObject.Properties['DisplayVersion']) { ([string]$program.DisplayVersion).Trim() } else { '' }
             $code = if ($null -ne $key.PSObject.Properties['PSChildName']) { [string]$key.PSChildName } else { '' }
             $location = if ($null -ne $program.PSObject.Properties['InstallLocation']) { [string]$program.InstallLocation } else { '' }
-            $programs += [pscustomobject]@{ Kind=$kind; DisplayName=$displayName; Version=$version; ProductCode=$code; InstallLocation=$location }
+            $icon = if ($null -ne $program.PSObject.Properties['DisplayIcon']) { [string]$program.DisplayIcon } else { '' }
+            $exe = ''
+            if ($icon -match '^\s*"([^"]+\.exe)"' -or $icon -match '^\s*(.+?\.exe)(?:,\s*-?\d+)?\s*$') { $exe = [Environment]::ExpandEnvironmentVariables($Matches[1]) }
+            $programs += [pscustomobject]@{ Kind=$kind; DisplayName=$displayName; Version=$version; ProductCode=$code; InstallLocation=$location; ExecutablePath=$exe }
             if ($kind -eq 'pos') { $posFound = $true; if ($version) { $posVersions += $version } }
         }
     }
@@ -277,7 +280,12 @@ try {
     if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
     $req = $requestLine | ConvertFrom-Json
     $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
-    if ($req.Action -eq 'stage-packages' -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
+    if ($req.Action -in @('stage-packages','publish-msi-packages') -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
+    if ($req.Action -eq 'publish-msi-packages') {
+        $software = ReadSoftwareInventory
+        PublishSelectedSoftwarePackages -Packages @($req.MsiPackages) -Programs @($software.InstalledPrograms)
+        exit 0
+    }
     $requestedPath = if ($null -ne $req.PSObject.Properties['RemoteInstallPath']) { [string]$req.RemoteInstallPath } else { '' }
     $skipLocalPackageCopy = $localExecution -and ([string]::IsNullOrWhiteSpace($requestedPath) -or
         ($null -ne $req.PSObject.Properties['SkipLocalPackageCopy'] -and [bool]$req.SkipLocalPackageCopy))
