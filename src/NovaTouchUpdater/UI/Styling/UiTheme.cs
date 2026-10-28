@@ -231,7 +231,7 @@ internal sealed class ModernToggleSwitch : CheckBox
 
 // Keep the native Button's keyboard, mnemonic, DialogResult and accessibility
 // behavior; only its painting changes. Sizes remain driven by text and DPI.
-internal sealed class ModernButton : Button
+internal class ModernButton : Button
 {
     private ButtonRole role;
     private bool hovered;
@@ -275,7 +275,13 @@ internal sealed class ModernButton : Button
         e.Graphics.DrawPath(pen, shape);
         var textBounds = ClientRectangle;
         textBounds.Inflate(-(int)(6 * scale), 0);
-        var flags = TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis;
+        var horizontal = TextAlign switch
+        {
+            ContentAlignment.TopLeft or ContentAlignment.MiddleLeft or ContentAlignment.BottomLeft => TextFormatFlags.Left,
+            ContentAlignment.TopRight or ContentAlignment.MiddleRight or ContentAlignment.BottomRight => TextFormatFlags.Right,
+            _ => TextFormatFlags.HorizontalCenter
+        };
+        var flags = horizontal | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis;
         if (!ShowKeyboardCues) flags |= TextFormatFlags.HidePrefix;
         if (!UseMnemonic) flags |= TextFormatFlags.NoPrefix;
         TextRenderer.DrawText(e.Graphics, Text, Font, textBounds, foreground, flags);

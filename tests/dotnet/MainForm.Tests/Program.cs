@@ -12,6 +12,7 @@ internal static partial class Program
         try
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            Application.EnableVisualStyles();
             if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
             if (args.Contains("--updates")) { UpdateRetryTests(); return 0; }
@@ -21,9 +22,11 @@ internal static partial class Program
             if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
             if (args.Contains("--startup")) { StartupChecksTests(); return 0; }
             if (args.Contains("--winrm")) { WinRmPreparationTests(); return 0; }
+            if (args.Contains("--sections")) { ExpandableSectionTests(); return 0; }
             if (!args.Contains("--layout"))
             {
                 TogglePaintingTests();
+                ExpandableSectionTests();
                 FormattingTests();
                 SelectionTests();
                 StartupChecksTests();
@@ -100,7 +103,7 @@ internal static partial class Program
             errors.Add($"row={e.RowIndex}, column={table.Columns[e.ColumnIndex].Name}, context={e.Context}: {e.Exception}");
             e.ThrowException = false; // Record failures instead of opening the native error dialog in a test.
         };
-        Control content = form.Controls[0];
+        Control content = form.Controls["mainScrollArea"]!;
         using var canvas = new Panel { Size = form.ClientSize, Font = form.Font };
         canvas.Controls.Add(content);
         canvas.CreateControl();
@@ -238,7 +241,7 @@ internal static partial class Program
             foreach (int width in new[] { 1710, 1000 })
             {
                 form.ClientSize = new Size((int)(width * scale), (int)(980 * scale));
-                Control content = form.Controls[0];
+                Control content = form.Controls["mainScrollArea"]!;
                 using var canvas = new Panel { Size = form.ClientSize, Font = form.Font };
                 canvas.Controls.Add(content);
                 canvas.CreateControl();

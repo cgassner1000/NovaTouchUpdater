@@ -311,15 +311,14 @@ public sealed partial class MainForm : Form
         var header = new UpdaterHeader(updateNotice);
         main.Controls.Add(header, 0, 0);
 
-        // Hostliste und die drei Update-Dateien immer untereinander anzeigen.
+        // Keep package cards in their own column, independent of the menu headers.
         var configuration = new TableLayoutPanel
         {
             Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2, RowCount = 2, Margin = new Padding(0, 0, 0, 14)
+            ColumnCount = 2, RowCount = 1, Margin = new Padding(0, 0, 0, 14)
         };
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
-        configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.Controls.Add(configuration, 0, 1);
 
@@ -351,17 +350,18 @@ public sealed partial class MainForm : Form
         txtRemotePath.Margin = new Padding(3, 2, 8, 2);
         targetPath.Controls.Add(txtRemotePath, 1, 0);
         var localCard = CreateLocalUpdateCard();
-        localCard.Margin = new Padding(0, 0, 8, 12);
-        configuration.Controls.Add(localCard, 0, 0);
-        var hostCard = Section("Remote-Hosts", Stack(hostList, lblFile));
+        localCard.Margin = new Padding(0, 0, 0, 12);
+        var hostCard = new ExpandableSection("Remote-Hosts", Stack(hostList, lblFile));
         hostCard.Name = "hostsCard";
-        hostCard.Margin = new Padding(8, 0, 0, 0);
-        configuration.Controls.Add(hostCard, 1, 1);
+        hostCard.Margin = Padding.Empty;
         var filesContent = Stack(CreatePackageSelectionGrid(), targetPath);
         var files = Section("Update-Dateien", filesContent);
         files.Name = "filesCard";
-        files.Margin = new Padding(0, 0, 8, 0);
-        configuration.Controls.Add(files, 0, 1);
+        files.Margin = Padding.Empty;
+        var packageColumn = Stack(localCard, files);
+        packageColumn.Name = "packageColumn";
+        packageColumn.Margin = new Padding(0, 0, 8, 0);
+        configuration.Controls.Add(packageColumn, 0, 0);
         lblFile.Text = "Keine Hostliste";
         lblPayment.Text = "Payment Target: –";
         lblFiscal.Text = "Fiscal Target: –";
@@ -437,38 +437,36 @@ public sealed partial class MainForm : Form
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
             login, optionBar, chkScanOnStartup, chkSkipZipTransfer, chkForceUpdate, FlowRow(btnSaveConfig));
-        var settings = Section("Einstellungen", settingsContent);
+        var settings = new ExpandableSection("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(0, 0, 0, 12);
-        configuration.Controls.Add(settings, 1, 0);
-        localCard.TabIndex = 0; settings.TabIndex = 1; files.TabIndex = 2; hostCard.TabIndex = 3;
+        var menuColumn = Stack(settings, hostCard);
+        menuColumn.Name = "menuColumn";
+        menuColumn.Margin = new Padding(8, 0, 0, 0);
+        configuration.Controls.Add(menuColumn, 1, 0);
+        localCard.TabIndex = 0; files.TabIndex = 1; settings.TabIndex = 0; hostCard.TabIndex = 1;
+        settings.ExpandedChanged += (_, _) => { if (settings.Expanded) hostCard.Collapse(); };
+        hostCard.ExpandedChanged += (_, _) => { if (hostCard.Expanded) settings.Collapse(); };
         bool stacked = false;
         configuration.Layout += (_, _) =>
         {
-            // Bei großen Schriften oder schmalen Fenstern beide Bereiche untereinander anordnen.
-            int optionsWidth = Math.Max(chkScanOnStartup.PreferredSize.Width,
-                Math.Max(chkSkipZipTransfer.PreferredSize.Width, httpsOptions.PreferredSize.Width));
-            int comfortableWidth = Math.Max(optionsWidth + settings.Padding.Horizontal,
-                TextRenderer.MeasureText(settings.Controls[0].Text, settings.Controls[0].Font).Width * 2);
-            bool needsStack = configuration.ClientSize.Width * .45F < comfortableWidth + settings.Padding.Left;
+            float scale = Math.Max(DeviceDpi / 96F, Font.SizeInPoints / 9.5F);
+            bool needsStack = configuration.ClientSize.Width < 720 * scale;
             if (needsStack == stacked) return;
             stacked = needsStack;
             configuration.SuspendLayout();
             configuration.ColumnCount = stacked ? 1 : 2;
-            configuration.RowCount = stacked ? 4 : 2;
+            configuration.RowCount = stacked ? 2 : 1;
             configuration.ColumnStyles.Clear();
             configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, stacked ? 100 : 55));
             if (!stacked) configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
             configuration.RowStyles.Clear();
             configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            if (stacked) { configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize)); configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize)); }
-            configuration.SetCellPosition(localCard, new TableLayoutPanelCellPosition(0, 0));
-            configuration.SetCellPosition(hostCard, stacked ? new TableLayoutPanelCellPosition(0, 3) : new TableLayoutPanelCellPosition(1, 1));
-            configuration.SetCellPosition(files, stacked ? new TableLayoutPanelCellPosition(0, 2) : new TableLayoutPanelCellPosition(0, 1));
-            configuration.SetCellPosition(settings, stacked ? new TableLayoutPanelCellPosition(0, 1) : new TableLayoutPanelCellPosition(1, 0));
-            files.Margin = stacked ? new Padding(0, 0, 0, 10) : new Padding(0, 0, 8, 0);
-            hostCard.Margin = stacked ? Padding.Empty : new Padding(8, 0, 0, 0);
+            if (stacked) configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            configuration.SetCellPosition(packageColumn, new TableLayoutPanelCellPosition(0, stacked ? 1 : 0));
+            configuration.SetCellPosition(menuColumn, new TableLayoutPanelCellPosition(stacked ? 0 : 1, 0));
+            packageColumn.Margin = stacked ? Padding.Empty : new Padding(0, 0, 8, 0);
+            menuColumn.Margin = stacked ? new Padding(0, 0, 0, 12) : new Padding(8, 0, 0, 0);
             configuration.ResumeLayout(true);
         };
 
@@ -662,7 +660,11 @@ public sealed partial class MainForm : Form
                     httpsOptions.PreferredSize.Width + httpsOptions.Margin.Horizontal) + settings.Padding.Horizontal;
             if (main.MinimumSize.Width != width) main.MinimumSize = new Size(width, 0);
         };
-        Controls.Add(WindowLayout.CreateScrollArea(main, table));
+        var scrollArea = WindowLayout.CreateScrollArea(main, table);
+        scrollArea.Name = "mainScrollArea";
+        Controls.Add(scrollArea);
+        settings.AttachOverlay(this);
+        hostCard.AttachOverlay(this);
     }
 
     private SurfaceCard Section(string title, TableLayoutPanel content)
