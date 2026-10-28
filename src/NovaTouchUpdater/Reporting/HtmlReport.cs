@@ -112,7 +112,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
                 "Fehler" => "bad",
                 _ => "other"
             };
-            string search = string.Join(' ', new[] { host.Host, host.Connection, DisplayText.Clean(host.PaymentBefore), DisplayText.Clean(host.Payment),
+            string search = string.Join(' ', new[] { host.DisplayName, host.Connection, DisplayText.Clean(host.PaymentBefore), DisplayText.Clean(host.Payment),
                 DisplayText.Clean(host.FiscalBefore), DisplayText.Clean(host.Fiscal), DisplayText.DotNet48Description(host.DotNet48Installed),
                 DisplayText.Clean(host.ServerSuiteBefore), DisplayText.Clean(host.ServerSuite), DisplayText.ServiceInstances(host.Services.Where(s => s.Kind == "serversuite"), host.ServerSuite),
                 DisplayText.Clean(host.PosVersion), DisplayText.Clean(host.NtcVersion),
@@ -120,7 +120,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
                 DisplayText.WithAttempt(DisplayText.Clean(host.Phase), host.Attempt),
                 host.Result, DisplayText.Clean(host.Error) }).ToLowerInvariant();
             sb.Append("<tr data-kind=\"").Append(kind).Append("\" data-search=\"").Append(E(search)).AppendLine("\">");
-            sb.Append("<td class=\"host\">").Append(E(host.Host)).AppendLine("</td>");
+            sb.Append("<td class=\"host\">").Append(E(host.DisplayName)).AppendLine("</td>");
             sb.Append("<td title=\"").Append(E(host.ConnectionState.ToolTip)).Append("\">").Append(E(host.Connection));
             DateTimeOffset? lastConnectionCheck = host.ConnectionState.LastCheckedAt;
             if (lastConnectionCheck.HasValue)

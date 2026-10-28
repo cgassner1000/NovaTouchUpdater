@@ -67,6 +67,7 @@ internal static partial class Program
         _ = empty.Handle;
         Call(empty, "ApplyLoadedConfig", new LoadedConfig(new UpdaterConfig { Hosts = [] }, "", null));
         Complete((Task)Call(empty, "RunStartupChecksAsync")!);
-        Assert(emptyWorker.Requests.IsEmpty, "an enabled startup scan with no targets starts no workers");
+        Assert(emptyWorker.Requests.Count == 2 && emptyWorker.Requests.All(r => r.LocalExecution && r.Action is "probe" or "scan") &&
+            Targets(empty) is [{ IsLocal: true, Scanned: true }], "an enabled startup scan with an empty remote list checks the local computer");
     }
 }

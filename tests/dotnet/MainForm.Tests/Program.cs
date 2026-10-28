@@ -23,12 +23,14 @@ internal static partial class Program
             if (args.Contains("--startup")) { StartupChecksTests(); return 0; }
             if (args.Contains("--winrm")) { WinRmPreparationTests(); return 0; }
             if (args.Contains("--sections")) { ExpandableSectionTests(); return 0; }
+            if (args.Contains("--hosts")) { HostManagementTests(); SelectionTests(); return 0; }
             if (!args.Contains("--layout"))
             {
                 TogglePaintingTests();
                 ExpandableSectionTests();
                 FormattingTests();
                 SelectionTests();
+                HostManagementTests();
                 StartupChecksTests();
                 WinRmPreparationTests();
                 ScanTests();
@@ -92,6 +94,7 @@ internal static partial class Program
         ((IDataGridViewEditingCell)table.CurrentCell).EditingCellFormattedValue = selected;
         table.NotifyCurrentCellDirty(true);
         table.EndEdit();
+        Application.DoEvents(); // Finish deferred row changes after checkbox commits.
     }
 
     private static void FormattingTests()
@@ -160,26 +163,28 @@ internal static partial class Program
         Call(form, "SetAllHostsSelected", true);
         Assert(hosts.All(h => h.IsSelected), "select all includes loaded hosts hidden by the display filter");
         Call(form, "SetAllHostsSelected", false);
-        Assert(Targets(form).Length == 0 && Field<Label>(form, "lblSelection").Text == "0 von 3 ausgewählt",
-            "clear selection includes hidden hosts and updates the visible count");
+        Application.DoEvents();
+        Assert(Targets(form) is [{ IsLocal: true }] && hosts.All(h => !h.IsSelected) && Field<Label>(form, "lblSelection").Text == "1 von 4 ausgewählt",
+            "clearing all remote checkboxes, including hidden hosts, selects the local fallback and updates the visible count");
         filter.SelectedIndex = 0;
-        Assert(table.Rows.Cast<DataGridViewRow>().All(row => row.Cells["include"].Value is false), "rebuilding the table preserves unchecked states");
+        Assert(hosts.All(h => h.Row!.Cells["include"].Value is false), "rebuilding the table preserves unchecked remote states");
         table.Sort(table.Columns["hostname"], System.ComponentModel.ListSortDirection.Descending);
-        HostState sortedHost = (HostState)table.Rows[0].Tag!;
+        HostState sortedHost = table.Rows.Cast<DataGridViewRow>().Select(row => (HostState)row.Tag!).First(h => !h.IsLocal);
         EditSelection(form, sortedHost, true);
         Assert(Targets(form).SequenceEqual([sortedHost]), "checkboxes remain attached to the correct host after sorting");
         table.CurrentCell = sortedHost.Row!.Cells["hostname"];
         typeof(DataGridView).GetMethod("OnKeyDown", Private)!.Invoke(table, [new KeyEventArgs(Keys.Space)]);
-        Assert(Targets(form).Length == 0, "Space on the focused host row also toggles its checkbox");
-        Assert(new[] { "btnScan", "btnWinRm", "btnTransfer", "btnSendCommand", "btnUpdate", "btnRetry" }
-            .All(name => !Field<Button>(form, name).Enabled), "no remote action can start without selected hosts");
+        Application.DoEvents();
+        Assert(Targets(form) is [{ IsLocal: true }], "Space toggles the last remote checkbox and restores the local target");
+        Assert(new[] { "btnWinRm", "btnTransfer", "btnSendCommand", "btnUpdate", "btnRetry" }
+            .All(name => !Field<Button>(form, name).Enabled) && Field<Button>(form, "btnScan").Enabled,
+            "without selected remote hosts, remote actions are disabled and local checking is available");
         Complete((Task)Call(form, "RunScansAsync")!);
-        Complete((Task)Call(form, "RunUpdatesAsync", false)!);
-        Complete((Task)Call(form, "RunUpdatesAsync", true)!);
         Complete((Task)Call(form, "TransferFilesAsync")!);
         Complete((Task)Call(form, "SendCommandAsync")!);
         Complete((Task)Call(form, "RefreshConnectionsAsync")!);
-        Assert(worker.Requests.IsEmpty && monitor.Requests.IsEmpty, "empty selection sends no worker requests or monitoring round");
+        Assert(worker.Requests.Count == 2 && worker.Requests.All(r => r.LocalExecution && r.Action is "probe" or "scan") && monitor.Requests.IsEmpty,
+            "empty remote selection checks only the local computer and starts no remote monitoring or command");
         Assert(Field<Button>(form, "btnSaveConfig").Enabled && Field<Button>(form, "btnExport").Enabled,
             "configuration and reporting remain available for the loaded list");
         Call(form, "SetAllHostsSelected", true);

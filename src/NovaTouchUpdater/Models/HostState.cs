@@ -9,6 +9,7 @@ internal sealed class HostState
 
     public string Host { get; init; } = "";
     public bool IsLocal => Host.Equals("LOCALHOST", StringComparison.OrdinalIgnoreCase);
+    public string DisplayName => IsLocal ? "LOKAL" : Host;
     public bool IsSelected { get; set; } = true;
     public ConnectionState ConnectionState { get; } = new();
     public string Connection { get => ConnectionState.Status; set => ConnectionState.SetForegroundStatus(value); }

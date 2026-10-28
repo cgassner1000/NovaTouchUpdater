@@ -21,8 +21,42 @@ public sealed partial class MainForm
     private CancellationTokenSource? packageCancellation;
     private bool loadingPackages;
     private UpdateExecutionMode Mode => executionMode.SelectedIndex is >= 0 and <= 2 ? (UpdateExecutionMode)executionMode.SelectedIndex : UpdateExecutionMode.Remote;
-    private IEnumerable<HostState> ExecutionHosts() => hosts.Where(h => Mode == UpdateExecutionMode.LocalAndRemote || (Mode == UpdateExecutionMode.Local ? h.IsLocal : !h.IsLocal));
+    private bool LocalFallback => Mode == UpdateExecutionMode.Local || !hosts.Any(h => !h.IsLocal && h.IsSelected);
+    private bool IncludeLocalHost => Mode != UpdateExecutionMode.Remote || LocalFallback;
+    private bool localHostInTable;
+    private bool hostRowsRebuildQueued;
+    private IEnumerable<HostState> ExecutionHosts() => hosts.Where(h => h.IsLocal ? IncludeLocalHost : Mode != UpdateExecutionMode.Local);
     private HostState[] SelectedRemoteHosts() => SelectedHosts().Where(h => !h.IsLocal).ToArray();
+
+    private void EnsureLocalHost()
+    {
+        if (!IncludeLocalHost) return;
+        HostState? local = hosts.FirstOrDefault(h => h.IsLocal);
+        if (local is null)
+        {
+            local = new HostState { Host = "LOCALHOST", Connection = "Lokal", Phase = "Lokaler Rechner – ohne WinRM" };
+            hosts.Insert(0, local);
+        }
+        if (LocalFallback)
+        {
+            local.IsSelected = true;
+            if (local.Row is not null) local.Row.Cells["include"].Value = true;
+        }
+    }
+
+    private void QueueHostRowsRebuild()
+    {
+        // Checkbox commits must finish before changing the rows of the grid.
+        if (!IsHandleCreated) { RebuildRows(); return; }
+        if (hostRowsRebuildQueued) return;
+        hostRowsRebuildQueued = true;
+        BeginInvoke(() =>
+        {
+            hostRowsRebuildQueued = false;
+            if (IsDisposed) return;
+            RebuildRows(); UpdateSummary(); UpdateButtons();
+        });
+    }
 
     private Control CreateLocalUpdateCard()
     {
@@ -194,8 +228,6 @@ public sealed partial class MainForm
     private void UpdateExecutionSelection()
     {
         if (busy || selfUpdating || loadingPackages) return;
-        if (Mode != UpdateExecutionMode.Remote && !hosts.Any(h => h.IsLocal))
-            hosts.Insert(0, new HostState { Host = "LOCALHOST", Connection = "Lokal", Phase = "Lokaler Rechner – ohne WinRM" });
         InvalidateConnectionChecks(); RebuildRows(); UpdateSummary(); UpdateButtons();
     }
 
@@ -220,9 +252,9 @@ public sealed partial class MainForm
     private string UpdateConfirmation(HostState[] selected, UpdateComponents needed, bool onlyFailed)
     {
         var text = new System.Text.StringBuilder();
-        text.AppendLine("Ausführung: " + executionMode.Text);
+        text.AppendLine("Ausführung: " + (selected.All(h => h.IsLocal) ? "Lokal" : executionMode.Text));
         int remoteCount = selected.Count(h => !h.IsLocal);
-        text.AppendLine("Ziele: " + (selected.Any(h => h.IsLocal) ? "LOCALHOST" + (remoteCount > 0 ? $" und {remoteCount} Remote-Host(s)" : "") : $"{remoteCount} Remote-Host(s)"));
+        text.AppendLine("Ziele: " + (selected.Any(h => h.IsLocal) ? "LOKAL" + (remoteCount > 0 ? $" und {remoteCount} Remote-Host(s)" : "") : $"{remoteCount} Remote-Host(s)"));
         text.AppendLine("\nGeplante Komponenten:");
         foreach (UpdateComponents component in HostUpdateState.Each(needed))
         {
@@ -239,7 +271,7 @@ public sealed partial class MainForm
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Zielordner und zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen, einschließlich portable_python. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
-        if (selected.Any(h => h.IsLocal)) text.AppendLine("Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOCALHOST: alle gewählten Pakete bereitstellen; nur installierte Komponenten aktualisieren. Direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
+        if (selected.Any(h => h.IsLocal)) text.AppendLine("Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen; nur installierte Komponenten aktualisieren. Direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
         if (selected.Any(h => !h.IsLocal)) text.AppendLine("Remote-Zielpfad: " + txtRemotePath.Text.Trim() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv"));
         return text.ToString();
     }

@@ -196,6 +196,8 @@ var localMsi = new HostState { Host="LOCALHOST", Connection="Lokal", NtcVersion=
     InstalledPrograms=[new() { Kind="ntv", DisplayName="NovaTouch Voucher", Version="3.0.0" }] };
 string localReport = HtmlReport.Create([localMsi], "", "", now.LocalDateTime, true, "",
     new Dictionary<string, string> { ["NovaTouch Control"]="2.0.0", ["<Paket>"]="1.0" }, "Lokal & Remote");
+Assert(localMsi.DisplayName == "LOKAL" && localReport.Contains("<td class=\"host\">LOKAL</td>"),
+    "the local computer is named LOKAL in the display and HTML report");
 Assert(localReport.Contains("NovaTouch NTC</th>") && localReport.Contains("class=\"ntc-ver\">2.0.0</td>") &&
     localReport.Contains("NovaTouch Control Target: <strong>2.0.0</strong>") && localReport.Contains("&lt;Paket&gt;") &&
     localReport.Contains("Lokal &amp; Remote") && localReport.Contains("Windows-Neustart erforderlich") &&

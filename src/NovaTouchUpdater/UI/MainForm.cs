@@ -56,8 +56,7 @@ public sealed partial class MainForm : Form
     private readonly CheckBox chkScanOnStartup = new ModernToggleSwitch { Checked = true };
     private readonly ProgressBar progress = new ModernProgressBar();
     private readonly Button btnImport = Button("Hostliste laden");
-    private readonly Button btnAddHost = Button("Host hinzufügen");
-    private readonly Button btnRemoveHost = Button("Entfernen");
+    private readonly Button btnEditHosts = Button("Host bearbeiten");
     private readonly Button btnSaveConfig = Button("Konfiguration speichern");
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
@@ -115,6 +114,7 @@ public sealed partial class MainForm : Form
         WindowLayout.CompleteInitialization(this);
         executionMode.SelectedIndexChanged += (_, _) => UpdateExecutionSelection();
         if (!preview) LoadStartupConfig();
+        UpdateExecutionSelection();
         // Erst nach dem ersten Layout die endgültigen Spaltenbreiten berechnen.
         connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
         releaseTimer.Tick += async (_, _) => await CheckAppReleaseAsync();
@@ -198,14 +198,9 @@ public sealed partial class MainForm : Form
         softwarePath.Text = config.SoftwarePath ?? "";
         txtPassword.Text = loaded.Password;
         string[] configuredHosts = config.Hosts ?? [];
-        if (configuredHosts.Length > 0)
-        {
-            hosts.Clear();
-            foreach (string host in configuredHosts) hosts.Add(new HostState { Host = host });
-            lblFile.Text = $"config.json ({hosts.Count})";
-            RebuildRows();
-            UpdateSummary();
-        }
+        hosts.Clear();
+        foreach (string host in configuredHosts) hosts.Add(new HostState { Host = host });
+        lblFile.Text = configuredHosts.Length == 0 ? "Keine Remote-Hosts · Prüfung lokal" : $"config.json ({configuredHosts.Length})";
         executionMode.SelectedIndex = Enum.TryParse<UpdateExecutionMode>(config.ExecutionMode, out var mode) ? (int)mode : (int)UpdateExecutionMode.Remote;
         UpdateExecutionSelection();
         startupConfigLoaded = true;
@@ -323,7 +318,7 @@ public sealed partial class MainForm : Form
         main.Controls.Add(configuration, 0, 1);
 
         var hostList = FlowRow();
-        foreach (Button btn in new[] { btnImport, btnAddHost, btnRemoveHost })
+        foreach (Button btn in new[] { btnImport, btnEditHosts })
         {
             btn.Margin = new Padding(0, 0, 5, 0);
             hostList.Controls.Add(btn);
@@ -426,7 +421,7 @@ public sealed partial class MainForm : Form
         chkScanOnStartup.AutoSize = true;
         chkScanOnStartup.Anchor = AnchorStyles.Left;
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
-        tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts. LOCALHOST wird direkt geprüft; Remote-Hosts über WinRM.");
+        tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts. LOKAL wird direkt geprüft; Remote-Hosts über WinRM.");
         tips.SetToolTip(btnScan, "Nur Verbindung und installierte Versionen prüfen. Es werden keine Update-Dateien kopiert und keine Programme installiert.");
         tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Zum Ergänzen von TrustedHosts sind Administratorrechte erforderlich.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
@@ -434,7 +429,7 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, Benutzer, Passwort, HTTPS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
         tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
-        tips.SetToolTip(txtRemotePath, "Ablage für ZIPs, MSIs und temporäre Update-Dateien. Gilt für LOCALHOST und für jeden ausgewählten Remote-Host. Wird bei einem nötigen Update angelegt und mit der Config gespeichert.");
+        tips.SetToolTip(txtRemotePath, "Ablage für ZIPs, MSIs und temporäre Update-Dateien. Gilt für LOKAL und für jeden ausgewählten Remote-Host. Wird bei einem nötigen Update angelegt und mit der Config gespeichert.");
         tips.SetToolTip(chkSkipZipTransfer, "ZIP- und MSI-Pakete müssen bereits im Remote-Zielpfad liegen; sie werden anhand der lokalen Auswahl und SHA256 geprüft. Lokale Updates stellen ihre Pakete direkt bereit.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
@@ -562,7 +557,7 @@ public sealed partial class MainForm : Form
             column.HeaderCell = new SizingColumnHeaderCell { Value = column.HeaderText };
             column.ReadOnly = column.Name != "include";
         }
-        table.Columns["include"].ToolTipText = "Host für Remote-Aktionen auswählen";
+        table.Columns["include"].ToolTipText = "Host auswählen. Ohne ausgewählte Remote-Hosts wird LOKAL geprüft.";
         // Überschriften und Zellinhalte bestimmen die Breiten nach dem Layout.
         // Information bekommt als einzige Spalte die verbleibende Breite.
         table.Columns["hostname"].DefaultCellStyle.Font = new Font(Font, FontStyle.Bold);
@@ -603,6 +598,7 @@ public sealed partial class MainForm : Form
         table.KeyDown += (_, e) =>
         {
             if (busy || selfUpdating || e.KeyCode != Keys.Space || table.CurrentCell?.ColumnIndex == table.Columns["include"].Index || table.CurrentRow?.Tag is not HostState host) return;
+            if (host.IsLocal && LocalFallback) { e.Handled = e.SuppressKeyPress = true; return; }
             table.CurrentRow.Cells["include"].Value = !host.IsSelected;
             e.Handled = e.SuppressKeyPress = true;
         };
@@ -642,8 +638,7 @@ public sealed partial class MainForm : Form
 
         btnImport.Click += (_, _) => LoadHosts();
         btnSaveConfig.Click += (_, _) => SaveConfig();
-        btnAddHost.Click += (_, _) => AddHost();
-        btnRemoveHost.Click += (_, _) => RemoveSelectedHost();
+        btnEditHosts.Click += (_, _) => EditHosts();
         btnPayment.Click += (_, _) => ChooseZip("payment");
         btnFiscal.Click += (_, _) => ChooseZip("fiscal");
         btnServerSuite.Click += (_, _) => ChooseServerSuite();
@@ -732,21 +727,27 @@ public sealed partial class MainForm : Form
             .Select(x => x.Trim())
             .Where(x => x.Length > 0 && !x.StartsWith('#') && !x.StartsWith(';'))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (values.Length == 0) { MessageBox.Show(this, "Die Datei enthält keine Hostnamen."); return; }
-        InvalidateConnectionChecks();
-        hosts.Clear();
-        foreach (string value in values) hosts.Add(new HostState { Host = value });
-        RebuildRows();
-        lblFile.Text = Path.GetFileName(dialog.FileName) + $" ({hosts.Count})";
-        Log("SYSTEM", $"Hostliste eingelesen: {dialog.FileName}, {hosts.Count} eindeutige Hosts");
-        UpdateSummary(); UpdateButtons();
+        ApplyRemoteHosts(values, Path.GetFileName(dialog.FileName));
     }
 
-    private void AddHost()
+    private void EditHosts()
     {
-        using var dialog = new Form
+        var (dialog, hostNames) = CreateHostEditor();
+        using (dialog)
         {
-            Text = "Computer hinzufügen oder bearbeiten", Width = 720, Height = 420, MinimumSize = new Size(560, 350),
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            string[] entries = hostNames.Lines.Select(x => x.Trim())
+                .Where(x => x.Length > 0 && !x.StartsWith('#') && !x.StartsWith(';'))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            ApplyRemoteHosts(entries, "Hosts (manuell bearbeitet)");
+        }
+    }
+
+    private (Form Dialog, TextBox HostNames) CreateHostEditor()
+    {
+        var dialog = new Form
+        {
+            Text = "Hosts bearbeiten", Width = 720, Height = 420, MinimumSize = new Size(560, 350),
             FormBorderStyle = FormBorderStyle.Sizable, StartPosition = FormStartPosition.CenterParent,
             MinimizeBox = false, MaximizeBox = false, Font = UiTheme.BodyFont()
         };
@@ -754,7 +755,8 @@ public sealed partial class MainForm : Form
         var label = new Label
         {
             Text = "Computernamen (ein Computer pro Zeile). Über „Durchsuchen“ können mehrere Computer ausgewählt werden.\n" +
-                "Die Suche unterstützt Namensmuster in Domäne und lokalem Netzwerk sowie LDAP-Filter für Domänen.",
+                "Die Suche unterstützt Namensmuster in Domäne und lokalem Netzwerk sowie LDAP-Filter für Domänen.\n" +
+                "Eine leere Liste ist erlaubt: Dann wird der lokale Computer geprüft.",
             AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(3, 3, 3, 8)
         };
         var hostNames = new TextBox
@@ -793,12 +795,6 @@ public sealed partial class MainForm : Form
             string[] values = hostNames.Lines.Select(x => x.Trim())
                 .Where(x => x.Length > 0 && !x.StartsWith('#') && !x.StartsWith(';'))
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            if (values.Length == 0)
-            {
-                MessageBox.Show(dialog, "Bitte mindestens einen Computernamen eingeben oder auswählen.",
-                    "Computer hinzufügen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
             string[] invalid = values.Where(x => x.Any(char.IsWhiteSpace)).ToArray();
             if (invalid.Length > 0)
             {
@@ -825,34 +821,26 @@ public sealed partial class MainForm : Form
         dialog.CancelButton = cancel;
         WindowLayout.CompleteInitialization(dialog);
         dialog.Shown += (_, _) => hostNames.Focus();
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        return (dialog, hostNames);
+    }
 
-        string[] entries = hostNames.Lines.Select(x => x.Trim())
-            .Where(x => x.Length > 0 && !x.StartsWith('#') && !x.StartsWith(';'))
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var existing = hosts.ToDictionary(h => h.Host, StringComparer.OrdinalIgnoreCase);
-        int removed = hosts.Count(h => !entries.Contains(h.Host, StringComparer.OrdinalIgnoreCase));
+    private void ApplyRemoteHosts(string[] entries, string source)
+    {
+        entries = entries.Where(host => !host.Equals("LOCALHOST", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var existing = hosts.Where(h => !h.IsLocal).ToDictionary(h => h.Host, StringComparer.OrdinalIgnoreCase);
+        HostState? local = hosts.FirstOrDefault(h => h.IsLocal);
+        int removed = existing.Keys.Count(host => !entries.Contains(host, StringComparer.OrdinalIgnoreCase));
         int added = entries.Count(value => !existing.ContainsKey(value));
         InvalidateConnectionChecks();
         hosts.Clear();
+        if (local is not null) hosts.Add(local);
         foreach (string value in entries)
             hosts.Add(existing.TryGetValue(value, out HostState? host) ? host : new HostState { Host = value });
-        lblFile.Text = $"{hosts.Count} Hosts (manuell ergänzt)";
+        lblFile.Text = entries.Length == 0 ? "Keine Remote-Hosts · Prüfung lokal" : $"{source} ({entries.Length})";
         RebuildRows();
         UpdateSummary();
         UpdateButtons();
-        Log("SYSTEM", $"Hostliste manuell bearbeitet: {added} hinzugefügt, {removed} entfernt");
-    }
-
-    private void RemoveSelectedHost()
-    {
-        if (busy || table.CurrentRow?.Tag is not HostState host) return;
-        InvalidateConnectionChecks();
-        hosts.Remove(host);
-        lblFile.Text = $"{hosts.Count} Hosts";
-        RebuildRows();
-        UpdateSummary();
-        UpdateButtons();
+        Log("SYSTEM", $"Remote-Hostliste aktualisiert ({source}): {added} hinzugefügt, {removed} entfernt");
     }
 
     private HostState[] SelectedHosts() => ExecutionHosts().Where(host => host.IsSelected).ToArray();
@@ -879,6 +867,9 @@ public sealed partial class MainForm : Form
 
     private void HostSelectionChanged()
     {
+        EnsureLocalHost();
+        if (localHostInTable != IncludeLocalHost) QueueHostRowsRebuild();
+        foreach (HostState local in hosts.Where(h => h.IsLocal)) PaintRow(local);
         InvalidateConnectionChecks();
         UpdateSummary();
         UpdateButtons();
@@ -886,13 +877,12 @@ public sealed partial class MainForm : Form
 
     private void RebuildRows()
     {
-        if (Mode != UpdateExecutionMode.Remote && !hosts.Any(h => h.IsLocal))
-            hosts.Insert(0, new HostState { Host = "LOCALHOST", Connection = "Lokal", Phase = "Lokaler Rechner – ohne WinRM" });
+        EnsureLocalHost();
+        localHostInTable = IncludeLocalHost;
         table.Rows.Clear();
         foreach (HostState host in hosts) host.Row = null;
-        foreach (HostState host in hosts)
+        foreach (HostState host in ExecutionHosts())
         {
-            if ((Mode == UpdateExecutionMode.Local && !host.IsLocal) || (Mode == UpdateExecutionMode.Remote && host.IsLocal)) continue;
             bool include = statusFilter.SelectedIndex switch
             {
                 1 => host.Result == "Fehler",
@@ -1704,8 +1694,9 @@ public sealed partial class MainForm : Form
             attempt = h.Attempt;
         }
         var cells = h.Row.Cells;
+        cells["include"].ReadOnly = h.IsLocal && LocalFallback;
         cells["include"].Value = h.IsSelected;
-        cells["hostname"].Value = h.Host;
+        cells["hostname"].Value = h.DisplayName;
         cells["connection"].Value = connection;
         cells["connection"].ToolTipText = connectionToolTip;
         cells["dotnet48"].Value = DisplayText.DotNet48(h.DotNet48Installed);
@@ -1827,14 +1818,15 @@ public sealed partial class MainForm : Form
     {
         bool idle = !busy && !selfUpdating && !loadingPackages;
         HostState[] selected = SelectedHosts();
-        bool remote = Mode != UpdateExecutionMode.Local;
+        bool remote = selected.Any(h => !h.IsLocal);
         updateNotice.Enabled = idle;
-        btnImport.Enabled = btnAddHost.Enabled = idle && remote; btnSaveConfig.Enabled = idle;
-        btnRemoveHost.Enabled = idle && table.CurrentRow?.Tag is HostState { IsLocal: false };
+        btnImport.Enabled = btnEditHosts.Enabled = idle && Mode != UpdateExecutionMode.Local; btnSaveConfig.Enabled = idle;
         btnPayment.Enabled = idle; btnFiscal.Enabled = idle; btnServerSuite.Enabled = idle;
         btnSelectAll.Enabled = btnClearSelection.Enabled = idle && hosts.Count > 0;
         lblSelection.Text = $"{selected.Length} von {ExecutionHosts().Count()} ausgewählt";
         if (table.Columns.Contains("include")) table.Columns["include"].ReadOnly = !idle;
+        foreach (HostState local in hosts.Where(h => h.IsLocal && h.Row is not null))
+            local.Row!.Cells["include"].ReadOnly = !idle || LocalFallback;
         btnWinRm.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnScan.Enabled = idle && selected.Length > 0;
         btnUpdate.Enabled = idle && selected.Any(h => h.Scanned);
@@ -1867,7 +1859,7 @@ public sealed partial class MainForm : Form
 
     private void ShowHostLog(HostState host)
     {
-        using var window = new Form { Text = "Protokoll – " + host.Host, Width = 920, Height = 520, Padding = new Padding(18), StartPosition = FormStartPosition.CenterParent, Font = UiTheme.BodyFont() };
+        using var window = new Form { Text = "Protokoll – " + host.DisplayName, Width = 920, Height = 520, Padding = new Padding(18), StartPosition = FormStartPosition.CenterParent, Font = UiTheme.BodyFont() };
         window.SuspendLayout();
         var text = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, Dock = DockStyle.Fill, Font = new Font("Consolas", 9F), WordWrap = false };
         lock (logLock) text.Text = string.Join(Environment.NewLine, host.Log);
