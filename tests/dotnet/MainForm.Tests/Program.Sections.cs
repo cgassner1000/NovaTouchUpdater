@@ -112,6 +112,41 @@ internal static partial class Program
                     "individual update files expand as the original card");
                 if (width == 1710 && scale == 1F)
                 {
+                    using var picker = new Form();
+                    _ = picker.Handle;
+                    Func<DialogResult> simulatePicker = () =>
+                    {
+                        typeof(Form).GetMethod("OnDeactivate", Private)!.Invoke(form, [EventArgs.Empty]);
+                        var pickerClick = Message.Create(picker.Handle, 0x0201, IntPtr.Zero, IntPtr.Zero);
+                        var cancelPicker = Message.Create(picker.Handle, 0x0100, (IntPtr)Keys.Escape, IntPtr.Zero);
+                        Assert(files.Expanded && !files.PreFilterMessage(ref pickerClick) && !files.PreFilterMessage(ref cancelPicker) && files.Expanded,
+                            "opening and using a package picker, including Escape, keeps the individual-files section open");
+                        return DialogResult.OK;
+                    };
+                    foreach (SoftwarePackage package in fixturePackages.Take(2))
+                    {
+                        Assert((DialogResult)Call(form, "ShowIndividualPackageDialog", simulatePicker)! == DialogResult.OK,
+                            "the package dialog returns its result without closing the section");
+                        Call(form, "SelectIndividualPackage", package);
+                        Assert(files.Expanded, "selecting a package keeps the section open for the next package");
+                    }
+                    Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == (UpdateComponents.Payment | UpdateComponents.Fiscal),
+                        "successive individual selections retain both chosen packages");
+                    _ = Call(form, "ShowIndividualPackageDialog", (Func<DialogResult>)(() => DialogResult.Cancel));
+                    Assert(files.Expanded, "cancelling another file selection also keeps the section open");
+                    try
+                    {
+                        _ = Call(form, "ShowIndividualPackageDialog", (Func<DialogResult>)(() => throw new IOException("Simulated picker error")));
+                    }
+                    catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException is IOException) { }
+                    var outsideFiles = Message.Create(table.Handle, 0x0201, IntPtr.Zero, IntPtr.Zero);
+                    Assert(!files.PreFilterMessage(ref outsideFiles) && !files.Expanded,
+                        "after selecting packages or a picker error, a click outside still closes the section");
+                    ClickSection(files);
+                    ClickSection(files);
+                    Assert(!files.Expanded, "clicking the individual-files heading still closes its section");
+                    ClickSection(files);
+                    Call(form, "UseFolderPackages");
                     using var expandedFiles = new Bitmap(files.Width, files.Height);
                     files.DrawToBitmap(expandedFiles, new Rectangle(Point.Empty, expandedFiles.Size));
                     expandedFiles.Save(Path.Combine(TestWorkspace.Artifacts, "individual-files.png"));

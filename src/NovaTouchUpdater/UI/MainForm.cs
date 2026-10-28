@@ -358,7 +358,7 @@ public sealed partial class MainForm : Form
         hostCard.Margin = Padding.Empty;
         var filesContent = Stack(CreatePackageSelectionGrid(), FlowRow(useFolderPackages));
         useFolderPackages.Click += (_, _) => UseFolderPackages();
-        var files = new ExpandableSection("Update-Dateien Einzeln", filesContent);
+        var files = individualFilesSection = new ExpandableSection("Update-Dateien Einzeln", filesContent);
         files.Name = "filesCard";
         files.Margin = Padding.Empty;
         var packageColumn = Stack(localCard, files);
@@ -914,11 +914,11 @@ public sealed partial class MainForm : Form
     private void ChooseZip(string kind)
     {
         using OpenFileDialog dialog = new() { Filter = "ZIP (*.zip)|*.zip", Title = "Update-ZIP auswählen" };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (ShowIndividualPackageDialog(() => dialog.ShowDialog(this)) != DialogResult.OK) return;
         Match m = ZipFormat.Match(Path.GetFileName(dialog.FileName));
         if (!m.Success || !m.Groups[1].Value.Equals(kind, StringComparison.OrdinalIgnoreCase))
         {
-            MessageBox.Show(this, $"Ungültiger ZIP-Dateiname. Erwartet: nt.{kind}_VERSION*.zip", "ZIP-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowIndividualPackageDialog(() => MessageBox.Show(this, $"Ungültiger ZIP-Dateiname. Erwartet: nt.{kind}_VERSION*.zip", "ZIP-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning));
             return;
         }
         SelectIndividualPackage(new SoftwarePackage(kind == "payment" ? UpdateComponents.Payment : UpdateComponents.Fiscal,
@@ -928,11 +928,11 @@ public sealed partial class MainForm : Form
     private void ChooseServerSuite()
     {
         using OpenFileDialog dialog = new() { Filter = "ZIP (*.zip)|*.zip", Title = "Server-Suite-Update auswählen" };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (ShowIndividualPackageDialog(() => dialog.ShowDialog(this)) != DialogResult.OK) return;
         if (!UpdatePackageNames.TryServerSuiteVersion(dialog.FileName, out string version))
         {
-            MessageBox.Show(this, "Ungültiger ZIP-Dateiname. Erwartet: nt.server.suite-2026.4.9792.zip",
-                "Server-Suite-Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowIndividualPackageDialog(() => MessageBox.Show(this, "Ungültiger ZIP-Dateiname. Erwartet: nt.server.suite-2026.4.9792.zip",
+                "Server-Suite-Update", MessageBoxButtons.OK, MessageBoxIcon.Warning));
             return;
         }
         SelectIndividualPackage(new SoftwarePackage(UpdateComponents.ServerSuite, dialog.FileName, version));

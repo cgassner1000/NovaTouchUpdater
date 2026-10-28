@@ -20,6 +20,13 @@ public sealed partial class MainForm
     private readonly Dictionary<UpdateComponents, (Button Button, Label Label)> msiControls = [];
     private CancellationTokenSource? packageCancellation;
     private bool loadingPackages;
+    private ExpandableSection? individualFilesSection;
+
+    private DialogResult ShowIndividualPackageDialog(Func<DialogResult> showDialog)
+    {
+        using var keepOpen = individualFilesSection?.SuspendDismissal();
+        return showDialog();
+    }
     private UpdateExecutionMode Mode => executionMode.SelectedIndex is >= 0 and <= 2 ? (UpdateExecutionMode)executionMode.SelectedIndex : UpdateExecutionMode.Remote;
     private bool LocalFallback => Mode == UpdateExecutionMode.Local || !hosts.Any(h => !h.IsLocal && h.IsSelected);
     private bool IncludeLocalHost => Mode != UpdateExecutionMode.Remote || LocalFallback;
@@ -102,7 +109,7 @@ public sealed partial class MainForm
             button.Click += async (_, _) =>
             {
                 using var dialog = new OpenFileDialog { Filter = "MSI oder ZIP (*.msi;*.zip)|*.msi;*.zip", Title = HostUpdateState.Label(component) + " auswählen" };
-                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                if (ShowIndividualPackageDialog(() => dialog.ShowDialog(this)) != DialogResult.OK) return;
                 loadingPackages = true;
                 using var ct = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
                 packageCancellation = ct;
@@ -116,7 +123,7 @@ public sealed partial class MainForm
                     SelectIndividualPackage(package);
                 }
                 catch (OperationCanceledException) { }
-                catch (Exception ex) { MessageBox.Show(this, ex.Message, "Update-Paket", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+                catch (Exception ex) { ShowIndividualPackageDialog(() => MessageBox.Show(this, ex.Message, "Update-Paket", MessageBoxButtons.OK, MessageBoxIcon.Warning)); }
                 finally { packageCancellation = null; loadingPackages = false; if (!IsDisposed) UpdateButtons(); }
             };
             rows.Add(PanelRow(button, label));

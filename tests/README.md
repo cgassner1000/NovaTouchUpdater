@@ -48,6 +48,8 @@ dotnet run --project tests\dotnet\HostState.Tests\HostState.Tests.csproj -c Rele
 
 `MainForm.Tests --local` prüft außerdem den Vorrang der Einzelauswahl für ZIPs und MSIs: automatische Pakete abwählen, weitere Einzelkomponenten ergänzen, manuelle Auswahl beim erneuten Einlesen erhalten, vollständige Ordnerauswahl explizit wiederherstellen und ausschließlich ausgewählte Pakete im Update-Request verwenden.
 
+`MainForm.Tests --sections` simuliert außerdem die Deaktivierung des Hauptfensters und Klicks beziehungsweise Escape im Dateiauswahldialog. Der Bereich für einzelne Update-Dateien muss während des Dialogs sowie nach mehreren Paketauswahlen und Abbruch geöffnet bleiben. Nach einem Dialogfehler müssen Klick außerhalb und Überschrift weiterhin schließen. Es werden keine echten Dateiauswahldialoge geöffnet.
+
 ```powershell
 dotnet run --project tests\dotnet\MainForm.Tests\MainForm.Tests.csproj -c Release
 ```

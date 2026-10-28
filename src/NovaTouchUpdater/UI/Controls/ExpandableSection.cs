@@ -17,9 +17,16 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
     private bool positioning;
     private bool moving;
     private bool refreshQueued;
+    private int dismissalSuspensions;
 
     internal bool Expanded { get; private set; }
     internal event EventHandler? ExpandedChanged;
+
+    internal IDisposable SuspendDismissal()
+    {
+        dismissalSuspensions++;
+        return new DismissalScope(this);
+    }
 
     internal ExpandableSection(string title, TableLayoutPanel content)
     {
@@ -216,11 +223,14 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
     private void AnchorChanged(object? sender, EventArgs e) => PositionExpandedCard();
     private void ParentLayout(object? sender, LayoutEventArgs e) => PositionExpandedCard();
     private void OwnerSizeChanged(object? sender, EventArgs e) => PositionExpandedCard();
-    private void OwnerDeactivated(object? sender, EventArgs e) => Collapse();
+    private void OwnerDeactivated(object? sender, EventArgs e)
+    {
+        if (dismissalSuspensions == 0) Collapse();
+    }
 
     public bool PreFilterMessage(ref Message m)
     {
-        if (!Expanded) return false;
+        if (!Expanded || dismissalSuspensions > 0) return false;
         if (m.Msg == 0x0100 && (Keys)m.WParam.ToInt32() == Keys.Escape)
         {
             if (HasOpenCombo(this)) return false;
@@ -239,6 +249,17 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
 
     private static bool HasOpenCombo(Control root) => root is ComboBox { DroppedDown: true } ||
         root.Controls.Cast<Control>().Any(HasOpenCombo);
+
+    private sealed class DismissalScope(ExpandableSection section) : IDisposable
+    {
+        private ExpandableSection? owner = section;
+        public void Dispose()
+        {
+            if (owner is null) return;
+            owner.dismissalSuspensions--;
+            owner = null;
+        }
+    }
 
     protected override void Dispose(bool disposing)
     {
