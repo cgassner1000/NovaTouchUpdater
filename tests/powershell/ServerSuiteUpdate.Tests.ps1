@@ -78,6 +78,21 @@ function Restart-Service {
 function Remove-Item {
     [CmdletBinding()] param([string]$LiteralPath, [switch]$Recurse, [switch]$Force)
     $checked = FixturePath $LiteralPath
+    if ($null -ne $script:workerOutput) {
+        foreach ($root in $script:pythonRoots) {
+            if ($checked.Equals($root, [StringComparison]::OrdinalIgnoreCase)) { throw 'The portable_python root itself must never be removed' }
+            if ($checked.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -and
+                [IO.Path]::GetFileName($checked) -notmatch '^\.novatouch-updater-stage-[a-f0-9]{32}$') {
+                AssertLivePhase 'Python bereinigen'
+                Assert ($script:eventLogService.Status -eq 'Stopped') 'EventLog must be stopped during Python cleanup'
+                $protected = if ([IO.Directory]::Exists($checked)) {
+                    @(Get-ChildItem -LiteralPath $checked -Recurse -Force -File | Where-Object { $_.Name -ilike 'nt3_server_suite*.exe' })
+                } else { @($checked | Where-Object { [IO.Path]::GetFileName($_) -ilike 'nt3_server_suite*.exe' }) }
+                Assert (@($protected).Count -eq 0) 'Cleanup must never remove protected service EXEs or their containing directories'
+                if ($script:deleteFailure -and $checked.StartsWith($script:deleteFailure, [StringComparison]::OrdinalIgnoreCase)) { throw 'Simulated Python cleanup failure' }
+            }
+        }
+    }
     $script:events.Add('delete:' + $checked)
     Microsoft.PowerShell.Management\Remove-Item -LiteralPath $checked -Recurse:$Recurse -Force:$Force -ErrorAction Stop
 }
@@ -158,6 +173,7 @@ function ResetCase([string]$name) {
     $script:events = [Collections.Generic.List[string]]::new()
     $script:serviceStates = @{}; $script:installed = @(); $script:pythonRoots=@()
     $script:stopFailure=''; $script:startFailure=''; $script:copyFailure=''; $script:reparsePath=''
+    $script:deleteFailure=''
     $script:eventLogService = [pscustomobject]@{ Name='EventLog'; Status='Running' }
     $script:eventLogService | Add-Member -MemberType ScriptMethod -Name WaitForStatus -Value {
         param($status, $timeout)
@@ -261,6 +277,13 @@ function AssertEventLogOrder {
         $index=$script:events.IndexOf($event)
         if ($event -like 'stop:nt3_server_suite*' -and $eventLogStop -ge 0) { Assert ($index -lt $eventLogStop) 'Suite services must stop before EventLog' }
         if ($event -like 'copy:*') { Assert (($eventLogStop -lt 0 -or $index -gt $eventLogStop) -and $index -lt $eventLogStart) 'File installation must run between EventLog stop and start' }
+        if ($event -like 'delete:*') {
+            foreach ($root in $script:pythonRoots) {
+                if ($event.Substring(7).StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                    Assert (($eventLogStop -lt 0 -or $index -gt $eventLogStop) -and $index -lt $eventLogStart) 'Python cleanup must run while EventLog is stopped and before its start'
+                }
+            }
+        }
         if ($event -like 'start:nt3_server_suite*') { Assert ($index -gt $eventLogStart) 'EventLog must start before every suite service' }
     }
 }
@@ -310,7 +333,7 @@ try {
         Assert (-not (Test-Path -LiteralPath (Join-Path $apps 'unrelated'))) 'Other ZIP apps must not be deployed'
         $installRoot = [IO.Path]::GetDirectoryName($apps)
         Assert ([IO.File]::ReadAllText((Join-Path $installRoot 'portable_python\python.exe')) -eq '3.14.0') 'Python must be replaced beside apps'
-        Assert ([IO.File]::ReadAllText((Join-Path $installRoot 'portable_python\obsolete-python.txt')) -eq 'keep local Python file') 'Additional local Python files must be retained'
+        Assert (-not (Test-Path -LiteralPath (Join-Path $installRoot 'portable_python\obsolete-python.txt'))) 'Old runtime files must be removed before copying the new Python runtime'
         Assert ([IO.File]::ReadAllText((Join-Path $installRoot 'portable_python\Lib\runtime.py')) -eq 'new Python library') 'New Python subdirectories must be copied'
         Assert (-not (Test-Path -LiteralPath (Join-Path $apps 'nt3-server-suite\portable_python'))) 'Python must not be copied inside the suite directory'
         Assert ([IO.File]::ReadAllText((Join-Path $installRoot 'outside-root.txt')) -eq 'must survive') 'Files beside apps and portable_python must survive'
@@ -385,9 +408,9 @@ try {
     Remove-Item -LiteralPath $pythonExe -Force
     [void][IO.Directory]::CreateDirectory($pythonExe)
     $script:events.Clear()
-    $null=RunWorker $false 'Datei kann keinen vorhandenen Ordner ersetzen'
-    Assert ([IO.Directory]::Exists($pythonExe) -and -not [IO.File]::Exists((Join-Path $pythonExe 'python.exe'))) 'Conflicting directory must remain intact and must not receive a wrongly nested file'
-    Passed 'file-versus-folder conflict reports an error and preserves the existing directory'
+    $null=RunWorker
+    Assert ([IO.File]::Exists($pythonExe) -and [IO.File]::ReadAllText($pythonExe) -eq '3.14.0') 'Old conflicting directories in Python are removed before copying the new file'
+    Passed 'Python cleanup resolves an old file-versus-folder conflict'
 
     ResetCase 'local-service-exes'
     Service 'HKS' 'one' -relativeExe 'nt3_server_suite_HKS.exe'
@@ -407,9 +430,9 @@ try {
     }
     foreach ($root in $script:pythonRoots) {
         Assert ([IO.File]::ReadAllText((Join-Path $root 'python.exe')) -eq '3.14.0') 'Generic Python EXE must still be overwritten from the ZIP'
-        Assert ([IO.File]::ReadAllText((Join-Path $root 'obsolete-python.txt')) -eq 'keep local Python file') 'Additional local runtime files must remain intact'
+        Assert (-not (Test-Path -LiteralPath (Join-Path $root 'obsolete-python.txt'))) 'Non-protected old runtime files are removed'
     }
-    Assert (@($script:events | Where-Object { $_ -match '^delete:' -and $_ -notmatch '\.novatouch-updater-stage-' }).Count -eq 0) 'No installed client files or folders may be deleted'
+    Assert (@($script:events | Where-Object { $_ -like 'delete:*obsolete-python.txt' }).Count -eq 2) 'Each shared or distinct Python folder is cleaned only once'
     Passed 'installation-generated service EXEs absent from the ZIP survive updates of all separate and shared instances'
 
     foreach ($missingClientExe in @($false,$true)) {
@@ -421,9 +444,9 @@ try {
         Package @{ 'apps/nt3-server-suite/version.txt'='2026.4.9792';
             'installer/python/portable_python/nt3_server_suite_HKS.exe'='updated service EXE' }
         $null=RunWorker
-        Assert ([IO.File]::ReadAllText($serviceExe) -eq 'updated service EXE') 'A matching ZIP file must replace or create the service EXE'
-        Assert (('copy:' + $serviceExe) -in $script:events) 'A matching service EXE must be copied from the ZIP'
-        Passed ('matching ZIP service EXE is copied; missing client EXE: ' + $missingClientExe)
+        Assert ([IO.File]::ReadAllText($serviceExe) -eq $(if ($missingClientExe) { 'updated service EXE' } else { '3.13.2' })) 'Existing protected EXEs stay unchanged; missing EXEs may be supplied by the ZIP'
+        Assert ((('copy:' + $serviceExe) -in $script:events) -eq $missingClientExe) 'The ZIP must never overwrite an existing protected service EXE'
+        Passed ('matching ZIP service EXE is used only when missing on the client: ' + $missingClientExe)
     }
 
     ResetCase 'service-exe-missing-both'
@@ -435,6 +458,57 @@ try {
     $null=RunWorker $false 'Dienst-EXE.*nt3_server_suite_HKS.*Client.*ZIP'
     NoServiceOrTargetChanges
     Passed 'service EXE missing from both client and ZIP fails before any service or installation changes'
+
+    ResetCase 'unprotected-service-exe-missing-from-zip'
+    Service 'a' 'one' -relativeExe 'Services\custom-service.exe'; Package
+    $null=RunWorker $false 'Dienst-EXE.*Python-Bereinigung.*ZIP'
+    NoServiceOrTargetChanges
+    Assert (Test-Path -LiteralPath $script:installed[0].ExePath -PathType Leaf) 'A service executable outside the protected pattern must not be deleted unless its replacement is in the ZIP'
+    Passed 'missing replacement for an unprotected registered service EXE aborts before cleanup'
+
+    foreach ($local in @($true,$false)) {
+        ResetCase ('python-cleanup-protected-' + $local)
+        Service 'a' 'one' -relativeExe 'nt3_server_suite.exe'
+        $script:request.LocalExecution=$local; $script:checkLiveProgress=$true
+        $root=Join-Path $script:case 'one\portable_python'
+        $protected=@('nt3_server_suite.exe','nt3_server_suite_123.exe','nt3_server_suiteRetail.exe','NT3_SERVER_SUITE_CASE.EXE',
+            'Services\nt3_server_suite_nested.exe','Hidden\Deep\nt3_server_suite_hidden.exe')
+        $hashes=@{}
+        foreach ($relative in $protected) {
+            $path=Join-Path $root $relative
+            WriteFixture $path ('preserve bytes: ' + $relative)
+            $hashes[$relative]=(Get-FileHash -LiteralPath $path).Hash
+        }
+        [IO.File]::SetAttributes((Join-Path $root 'NT3_SERVER_SUITE_CASE.EXE'), [IO.FileAttributes]::ReadOnly)
+        [IO.File]::SetAttributes((Join-Path $root 'Hidden'), [IO.FileAttributes]::Hidden)
+        $stale=@('obsolete-python.txt','nt3_server_suite.txt','nt3_server_suite.exe.bak','other.exe','stale\sub\old.dll',
+            'Services\old.dll','Hidden\old.txt','readonly.dll','nt3_server_suiteFolder.exe\old.txt')
+        foreach ($relative in $stale) { WriteFixture (Join-Path $root $relative) 'delete old runtime content' }
+        [IO.File]::SetAttributes((Join-Path $root 'readonly.dll'), [IO.FileAttributes]::ReadOnly)
+        Package @{ 'apps/nt3-server-suite/version.txt'='2026.4.9792';
+            'installer/python/portable_python/python.exe'='3.14.0'; 'installer/python/portable_python/Lib/fresh.py'='new runtime';
+            'installer/python/portable_python/nt3_server_suite.exe'='must not overwrite';
+            'installer/python/portable_python/Services/nt3_server_suite_nested.exe'='must not overwrite nested EXE' }
+        $null=RunWorker
+        foreach ($relative in $protected) {
+            Assert ((Get-FileHash -LiteralPath (Join-Path $root $relative)).Hash -eq $hashes[$relative]) 'Every matching service EXE must remain byte-identical, including nested, hidden and uppercase paths'
+        }
+        foreach ($relative in $stale) { Assert (-not (Test-Path -LiteralPath (Join-Path $root $relative))) 'All non-protected old files and stale directories must be removed' }
+        Assert (-not (Test-Path -LiteralPath (Join-Path $root 'stale')) -and -not (Test-Path -LiteralPath (Join-Path $root 'nt3_server_suiteFolder.exe'))) 'Only files matching the pattern are protected; unrelated directories are removed'
+        Assert ([IO.File]::ReadAllText((Join-Path $root 'python.exe')) -eq '3.14.0' -and (Test-Path -LiteralPath (Join-Path $root 'Lib\fresh.py'))) 'The fresh runtime is copied into the cleaned Python folder'
+        Assert ((Get-ChildItem -LiteralPath $root -File -Recurse -Force).Count -eq ($protected.Count + 2)) 'Cleaned Python contains only protected EXEs and the new payload'
+        Passed ('Python contents replaced while nt3_server_suite*.exe stay unchanged, local=' + $local)
+    }
+
+    ResetCase 'python-cleanup-failure'; Service 'a' 'one' -relativeExe 'nt3_server_suite.exe'; Package
+    $root=Join-Path $script:case 'one\portable_python'
+    $script:deleteFailure=Join-Path $root 'obsolete-python.txt'
+    $serviceHash=(Get-FileHash -LiteralPath $script:installed[0].ExePath).Hash
+    $null=RunWorker $false 'Simulated Python cleanup failure'
+    Assert ((Get-FileHash -LiteralPath $script:installed[0].ExePath).Hash -eq $serviceHash -and
+        $script:eventLogService.Status -eq 'Running' -and 'start:nt3_server_suite_a' -in $script:events) 'A cleanup failure preserves the protected EXE and restores EventLog before attempting the suite start'
+    Assert (@($script:events | Where-Object { $_ -like ('copy:' + $root + '\*') }).Count -eq 0) 'A failed Python cleanup prevents copying the runtime payload'
+    Passed 'Python cleanup failure is reported without deleting protected EXEs'
 
     foreach ($badPython in @('missing','empty')) {
         ResetCase ('bad-python-' + $badPython); Service 'a' 'one'
@@ -495,7 +569,7 @@ try {
                 $pythonRoot = Join-Path $script:case ($instance + '\portable_python')
                 $expectedPython = if ($selectedKind -eq 'serversuite') { '3.14.0' } else { '3.13.2' }
                 Assert ([IO.File]::ReadAllText((Join-Path $pythonRoot 'python.exe')) -eq $expectedPython) 'Python must update only with a selected suite ZIP, including Force mode'
-                Assert (Test-Path -LiteralPath (Join-Path $pythonRoot 'obsolete-python.txt')) 'Additional Python files must remain present for every update selection'
+                Assert ((Test-Path -LiteralPath (Join-Path $pythonRoot 'obsolete-python.txt')) -eq ($selectedKind -ne 'serversuite')) 'Only a selected suite update may clean old Python files'
             }
             Passed ("single ZIP updates only $selectedKind (mode=$mode), leaving other services and files untouched")
         }

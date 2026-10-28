@@ -163,7 +163,38 @@ function InstallUpdatePackages {
         if ($expected -match '^\d+\.\d+\.\d+$') { $versionMatches = $installed -match ('^' + [regex]::Escape($expected) + '(?:\.\d+)?$') }
         if (-not $versionMatches) { throw "Server-Suite-ZIP enthält in version.txt Version '$($version.Trim())', erwartet '$serverSuiteTarget'." }
     }
-    function CopyContents([string]$source, [string]$destination, [object[]]$files, [string]$component, $copyProgress) {
+    function ClearPythonContents([string]$target) {
+        $root = FullPath $target
+        if ([IO.Path]::GetFileName($root) -ine 'portable_python') { throw "Ungültiger Python-Bereinigungspfad: $root" }
+        CheckTarget $root $true $true
+        if (-not (Test-Path -LiteralPath $root -PathType Container)) { return }
+        $prefix = $root + '\'
+        $protectedDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($file in Get-ChildItem -LiteralPath $root -Force -Recurse -File -Filter 'nt3_server_suite*.exe' -ErrorAction Stop | Where-Object { $_.Name -ilike 'nt3_server_suite*.exe' }) {
+            $parent = [IO.Path]::GetDirectoryName($file.FullName)
+            while (-not $parent.Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
+                if (-not $parent.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Dienst-EXE liegt außerhalb des Python-Ziels.' }
+                [void]$protectedDirectories.Add($parent)
+                $parent = [IO.Path]::GetDirectoryName($parent)
+            }
+        }
+        $pending = [Collections.Generic.Stack[string]]::new()
+        $pending.Push($root)
+        while ($pending.Count -gt 0) {
+            foreach ($item in Get-ChildItem -LiteralPath $pending.Pop() -Force -ErrorAction Stop) {
+                $path = FullPath $item.FullName
+                if (-not $path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -or
+                    ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Unsicherer Python-Bereinigungspfad: $path" }
+                if ($item.PSIsContainer) {
+                    if ($protectedDirectories.Contains($path)) { $pending.Push($path) }
+                    else { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }
+                } elseif ($item.Name -inotlike 'nt3_server_suite*.exe') {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+                }
+            }
+        }
+    }
+    function CopyContents([string]$source, [string]$destination, [object[]]$files, [string]$component, $copyProgress, [bool]$preserveSuiteExe = $false) {
         New-Item -ItemType Directory -Path $destination -Force -ErrorAction Stop | Out-Null
         foreach ($folder in Get-ChildItem -LiteralPath $source -Directory -Recurse -Force -ErrorAction Stop) {
             $relative = $folder.FullName.Substring($source.Length).TrimStart('\')
@@ -173,27 +204,34 @@ function InstallUpdatePackages {
             $relative = $file.FullName.Substring($source.Length).TrimStart('\')
             $destinationFile = Join-Path $destination $relative
             if ([IO.Directory]::Exists($destinationFile)) { throw "Eine Datei kann keinen vorhandenen Ordner ersetzen: $destinationFile" }
-            Copy-Item -LiteralPath $file.FullName -Destination $destinationFile -Force -ErrorAction Stop
+            if (-not ($preserveSuiteExe -and $file.Name -ilike 'nt3_server_suite*.exe' -and
+                (Test-Path -LiteralPath $destinationFile -PathType Leaf))) {
+                Copy-Item -LiteralPath $file.FullName -Destination $destinationFile -Force -ErrorAction Stop
+            }
             $copyProgress.Completed++
             $percent = [int][Math]::Floor(100.0 * $copyProgress.Completed / [Math]::Max(1, $copyProgress.Total))
             # Avoid thousands of UI/log messages for a Python runtime. Always
             # publish completion; intermediate progress is at most four times/s.
             if ($copyProgress.Completed -eq $copyProgress.Total -or
                 ($percent -ne $copyProgress.LastPercent -and $copyProgress.Timer.ElapsedMilliseconds -ge 250)) {
-                UpdateProgress 'Update installieren' ("$component : $($copyProgress.Completed)/$($copyProgress.Total) Dateien kopiert; $relative") $percent
+                UpdateProgress 'Update installieren' ("$component : $($copyProgress.Completed)/$($copyProgress.Total) Dateien verarbeitet; $relative") $percent
                 $copyProgress.LastPercent = $percent
                 $copyProgress.Timer.Restart()
             }
         }
     }
-    function CheckServiceExecutable([string]$exe, [string]$target, [string]$source, [string]$name) {
+    function CheckServiceExecutable([string]$exe, [string]$target, [string]$source, [string]$name, [bool]$cleanPython = $false) {
         if (ContainsPath $target $exe) {
             # Installation creates instance-specific service EXEs that are not
-            # part of the update ZIP. Overlay copying preserves these files.
-            if (Test-Path -LiteralPath $exe -PathType Leaf) { return }
+            # Instance-specific nt3_server_suite*.exe files survive Python cleanup and copying.
+            $protected = [IO.Path]::GetFileName($exe) -ilike 'nt3_server_suite*.exe'
+            if ((-not $cleanPython -or $protected) -and (Test-Path -LiteralPath $exe -PathType Leaf)) { return }
             $relativeExe = $exe.Substring($target.Length).TrimStart('\')
             $payloadExe = FullPath (Join-Path $source $relativeExe)
             if (-not (ContainsPath $source $payloadExe) -or -not (Test-Path -LiteralPath $payloadExe -PathType Leaf)) {
+                if ($cleanPython -and -not $protected -and (Test-Path -LiteralPath $exe -PathType Leaf)) {
+                    throw "Die Dienst-EXE für '$name' würde bei der Python-Bereinigung entfernt und fehlt in der ZIP: $relativeExe"
+                }
                 throw "Die Dienst-EXE für '$name' fehlt sowohl auf dem Client als auch in der ZIP: $relativeExe"
             }
         }
@@ -272,7 +310,7 @@ function InstallUpdatePackages {
             $pythonSource = FullPath (Join-Path $source 'installer\python\portable_python')
             $source = FullPath (Join-Path $source 'apps\nt3-server-suite')
             CheckServiceExecutable $exe $target $source $name
-            CheckServiceExecutable $exe $pythonTarget $pythonSource $name
+            CheckServiceExecutable $exe $pythonTarget $pythonSource $name $true
             CheckSuiteVersion $source
             AddPlan $kind $source $target 'nt3-server-suite' $true
             AddPlan $kind $pythonSource $pythonTarget 'portable_python' $true
@@ -336,16 +374,21 @@ function InstallUpdatePackages {
                 'fiscal' { 'nt.fiscal' }
                 'serversuite' { if ($plan.ExpectedLeaf -eq 'portable_python') { 'Server Suite / Python' } else { 'Server Suite' } }
             }
-            UpdateProgress 'Update installieren' ("$component : Dateien werden installiert nach $($plan.Target); $($copyProgress.Completed)/$totalFiles Dateien kopiert") ([int][Math]::Floor(100.0 * $copyProgress.Completed / [Math]::Max(1, $totalFiles)))
+            $cleanPython = $plan.Kind -eq 'serversuite' -and $plan.ExpectedLeaf -eq 'portable_python'
+            if ($cleanPython) {
+                UpdateProgress 'Python bereinigen' ("Bereinige $($plan.Target); vorhandene nt3_server_suite*.exe bleiben erhalten")
+            }
             if ($plan.ExpectedLeaf) {
-                # Recheck the exact target before copying; never delete client folders.
+                # Recheck the exact, registered target before cleanup or copying.
                 $checkedTarget = FullPath $plan.Target
                 if ([IO.Path]::GetFileName($checkedTarget) -ine $plan.ExpectedLeaf -or
                     -not $checkedTarget.Equals($plan.Target, [StringComparison]::OrdinalIgnoreCase) -or
                     -not [IO.Path]::GetDirectoryName($checkedTarget).Equals($plan.Parent, [StringComparison]::OrdinalIgnoreCase)) { throw 'Ungültiges Server-Suite-Austauschziel.' }
                 CheckTarget $checkedTarget $true $plan.AllowMissing
             }
-            CopyContents $plan.Source $plan.Target $plan.Files $component $copyProgress
+            if ($cleanPython) { ClearPythonContents $plan.Target }
+            UpdateProgress 'Update installieren' ("$component : Dateien werden installiert nach $($plan.Target); $($copyProgress.Completed)/$totalFiles Dateien verarbeitet") ([int][Math]::Floor(100.0 * $copyProgress.Completed / [Math]::Max(1, $totalFiles)))
+            CopyContents $plan.Source $plan.Target $plan.Files $component $copyProgress $cleanPython
             $changes += ($plan.Kind + ' => ' + $plan.Target)
         }
         if ($totalFiles -eq 0) { UpdateProgress 'Update installieren' 'Alle Zielordner wurden angelegt' 100 }
