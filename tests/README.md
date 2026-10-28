@@ -87,4 +87,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\MsiUpda
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SoftwareDatabase.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SoftwareDatabaseDiscovery.Tests.ps1
 ```
+
+`SoftwareDatabaseDiscovery.Tests.ps1` bildet die Ordnerstruktur unter `Program Files (x86)\Novacom\Lagerverwaltung` in einem Testordner nach. Geprüft werden fehlende Registry-Pfade, die Ermittlung benutzerdefinierter Installationen über MSI-Komponenten, ein fehlender MSI-Cache, NTC/POS mit unterschiedlichen Pfaden sowie die protokollierten Suchpfade. MSI-Registrierungsabfragen sind simuliert; die SQL-Abfrage der Komponententabelle läuft gegen eine eigens erzeugte MSI-Testdatenbank, die ausschließlich lesend geöffnet wird.

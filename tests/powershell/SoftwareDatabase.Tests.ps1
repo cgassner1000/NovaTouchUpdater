@@ -20,6 +20,7 @@ function Emit($Value) { $script:results.Add($Value) }
 function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
     [pscustomobject]@{ ConnectionType=[SoftwareDatabaseFixture.Connection]; BuilderType=[SoftwareDatabaseFixture.Builder]; ObjectType=[SoftwareDatabaseFixture.DynamicObject]; ClientType=[SoftwareDatabaseFixture.ClientType] }
 }
+function GetSoftwareDefaultInstallDirectories([string]$Kind) { } # Never inspect real application settings in this test.
 function New-PSSession { throw 'Database publication must never use WinRM' }
 function Start-Process { throw 'Database publication must never run an installer' }
 function Stop-Service { throw 'Database publication must never stop services' }
