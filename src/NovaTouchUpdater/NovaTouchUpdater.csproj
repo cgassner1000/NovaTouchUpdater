@@ -31,6 +31,10 @@
     <EmbeddedResource Include="Scripts\DirectorySearch.ps1" LogicalName="NovaTouchUpdater.DirectorySearch.ps1" />
     <None Include="$(RepositoryRoot)config.json" Link="config.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(RepositoryRoot)config.json')" />
   </ItemGroup>
+  <Target Name="ValidatePowerShellSources" BeforeTargets="PrepareForBuild;ComputeFilesToPublish"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(OS)' == 'Windows_NT'">
+    <Exec Command="&quot;$(SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe&quot; -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(RepositoryRoot)build\ValidatePowerShell.ps1&quot; -ScriptsDirectory &quot;$(MSBuildProjectDirectory)\Scripts&quot;" />
+  </Target>
   <Target Name="ValidateUpdaterVersion" BeforeTargets="PrepareForBuild">
     <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(UpdaterBaseVersion)', '^\d+\.\d+$'))"
            Text="version.txt muss genau eine Basisversion im Format Hauptversion.Nebenversion enthalten, zum Beispiel 1.1. Beschreibungszeilen beginnen mit #." />

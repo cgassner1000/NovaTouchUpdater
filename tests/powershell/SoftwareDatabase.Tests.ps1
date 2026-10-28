@@ -20,16 +20,12 @@ function Emit($Value) { $script:results.Add($Value) }
 function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
     [pscustomobject]@{ ConnectionType=[SoftwareDatabaseFixture.Connection]; BuilderType=[SoftwareDatabaseFixture.Builder]; ObjectType=[SoftwareDatabaseFixture.DynamicObject]; ClientType=[SoftwareDatabaseFixture.ClientType] }
 }
-<<<<<<< HEAD
 function Get-CimInstance {
     param($ClassName,$Filter,$ErrorAction,$ComputerName)
     if ($ClassName -ne 'Win32_Service' -or $ComputerName) { throw 'Unexpected service query' }
     $script:services
 }
 function Get-ItemProperty { throw 'Database publication must not depend on uninstall registration' }
-=======
-function GetSoftwareDefaultInstallDirectories([string]$Kind) { } # Never inspect real application settings in this test.
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
 function New-PSSession { throw 'Database publication must never use WinRM' }
 function Start-Process { throw 'Database publication must never run an installer' }
 function Stop-Service { throw 'Database publication must never stop services' }
@@ -38,29 +34,18 @@ $script:results = [Collections.Generic.List[object]]::new()
 $script:progress = [Collections.Generic.List[string]]::new()
 try {
     $ntcRoot = Join-Path $fixture 'Control'; $posRoot = Join-Path $fixture 'POS'
-<<<<<<< HEAD
     foreach ($root in @($ntcRoot, $posRoot)) { [void][IO.Directory]::CreateDirectory((Join-Path $root 'bin')) }
     [void][IO.Directory]::CreateDirectory((Join-Path $ntcRoot 'Einstellungen'))
-=======
-    foreach ($root in @($ntcRoot, $posRoot)) { [void][IO.Directory]::CreateDirectory((Join-Path $root 'bin')); [void][IO.Directory]::CreateDirectory((Join-Path $root 'Einstellungen')) }
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
     $configPath = Join-Path $ntcRoot 'Einstellungen\einstellung-Cache.xml'
     $xml = '<einstellungen><DB><C1><server>fixture.invalid</server><DatabasePort>1972</DatabasePort><Database>MANDANT1</Database><SQLDSN>Namespace=MANDANT1</SQLDSN><SQLUser>test</SQLUser><SQLPasswort>synthetic-secret</SQLPasswort></C1><C2><Server>fixture.invalid</Server><DatabasePort>1972</DatabasePort><Database>MANDANT2</Database><SQLUser>test</SQLUser><SQLPasswort>synthetic-secret</SQLPasswort></C2></DB></einstellungen>'
     $xml = $xml.Replace('</DB>', '<C3><Server>other-fixture.invalid</Server><Database>MANDANT1</Database><SQLUser>test</SQLUser><SQLPasswort>synthetic-secret</SQLPasswort></C3></DB>')
     [IO.File]::WriteAllText($configPath, $xml)
-<<<<<<< HEAD
     [IO.File]::WriteAllText((Join-Path $posRoot 'novacom.ini'), "[NOVACOM]`r`nSYSTEM=CACHE`r`nSERVER=cn_iptcp:fixture.invalid[1972]:MANDANT1`r`nUSER=test`r`nPW=synthetic-secret`r`nSSL=0`r`n")
     $ntcService = [pscustomobject]@{ Name='novacom ntcontrol updateservice'; PathName=('"' + (Join-Path $ntcRoot 'bin\Control.Service.exe') + '" --service') }
     $posService = [pscustomobject]@{ Name='novacom pos updateservice'; PathName=('"' + (Join-Path $posRoot 'bin\POS.Service.exe') + '"') }
     $script:services = @($ntcService,$posService)
     $configuration = FindSoftwareDatabaseConfiguration
     Assert ($configuration.Paths.Count -eq 2) 'service EXEs resolve NTC settings XML and POS novacom.ini'
-=======
-    [IO.File]::WriteAllText((Join-Path $posRoot 'Einstellungen\einstellung-Cache.xml'), $xml)
-    $programs = @([pscustomobject]@{ Kind='ntc'; InstallLocation=(Join-Path $ntcRoot 'bin') }, [pscustomobject]@{ Kind='pos'; InstallLocation=$posRoot })
-    $configuration = FindSoftwareDatabaseConfiguration $programs
-    Assert ($configuration.Paths.Count -eq 2) 'NTC bin and POS root resolve the sibling Einstellungen directory'
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
     $connections = @(ReadSoftwareConnections $configuration.Paths)
     Assert ($connections.Count -eq 3 -and $connections[0].User -eq 'test' -and $connections[0].Password -eq 'synthetic-secret') 'all XML connections are read case-insensitively and duplicate NTC/POS definitions are removed'
     $encrypted = $null; $aes = [Security.Cryptography.Aes]::Create()
@@ -109,12 +94,8 @@ try {
     } finally { $archive.Dispose() }
     $pos.PayloadPath = $bundle; $pos.RelativeMsiPath = 'POS/setup.msi'; $pos.Sha256 = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
     $selected = @($ntc,$pos,$ntv,$oman)
-<<<<<<< HEAD
     $script:services = @($ntcService)
     PublishSelectedSoftwarePackages $selected
-=======
-    PublishSelectedSoftwarePackages $selected @($programs[0])
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
     $entries = [SoftwareDatabaseFixture.Database]::Entries
     Assert ($entries.Count -eq 16 -and $script:results.Count -eq 1 -and $script:results[0].Success) 'NTC alone publishes all four chosen MSIs to every application namespace on both servers; POS need not be installed'
     $applicationKinds = @{ 'Nov.WaWi'='ntc'; 'Nov.NT.POS'='pos'; 'Nov.Gutscheinverwaltung'='ntv'; 'Nov.Oman.SOL.Config'='oman' }
@@ -134,7 +115,6 @@ try {
     Assert ($script:progress.Exists([Predicate[string]]{ param($line) $line.Contains('%SYS') -and $line.Contains('übersprungen') })) 'namespaces without zzzSoftware are reported and never modified'
     Assert (@(Get-ChildItem -LiteralPath (Join-Path $fixture 'NovaTouchUpdater') -Directory).Count -eq 0) 'temporary MSI extraction is cleaned after publication'
     $script:results.Clear()
-<<<<<<< HEAD
     $script:services = @($posService)
     PublishSelectedSoftwarePackages $selected
     Assert ($script:results.Count -eq 1 -and $script:results[0].Success -and [SoftwareDatabaseFixture.Database]::Entries.Count -eq 16) 'POS novacom.ini alone publishes all selected products without NTC or an Einstellungen folder'
@@ -155,22 +135,6 @@ try {
     $ntc = Package ntc ([string]$index.ntc)
     $script:services = @()
     ExpectFailure { PublishSelectedSoftwarePackages @($pos) } 'missing NTC/POS update services prevent local installation'
-=======
-    PublishSelectedSoftwarePackages $selected $programs
-    Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 16) 'repeated uploads replace setups without creating duplicates'
-    [SoftwareDatabaseFixture.Database]::FailTarget = 'fixture.invalid/MANDANT1'
-    $script:results.Clear()
-    ExpectFailure { PublishSelectedSoftwarePackages $selected $programs } 'a provider failure stops publication and is not returned as success'
-    Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 16 -and $script:results.Count -eq 0 -and [SoftwareDatabaseFixture.Database]::Events.Contains('rollback:fixture.invalid/MANDANT1')) 'failed namespace replacement rolls back to the previous complete MSI set'
-    [SoftwareDatabaseFixture.Database]::FailTarget = ''
-    $ntc.Sha256 = '0' * 64
-    ExpectFailure { PublishSelectedSoftwarePackages @($ntc,$pos) $programs } 'changed source checksums stop before any namespace is modified'
-    $ntc.Sha256 = (Get-FileHash -LiteralPath $ntc.PayloadPath -Algorithm SHA256).Hash
-    $ntc.ProductCode = [guid]::NewGuid().ToString('B')
-    ExpectFailure { PublishSelectedSoftwarePackages @($ntc) $programs } 'MSI metadata is checked independently of installed local products'
-    $ntc = Package ntc ([string]$index.ntc)
-    ExpectFailure { PublishSelectedSoftwarePackages @($pos) @() } 'missing NTC/POS configuration prevents local installation'
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
     Assert (@(Get-ChildItem -LiteralPath (Join-Path $fixture 'NovaTouchUpdater') -Directory).Count -eq 0) 'temporary MSI extraction is also cleaned on errors'
 
     # Exercise the actual worker's action dispatch with the same in-memory provider.
@@ -178,15 +142,9 @@ try {
     $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$null, [ref]$null)
     $inventory = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ReadSoftwareInventory' }, $true)
     $source = $source.Remove($inventory.Extent.StartOffset, $inventory.Extent.EndOffset - $inventory.Extent.StartOffset).Insert($inventory.Extent.StartOffset,
-<<<<<<< HEAD
         'function ReadSoftwareInventory { throw "Database publication must not read uninstall inventory" }')
     $source = $source.Replace('$requestLine = [Console]::In.ReadLine()', '$requestLine = $script:requestJson').Replace('exit 0','return').Replace('exit 1','return')
     $worker = [scriptblock]::Create($source); $script:services = @($ntcService)
-=======
-        'function ReadSoftwareInventory { [pscustomobject]@{ InstalledPrograms=@($script:workerPrograms) } }')
-    $source = $source.Replace('$requestLine = [Console]::In.ReadLine()', '$requestLine = $script:requestJson').Replace('exit 0','return').Replace('exit 1','return')
-    $worker = [scriptblock]::Create($source); $script:workerPrograms = @($programs[0])
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
     foreach ($local in @($true,$false)) {
         $script:requestJson = @{ Action='publish-msi-packages'; LocalExecution=$local; MsiPackages=@($ntc,$pos); Host='fixture.invalid' } | ConvertTo-Json -Depth 8 -Compress
         $writer = [IO.StringWriter]::new(); $previous = [Console]::Out

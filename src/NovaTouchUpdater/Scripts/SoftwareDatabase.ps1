@@ -60,11 +60,7 @@ function ReadSoftwareDsn([string]$Dsn) {
     return $values
 }
 
-<<<<<<< HEAD
 function ReadSoftwareXmlConnections([string[]]$Paths) {
-=======
-function ReadSoftwareConnections([string[]]$Paths) {
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
     $seen = @{}
     foreach ($path in $Paths) {
         $reader = $null
@@ -110,7 +106,6 @@ function ReadSoftwareConnections([string[]]$Paths) {
     }
 }
 
-<<<<<<< HEAD
 function ReadSoftwareIniConnection([string]$Path) {
     $values = @{}; $section = ''
     # StreamReader detects UTF-8/UTF-16 BOMs; legacy POS files may use ANSI.
@@ -175,110 +170,6 @@ function FindSoftwareDatabaseConfiguration {
         if (Test-Path -LiteralPath $path -PathType Leaf) { $paths[$path] = $true }
     }
     [pscustomobject]@{ Paths=@($paths.Keys | Sort-Object); Directories=@($directories.Keys | Sort-Object); CheckedPaths=@($checkedPaths.Keys | Sort-Object); Services=$sources }
-=======
-function ReadSoftwareInstallerDirectories([string]$ProductCode) {
-    $guid = [guid]::Empty
-    if (-not [guid]::TryParse($ProductCode, [ref]$guid)) { return }
-    $installer = $null; $database = $null; $view = $null; $record = $null
-    try {
-        # Read-only MSI queries also work when ARP has neither InstallLocation
-        # nor an EXE DisplayIcon (old Visual Studio setup projects use an ICO).
-        $installer = New-Object -ComObject WindowsInstaller.Installer
-        $location = ''
-        try { $location = [string]$installer.ProductInfo($ProductCode, 'InstallLocation') } catch { }
-        if ($location) { $location }
-        $cached = [string]$installer.ProductInfo($ProductCode, 'LocalPackage')
-        if (-not $cached -or -not (Test-Path -LiteralPath $cached -PathType Leaf)) { return }
-        $database = $installer.OpenDatabase($cached, 0)
-        $view = $database.OpenView('SELECT `Component`.`ComponentId`, `File`.`FileName` FROM `Component`, `File` WHERE `Component`.`Component` = `File`.`Component_`')
-        [void]$view.Execute()
-        $names = @('Nov.WaWi.exe','Nov.NT.POS.exe','KassaPreh.exe','Aprima-System.dll','InterSystems.Data.IRISClient.dll','InterSystems.Data.CacheClient.dll')
-        while ($null -ne ($record = $view.Fetch())) {
-            try {
-                $name = ([string]$record.StringData(2)).Split('|')[-1]
-                if ($name -notin $names) { continue }
-                $component = [string]$record.StringData(1)
-                if (-not [guid]::TryParse($component, [ref]$guid)) { continue }
-                $file = [string]$installer.ComponentPath($ProductCode, $component)
-                if ([IO.Path]::IsPathRooted($file) -and [IO.File]::Exists($file)) { [IO.Path]::GetDirectoryName($file) }
-            } finally {
-                if ([Runtime.InteropServices.Marshal]::IsComObject($record)) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($record) }
-                $record = $null
-            }
-        }
-    }
-    catch { } # A missing MSI cache still allows a checked standard-location fallback.
-    finally {
-        foreach ($com in @($record,$view,$database,$installer)) {
-            if ($null -ne $com -and [Runtime.InteropServices.Marshal]::IsComObject($com)) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($com) }
-        }
-    }
-}
-
-function GetSoftwareDefaultInstallDirectories([string]$Kind) {
-    $roots = @([Environment]::GetFolderPath('ProgramFilesX86'), [Environment]::GetFolderPath('ProgramFiles'), $env:ProgramW6432)
-    foreach ($root in @($roots | Where-Object { $_ } | Sort-Object -Unique)) {
-        if ($Kind -eq 'ntc') { Join-Path $root 'Novacom\Lagerverwaltung' }
-        elseif ($Kind -eq 'pos') { Join-Path $root 'NovaTouch' }
-    }
-}
-
-function AddSoftwareDatabaseSearchLocation([string]$Location, $Directories, $Paths, $CheckedPaths) {
-    if ([string]::IsNullOrWhiteSpace($Location)) { return }
-    $expanded = [Environment]::ExpandEnvironmentVariables($Location.Trim().Trim('"'))
-    if (-not [IO.Path]::IsPathRooted($expanded)) { return }
-    try { $directory = [IO.Path]::GetFullPath($expanded).TrimEnd('\') } catch { return }
-    foreach ($candidate in @($directory, (Join-Path $directory 'bin'))) {
-        $Directories[$candidate] = $true
-        foreach ($root in @($candidate, [IO.Path]::GetDirectoryName($candidate))) {
-            if (-not $root) { continue }
-            $xml = [IO.Path]::GetFullPath((Join-Path $root 'Einstellungen\einstellung-Cache.xml'))
-            $CheckedPaths[$xml] = $true
-            if (Test-Path -LiteralPath $xml -PathType Leaf) { $Paths[$xml] = $true }
-        }
-    }
-}
-
-function FindSoftwareDatabaseConfiguration([object[]]$Programs) {
-    $directories = @{}; $paths = @{}; $checkedPaths = @{}
-    foreach ($kind in @('ntc','pos')) {
-        $programsOfKind = @($Programs | Where-Object { $_.Kind -eq $kind })
-        $kindPaths = @{}
-        foreach ($program in $programsOfKind) {
-            $programPaths = @{}
-            if ($null -ne $program.PSObject.Properties['InstallLocation']) {
-                AddSoftwareDatabaseSearchLocation ([string]$program.InstallLocation) $directories $programPaths $checkedPaths
-            }
-            if ($null -ne $program.PSObject.Properties['ExecutablePath'] -and $program.ExecutablePath) {
-                AddSoftwareDatabaseSearchLocation ([IO.Path]::GetDirectoryName([string]$program.ExecutablePath)) $directories $programPaths $checkedPaths
-            }
-            if ($programPaths.Count -eq 0 -and $null -ne $program.PSObject.Properties['ProductCode']) {
-                foreach ($location in @(ReadSoftwareInstallerDirectories ([string]$program.ProductCode))) {
-                    AddSoftwareDatabaseSearchLocation $location $directories $programPaths $checkedPaths
-                }
-            }
-            foreach ($path in $programPaths.Keys) { $kindPaths[$path] = $true }
-        }
-        if ($kindPaths.Count -eq 0 -and $programsOfKind.Count -gt 0) {
-            foreach ($location in @(GetSoftwareDefaultInstallDirectories $kind)) {
-                AddSoftwareDatabaseSearchLocation $location $directories $kindPaths $checkedPaths
-            }
-        }
-        foreach ($path in $kindPaths.Keys) { $paths[$path] = $true }
-    }
-    if ($paths.Count -eq 0) {
-        # An existing installation may lack its uninstall registration entirely.
-        # In that case require its actual application EXE beside the settings.
-        foreach ($kind in @('ntc','pos')) {
-            $names = if ($kind -eq 'ntc') { @('Nov.WaWi.exe') } else { @('Nov.NT.POS.exe','KassaPreh.exe') }
-            foreach ($location in @(GetSoftwareDefaultInstallDirectories $kind)) {
-                $installed = @($names | Where-Object { [IO.File]::Exists((Join-Path $location ('bin\' + $_))) -or [IO.File]::Exists((Join-Path $location $_)) }).Count -gt 0
-                if ($installed) { AddSoftwareDatabaseSearchLocation $location $directories $paths $checkedPaths }
-            }
-        }
-    }
-    [pscustomobject]@{ Paths=@($paths.Keys | Sort-Object); Directories=@($directories.Keys | Sort-Object); CheckedPaths=@($checkedPaths.Keys | Sort-Object) }
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
 }
 
 function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
@@ -458,7 +349,6 @@ function ResolveSoftwareMsi($Package, [string]$WorkRoot) {
     } finally { $hash.Dispose(); $source.Dispose() }
 }
 
-<<<<<<< HEAD
 function PublishSelectedSoftwarePackages([object[]]$Packages) {
     $config = FindSoftwareDatabaseConfiguration
     foreach ($service in $config.Services) { Progress 'zzzSoftware-Konfiguration' ($service.Name + ': ' + $service.ExePath) }
@@ -468,15 +358,6 @@ function PublishSelectedSoftwarePackages([object[]]$Packages) {
     foreach ($path in $config.Paths) { Progress 'zzzSoftware-Konfiguration' ('Verwendet: ' + $path) }
     $connections = @(ReadSoftwareConnections $config.Paths)
     if ($connections.Count -eq 0) { throw 'Keine Serververbindungen in den NTC/POS-Konfigurationen gefunden.' }
-=======
-function PublishSelectedSoftwarePackages([object[]]$Packages, [object[]]$Programs) {
-    $config = FindSoftwareDatabaseConfiguration $Programs
-    foreach ($path in $config.CheckedPaths) { Progress 'zzzSoftware-Konfiguration' ('Geprüft: ' + $path) }
-    if ($config.Paths.Count -eq 0) { throw 'Keine Einstellungen\einstellung-Cache.xml bei einer installierten NTC/POS gefunden. Lokales Update wurde vor der Installation angehalten.' }
-    foreach ($path in $config.Paths) { Progress 'zzzSoftware-Konfiguration' ('Verwendet: ' + $path) }
-    $connections = @(ReadSoftwareConnections $config.Paths)
-    if ($connections.Count -eq 0) { throw 'Keine Serververbindungen in einstellung-Cache.xml gefunden.' }
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
     if ($Packages.Count -eq 0) { throw 'Keine MSI-Pakete für zzzSoftware ausgewählt.' }
     $provider = InitializeSoftwareDatabaseProvider $config.Directories
     $tempBase = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) 'NovaTouchUpdater'))

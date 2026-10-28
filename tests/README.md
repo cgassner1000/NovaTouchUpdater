@@ -83,19 +83,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\MsiUpda
 
 `MsiUpdates.Tests.ps1` prüft fehlende, gleiche, neuere und ältere Produkte, MSI-Versionsvergleiche, lokale und Remote-Ausführung, MSI in ZIP, externe CABs, erneute Metadatenprüfung, Installerfehler, Neustartbedarf und temporäre Bereinigung. `msiexec` wird dabei niemals gestartet: Der Prozessaufruf ist simuliert. `ServerSuiteUpdate.Tests.ps1` prüft zusätzlich den vollständigen lokalen ZIP-Dienstablauf und bricht ab, falls dabei ein WinRM-Aufruf versucht wird. Echte Programme oder Dienste werden nicht verändert.
 
-<<<<<<< HEAD
 `SoftwareDatabase.Tests.ps1` verwendet dieselben MSI-Testdateien und einen InterSystems-Provider als reine Simulation im Speicher. Geprüft werden Verbindungen aus den Update-Dienstpfaden, XML/INI mit Duplikaten, SQLDSN, verschlüsselte Zugangsdaten, NTC ohne POS, POS ohne NTC, alle Anwendungs-Namespaces, Binärdaten aus MSI und ZIP, Metadaten, Quellenänderungen, Transaktionen mit Rollback, Fehler ohne Zugangsdaten im Protokoll und temporäre Bereinigung. Es werden keine Datenbankverbindungen geöffnet. `MainForm.Tests --staging` prüft dazu die Reihenfolge vor Kopieren/Installieren, alle ausgewählten MSIs unabhängig vom lokalen Installationsbestand, Abbruch bei Uploadfehlern und die Wiederholung.
-=======
-`SoftwareDatabase.Tests.ps1` verwendet dieselben MSI-Testdateien und einen InterSystems-Provider als reine Simulation im Speicher. Geprüft werden mehrere und doppelte XML-Verbindungen, SQLDSN, verschlüsselte Zugangsdaten, NTC ohne POS, alle Anwendungs-Namespaces, Binärdaten aus MSI und ZIP, Metadaten, Quellenänderungen, Transaktionen mit Rollback, Fehler ohne Zugangsdaten im Protokoll und temporäre Bereinigung. Es werden keine Datenbankverbindungen geöffnet. `MainForm.Tests --staging` prüft dazu die Reihenfolge vor Kopieren/Installieren, alle ausgewählten MSIs unabhängig vom lokalen Installationsbestand, Abbruch bei Uploadfehlern und die Wiederholung.
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SoftwareDatabase.Tests.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SoftwareDatabaseDiscovery.Tests.ps1
 ```
 
-<<<<<<< HEAD
 `SoftwareDatabaseDiscovery.Tests.ps1` verwendet simulierte Update-Dienste und Konfigurationen in Testordnern. Geprüft werden NTC-XML, POS-INI ohne Einstellungen-Ordner, Unicode, verschlüsselte Zugangsdaten, Server/Port/Namespace/SSL, doppelte Verbindungen, gestoppte Dienste, Dienstnamen und Anzeigenamen, EXE-Pfade mit Leerzeichen/Parametern/Umgebungsvariablen sowie fehlende und ungültige Konfigurationen. Registrierungszugriffe auf Programme sowie Dienststarts und Prozessstarts führen im Test zum Fehler. Die tatsächlichen Windows-Dienste werden nicht abgefragt oder verändert.
-=======
-`SoftwareDatabaseDiscovery.Tests.ps1` bildet die Ordnerstruktur unter `Program Files (x86)\Novacom\Lagerverwaltung` in einem Testordner nach. Geprüft werden fehlende Registry-Pfade, die Ermittlung benutzerdefinierter Installationen über MSI-Komponenten, ein fehlender MSI-Cache, NTC/POS mit unterschiedlichen Pfaden sowie die protokollierten Suchpfade. MSI-Registrierungsabfragen sind simuliert; die SQL-Abfrage der Komponententabelle läuft gegen eine eigens erzeugte MSI-Testdatenbank, die ausschließlich lesend geöffnet wird.
->>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
+
+`PowerShellValidation.Tests.ps1` prüft die Build-Prüfung mit gültigen Skripten, Syntaxfehlern und Git-Konfliktmarkern. Auch Konfliktmarker in syntaktisch gültigen Textblöcken müssen den Build verhindern. Die Testskripte werden ausschließlich geparst; ihre Inhalte werden nicht ausgeführt.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\PowerShellValidation.Tests.ps1
+```
