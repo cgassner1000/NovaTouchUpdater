@@ -1,48 +1,59 @@
+using System.Drawing.Drawing2D;
+
 namespace NovaTouchUpdater;
 
-// The header participates in layout; its content floats above the form so
-// opening a section never moves the package cards, action bar or host table.
-internal sealed class ExpandableSection : ModernButton, IMessageFilter
+// Expand the original card over the form. A placeholder holds its collapsed
+// position, so the other cards and the host table do not move.
+internal sealed class ExpandableSection : Panel, IMessageFilter
 {
     private readonly string title;
-    private readonly Panel popup = new() { AutoScroll = true, BackColor = UiTheme.Surface, BorderStyle = BorderStyle.FixedSingle, Visible = false };
-    private readonly SurfaceCard card = new()
-    {
-        AutoSize = false,
-        ColumnCount = 1, RowCount = 1, Margin = Padding.Empty
-    };
+    private readonly SectionHeader header = new();
+    private readonly Panel body = new() { AutoScroll = true, Visible = false, BorderStyle = BorderStyle.None };
+    private readonly TableLayoutPanel content;
     private Control? overlayOwner;
     private Form? ownerForm;
+    private Panel? placeholder;
+    private DockStyle collapsedDock;
     private bool positioning;
+    private bool moving;
+    private bool refreshQueued;
 
     internal bool Expanded { get; private set; }
-    internal Panel Popup => popup;
     internal event EventHandler? ExpandedChanged;
 
     internal ExpandableSection(string title, TableLayoutPanel content)
     {
         this.title = title;
+        this.content = content;
         Dock = DockStyle.Top;
-        Font = new Font("Segoe UI", 11F, FontStyle.Bold);
-        Padding = new Padding(16, 12, 16, 12);
-        TextAlign = ContentAlignment.MiddleLeft;
-        UseMnemonic = false;
-        AccessibleName = title;
-        AccessibleRole = AccessibleRole.ButtonDropDown;
-        card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        Padding = new Padding(16, 0, 16, 0);
+        BackColor = UiTheme.Surface;
+        DoubleBuffered = true;
+        SetStyle(ControlStyles.ResizeRedraw, true);
+        header.Font = new Font("Segoe UI", 11F, FontStyle.Bold);
+        header.Padding = new Padding(16, 12, 16, 12);
+        header.AccessibleName = title;
+        header.AccessibleRole = AccessibleRole.ButtonDropDown;
+        header.TabIndex = 0;
+        body.TabIndex = 1;
+        header.Click += (_, _) => OnClick(EventArgs.Empty);
         content.Margin = Padding.Empty;
-        card.Controls.Add(content, 0, 0);
-        popup.Controls.Add(card);
+        content.Dock = DockStyle.None;
+        content.AutoSize = false;
+        body.Controls.Add(content);
+        Controls.Add(body);
+        Controls.Add(header);
+        content.Layout += ContentLayout;
         UpdateHeader();
     }
+
+    public override Size GetPreferredSize(Size proposedSize) => header.GetPreferredSize(proposedSize);
 
     internal void AttachOverlay(Control owner)
     {
         overlayOwner = owner;
-        popup.Name = Name + "Popup";
-        owner.Controls.Add(popup);
-        popup.SendToBack();
         owner.SizeChanged += OwnerSizeChanged;
         ownerForm = owner as Form;
         if (ownerForm is not null) ownerForm.Deactivate += OwnerDeactivated;
@@ -50,15 +61,42 @@ internal sealed class ExpandableSection : ModernButton, IMessageFilter
 
     internal void Expand()
     {
-        if (Expanded || overlayOwner is null || overlayOwner.IsDisposed) return;
-        PositionPopup();
-        Expanded = true;
-        UpdateHeader();
+        if (Expanded || Parent is null || overlayOwner is null || overlayOwner.IsDisposed) return;
+        Control parent = Parent;
+        int index = parent.Controls.GetChildIndex(this);
+        var table = parent as TableLayoutPanel;
+        var cell = table?.GetCellPosition(this) ?? default;
+        int columns = table?.GetColumnSpan(this) ?? 1, rows = table?.GetRowSpan(this) ?? 1;
+        collapsedDock = Dock;
+        placeholder = new Panel { Name = Name + "Placeholder", Bounds = Bounds, Dock = Dock, Anchor = Anchor, Margin = Margin, TabStop = false };
+        moving = true;
+        parent.SuspendLayout();
+        try
+        {
+            AutoSize = false;
+            Dock = DockStyle.None;
+            parent.Controls.Remove(this);
+            parent.Controls.Add(placeholder);
+            if (table is not null)
+            {
+                table.SetCellPosition(placeholder, cell);
+                table.SetColumnSpan(placeholder, columns);
+                table.SetRowSpan(placeholder, rows);
+            }
+            parent.Controls.SetChildIndex(placeholder, index);
+            overlayOwner.Controls.Add(this);
+            Expanded = true;
+            body.Visible = true;
+            UpdateHeader();
+        }
+        finally { parent.ResumeLayout(true); moving = false; }
+        placeholder.LocationChanged += AnchorChanged;
+        placeholder.SizeChanged += AnchorChanged;
+        parent.Layout += ParentLayout;
         ExpandedChanged?.Invoke(this, EventArgs.Empty);
-        popup.BringToFront();
-        popup.Visible = true;
+        PositionExpandedCard();
+        BringToFront();
         Application.AddMessageFilter(this);
-        popup.SelectNextControl(null, true, true, true, false);
     }
 
     internal void Collapse(bool restoreFocus = false)
@@ -66,10 +104,42 @@ internal sealed class ExpandableSection : ModernButton, IMessageFilter
         if (!Expanded) return;
         Expanded = false;
         Application.RemoveMessageFilter(this);
-        popup.Visible = false;
-        popup.SendToBack();
+        moving = true;
+        body.Visible = false;
         UpdateHeader();
-        if (restoreFocus && CanFocus) Focus();
+        if (placeholder?.Parent is { IsDisposed: false, Disposing: false } parent)
+        {
+            parent.Layout -= ParentLayout;
+            placeholder.LocationChanged -= AnchorChanged;
+            placeholder.SizeChanged -= AnchorChanged;
+            var table = parent as TableLayoutPanel;
+            var cell = table?.GetCellPosition(placeholder) ?? default;
+            int columns = table?.GetColumnSpan(placeholder) ?? 1, rows = table?.GetRowSpan(placeholder) ?? 1;
+            int index = parent.Controls.GetChildIndex(placeholder);
+            Rectangle bounds = placeholder.Bounds;
+            parent.SuspendLayout();
+            try
+            {
+                parent.Controls.Remove(placeholder);
+                Bounds = bounds;
+                Dock = collapsedDock;
+                AutoSize = true;
+                parent.Controls.Add(this);
+                if (table is not null)
+                {
+                    table.SetCellPosition(this, cell);
+                    table.SetColumnSpan(this, columns);
+                    table.SetRowSpan(this, rows);
+                }
+                parent.Controls.SetChildIndex(this, index);
+            }
+            finally { parent.ResumeLayout(true); }
+        }
+        placeholder?.Dispose();
+        placeholder = null;
+        moving = false;
+        PerformLayout();
+        if (restoreFocus && header.CanFocus) header.Focus();
         ExpandedChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -82,63 +152,87 @@ internal sealed class ExpandableSection : ModernButton, IMessageFilter
 
     private void UpdateHeader()
     {
-        Text = title + (Expanded ? "  ▲" : "  ▼");
-        AccessibleDescription = Expanded ? "Geöffnet. Zum Zuklappen klicken." : "Geschlossen. Zum Aufklappen klicken.";
-        Role = Expanded ? ButtonRole.Accent : ButtonRole.Normal;
+        Text = header.Text = title + (Expanded ? "  ▲" : "  ▼");
+        header.AccessibleDescription = Expanded ? "Geöffnet. Zum Zuklappen klicken." : "Geschlossen. Zum Aufklappen klicken.";
+        header.ForeColor = Expanded ? UiTheme.Accent : UiTheme.Text;
     }
 
-    private void PositionPopup()
+    private void PositionExpandedCard()
     {
-        if (positioning || overlayOwner is null || overlayOwner.IsDisposed) return;
+        if (positioning || moving || !Expanded || placeholder is null || overlayOwner is null || overlayOwner.IsDisposed) return;
         positioning = true;
         try
         {
-            float scale = Math.Max(DeviceDpi / 96F, Font.SizeInPoints / 11F);
-            int gap = Math.Max(2, (int)Math.Ceiling(6 * scale));
-            int width = Math.Min(Math.Max(Width, (int)Math.Ceiling(480 * scale)), Math.Max(1, overlayOwner.ClientSize.Width - 2 * gap));
-            popup.Width = width;
-            // Reserve scrollbar width before measuring, so a tall popup cannot
-            // oscillate between wrapped and unwrapped layouts.
-            card.Width = Math.Max(1, popup.ClientSize.Width - SystemInformation.VerticalScrollBarWidth);
-            card.PerformLayout();
-            card.Height = card.GetPreferredSize(new Size(card.Width, 0)).Height;
-            int desiredHeight = card.Height + 2;
-            var anchor = new Rectangle(overlayOwner.PointToClient(PointToScreen(Point.Empty)), Size);
-            int below = overlayOwner.ClientSize.Height - anchor.Bottom - gap;
-            int above = anchor.Top - gap;
-            bool opensBelow = below >= Math.Min(desiredHeight, 100 * scale) || below >= above;
-            int height = Math.Min(desiredHeight, Math.Max(1, opensBelow ? below : above));
-            height = Math.Min(height, Math.Max(1, overlayOwner.ClientSize.Height - 2 * gap));
-            int x = Math.Clamp(anchor.Left, gap, Math.Max(gap, overlayOwner.ClientSize.Width - width - gap));
-            int y = Math.Clamp(opensBelow ? anchor.Bottom : anchor.Top - height,
-                gap, Math.Max(gap, overlayOwner.ClientSize.Height - height - gap));
-            popup.Bounds = new Rectangle(x, y, width, height);
+            // Hidden controls can have their HWND parked during reparenting.
+            // Managed locations also work there and include scroll offsets.
+            Point origin = placeholder.Location;
+            for (Control? parent = placeholder.Parent; parent is not null && parent != overlayOwner; parent = parent.Parent)
+                origin.Offset(parent.Location);
+            int width = Math.Min(placeholder.Width, Math.Max(1, overlayOwner.ClientSize.Width - origin.X));
+            int headerHeight = header.GetPreferredSize(new Size(width, 0)).Height;
+            int inset = Padding.Left;
+            int contentWidth = Math.Max(1, width - inset * 2 - SystemInformation.VerticalScrollBarWidth);
+            content.Width = contentWidth;
+            content.PerformLayout();
+            content.Height = content.GetPreferredSize(new Size(contentWidth, 0)).Height;
+            int height = Math.Min(headerHeight + content.Height + inset,
+                Math.Max(headerHeight, overlayOwner.ClientSize.Height - origin.Y - 6));
+            Bounds = new Rectangle(origin, new Size(width, height));
+            PerformLayout();
         }
         finally { positioning = false; }
     }
 
-    private void OwnerSizeChanged(object? sender, EventArgs e) { if (Expanded) PositionPopup(); }
+    protected override void OnLayout(LayoutEventArgs e)
+    {
+        base.OnLayout(e);
+        if (header is null || body is null) return;
+        int height = header.GetPreferredSize(new Size(Width, 0)).Height;
+        header.Bounds = new Rectangle(0, 0, Width, height);
+        if (!Expanded) return;
+        body.Bounds = new Rectangle(0, height, Width, Math.Max(0, Height - height));
+        body.Padding = new Padding(Padding.Left, 0, Padding.Right, Padding.Left);
+        content.Location = body.AutoScrollPosition + new Size(Padding.Left, 0);
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (Width <= 0 || Height <= 0) return;
+        using var shape = UiTheme.RoundRectangle(new RectangleF(0, 0, Width, Height), 9 * DeviceDpi / 96F);
+        Region? previous = Region;
+        Region = new Region(shape);
+        previous?.Dispose();
+    }
+
+    protected override void OnPaintBackground(PaintEventArgs e) => e.Graphics.Clear(BackColor);
+    private void ContentLayout(object? sender, LayoutEventArgs e)
+    {
+        // Measure after nested layout passes have settled.
+        if (!Expanded || positioning || moving || refreshQueued || !IsHandleCreated) return;
+        refreshQueued = true;
+        BeginInvoke(() => { refreshQueued = false; if (!IsDisposed) PositionExpandedCard(); });
+    }
+    private void AnchorChanged(object? sender, EventArgs e) => PositionExpandedCard();
+    private void ParentLayout(object? sender, LayoutEventArgs e) => PositionExpandedCard();
+    private void OwnerSizeChanged(object? sender, EventArgs e) => PositionExpandedCard();
     private void OwnerDeactivated(object? sender, EventArgs e) => Collapse();
-    protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); if (Expanded) PositionPopup(); }
-    protected override void OnLocationChanged(EventArgs e) { base.OnLocationChanged(e); if (Expanded) PositionPopup(); }
 
     public bool PreFilterMessage(ref Message m)
     {
         if (!Expanded) return false;
         if (m.Msg == 0x0100 && (Keys)m.WParam.ToInt32() == Keys.Escape)
         {
-            // Let an open combo box consume its own first Escape.
-            if (HasOpenCombo(popup)) return false;
+            if (HasOpenCombo(this)) return false;
             Collapse(restoreFocus: true);
             return true;
         }
         if (m.Msg is 0x0201 or 0x0204 or 0x0207 or 0x020B or 0x00A1 or 0x020A)
         {
             Control? target = Control.FromHandle(m.HWnd);
-            bool inside = target is not null
-                ? target == this || Contains(target) || target == popup || popup.Contains(target)
-                : RectangleToScreen(ClientRectangle).Contains(Cursor.Position) || popup.RectangleToScreen(popup.ClientRectangle).Contains(Cursor.Position);
-            if (!inside && !HasOpenCombo(popup)) Collapse();
+            bool inside = target is not null ? target == this || Contains(target)
+                : RectangleToScreen(ClientRectangle).Contains(Cursor.Position);
+            if (!inside && !HasOpenCombo(this)) Collapse();
         }
         return false;
     }
@@ -150,12 +244,32 @@ internal sealed class ExpandableSection : ModernButton, IMessageFilter
     {
         if (disposing)
         {
-            Collapse();
             Application.RemoveMessageFilter(this);
             if (overlayOwner is not null) overlayOwner.SizeChanged -= OwnerSizeChanged;
             if (ownerForm is not null) ownerForm.Deactivate -= OwnerDeactivated;
-            popup.Dispose();
+            if (placeholder?.Parent is { } parent) parent.Layout -= ParentLayout;
+            placeholder?.Dispose();
+            content.Layout -= ContentLayout;
         }
         base.Dispose(disposing);
+    }
+
+    private sealed class SectionHeader : ModernButton
+    {
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            if (SystemInformation.HighContrast) { base.OnPaint(e); return; }
+            e.Graphics.Clear(BackColor);
+            var bounds = new Rectangle(Padding.Left, 0, Math.Max(0, Width - Padding.Horizontal), Height);
+            TextRenderer.DrawText(e.Graphics, Text, Font, bounds, ForeColor,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            if (Focused && ShowFocusCues)
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                using var shape = UiTheme.RoundRectangle(new RectangleF(3, 3, Width - 6, Height - 6), 5);
+                using var pen = new Pen(UiTheme.Accent) { DashStyle = DashStyle.Dot };
+                e.Graphics.DrawPath(pen, shape);
+            }
+        }
     }
 }

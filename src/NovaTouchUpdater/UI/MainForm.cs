@@ -354,8 +354,9 @@ public sealed partial class MainForm : Form
         var hostCard = new ExpandableSection("Remote-Hosts", Stack(hostList, lblFile));
         hostCard.Name = "hostsCard";
         hostCard.Margin = Padding.Empty;
-        var filesContent = Stack(CreatePackageSelectionGrid(), targetPath);
-        var files = Section("Update-Dateien", filesContent);
+        var filesContent = Stack(CreatePackageSelectionGrid(), FlowRow(useFolderPackages));
+        useFolderPackages.Click += (_, _) => UseFolderPackages();
+        var files = new ExpandableSection("Update-Dateien Einzeln", filesContent);
         files.Name = "filesCard";
         files.Margin = Padding.Empty;
         var packageColumn = Stack(localCard, files);
@@ -395,6 +396,7 @@ public sealed partial class MainForm : Form
         nHttpsPort.Minimum = 1; nHttpsPort.Maximum = 65535; nHttpsPort.Value = 5986; nHttpsPort.Width = 75;
         var httpsOptions = new TableLayoutPanel
         {
+            Name = "httpsOptions",
             AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 3, RowCount = 1, Anchor = AnchorStyles.Left, Margin = Padding.Empty
         };
@@ -402,10 +404,13 @@ public sealed partial class MainForm : Form
         httpsOptions.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         chkSsl.Anchor = nHttpsPort.Anchor = AnchorStyles.Left;
         httpsOptions.Controls.Add(chkSsl, 0, 0);
-        httpsOptions.Controls.Add(new Label
+        var portLabel = new Label
         {
-            Text = "HTTPS-Port:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 4, 3)
-        }, 1, 0);
+            Name = "httpsPortLabel", Text = "Port:", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 4, 3)
+        };
+        portLabel.Visible = nHttpsPort.Visible = chkSsl.Checked;
+        chkSsl.CheckedChanged += (_, _) => { portLabel.Visible = nHttpsPort.Visible = chkSsl.Checked; };
+        httpsOptions.Controls.Add(portLabel, 1, 0);
         httpsOptions.Controls.Add(nHttpsPort, 2, 0);
         optionBar.Controls.Add(httpsOptions);
         chkForceUpdate.Text = "Force Up-Downgrade (Dienste)";
@@ -417,7 +422,7 @@ public sealed partial class MainForm : Form
         chkSkipZipTransfer.AutoSize = true;
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
         chkSkipZipTransfer.Anchor = AnchorStyles.Left;
-        chkScanOnStartup.Text = "Bei Programmstart prüfen";
+        chkScanOnStartup.Text = "Versionen bei Programmstart prüfen";
         chkScanOnStartup.AutoSize = true;
         chkScanOnStartup.Anchor = AnchorStyles.Left;
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
@@ -436,17 +441,25 @@ public sealed partial class MainForm : Form
         executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            login, optionBar, chkScanOnStartup, chkSkipZipTransfer, chkForceUpdate, FlowRow(btnSaveConfig));
+            login, optionBar, chkScanOnStartup, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(0, 0, 0, 12);
-        var menuColumn = Stack(settings, hostCard);
+        var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList));
+        selectedPackagesCard.Name = "selectedPackagesCard";
+        selectedPackagesCard.Margin = new Padding(0, 12, 0, 0);
+        var menuColumn = Stack(settings, hostCard, selectedPackagesCard);
         menuColumn.Name = "menuColumn";
         menuColumn.Margin = new Padding(8, 0, 0, 0);
         configuration.Controls.Add(menuColumn, 1, 0);
         localCard.TabIndex = 0; files.TabIndex = 1; settings.TabIndex = 0; hostCard.TabIndex = 1;
-        settings.ExpandedChanged += (_, _) => { if (settings.Expanded) hostCard.Collapse(); };
-        hostCard.ExpandedChanged += (_, _) => { if (hostCard.Expanded) settings.Collapse(); };
+        ExpandableSection[] expandableSections = [settings, hostCard, files];
+        foreach (var section in expandableSections)
+            section.ExpandedChanged += (_, _) =>
+            {
+                if (section.Expanded)
+                    foreach (var other in expandableSections.Where(other => other != section)) other.Collapse();
+            };
         bool stacked = false;
         configuration.Layout += (_, _) =>
         {
@@ -665,6 +678,7 @@ public sealed partial class MainForm : Form
         Controls.Add(scrollArea);
         settings.AttachOverlay(this);
         hostCard.AttachOverlay(this);
+        files.AttachOverlay(this);
     }
 
     private SurfaceCard Section(string title, TableLayoutPanel content)
@@ -906,9 +920,8 @@ public sealed partial class MainForm : Form
             MessageBox.Show(this, $"Ungültiger ZIP-Dateiname. Erwartet: nt.{kind}_VERSION*.zip", "ZIP-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        if (kind == "payment") { paymentZip = dialog.FileName; paymentVersion = m.Groups[2].Value; lblPayment.Text = "Payment Target: " + paymentVersion; }
-        else { fiscalZip = dialog.FileName; fiscalVersion = m.Groups[2].Value; lblFiscal.Text = "Fiscal Target: " + fiscalVersion; }
-        UpdateButtons();
+        SelectIndividualPackage(new SoftwarePackage(kind == "payment" ? UpdateComponents.Payment : UpdateComponents.Fiscal,
+            dialog.FileName, m.Groups[2].Value));
     }
 
     private void ChooseServerSuite()
@@ -921,10 +934,7 @@ public sealed partial class MainForm : Form
                 "Server-Suite-Update", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        serverSuiteZip = dialog.FileName;
-        serverSuiteVersion = version;
-        lblServerSuite.Text = "Server Suite Target: " + version;
-        UpdateButtons();
+        SelectIndividualPackage(new SoftwarePackage(UpdateComponents.ServerSuite, dialog.FileName, version));
     }
 
     private async Task TransferFilesAsync()
@@ -1839,6 +1849,7 @@ public sealed partial class MainForm : Form
         txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle && remote;
         txtUser.Enabled = txtPassword.Enabled = idle && remote; statusFilter.Enabled = idle;
         executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = readPackages.Enabled = idle;
+        useFolderPackages.Enabled = idle && individualPackageSelection && folderPackages.Length > 0;
         foreach (var controls in msiControls.Values) controls.Button.Enabled = idle;
     }
 

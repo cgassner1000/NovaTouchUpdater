@@ -8,6 +8,15 @@ internal static partial class Program
         {
             using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
             Populate(form);
+            var fixturePackages = HostUpdateState.Each(UpdateComponents.ZipServices | UpdateComponents.Msi).Select(component =>
+                new SoftwarePackage(component, component + "-Update-2026.4.9792.zip", "2026.4.9792",
+                    (component & UpdateComponents.Msi) == 0 ? null : new MsiPackageRequest
+                    {
+                        Kind = component.ToString().ToLowerInvariant(), ProductVersion = "2026.4.9792",
+                        PayloadPath = component + "-Update-2026.4.9792.zip"
+                    })).ToArray();
+            SetField(form, "folderPackages", fixturePackages);
+            Call(form, "UseFolderPackages");
             var fonts = All(form).ToDictionary(c => c, c => c.Font);
             form.Scale(new SizeF(scale, scale));
             foreach (var (control, font) in fonts) control.Font = new Font(font.FontFamily, font.SizeInPoints * scale, font.Style);
@@ -15,7 +24,8 @@ internal static partial class Program
             var settings = All(form).OfType<ExpandableSection>().Single(c => c.Name == "settingsCard");
             var hosts = All(form).OfType<ExpandableSection>().Single(c => c.Name == "hostsCard");
             var packages = All(form).Single(c => c.Name == "localUpdateCard");
-            var files = All(form).Single(c => c.Name == "filesCard");
+            var files = All(form).OfType<ExpandableSection>().Single(c => c.Name == "filesCard");
+            var selectedPackages = All(form).Single(c => c.Name == "selectedPackagesCard");
             var table = Field<DataGridView>(form, "table");
             foreach (int width in new[] { 1710, 1000, 640 })
             {
@@ -27,14 +37,31 @@ internal static partial class Program
                     $"settings and remote hosts start collapsed with down arrows ({width}px, {scale:P0})");
                 Assert(packages.Parent == files.Parent && files.Top >= packages.Bottom && files.Top - packages.Bottom <= 30 * scale,
                     "update files sit directly below installation packages in an independent column");
+                Assert(selectedPackages.Parent == hosts.Parent && selectedPackages.Top >= hosts.Bottom,
+                    "selected packages are listed directly below remote hosts");
+                var packageList = Field<Label>(form, "selectedPackagesList");
+                Assert(packageList.Text.Split(Environment.NewLine).Length == 7 &&
+                    packageList.PreferredSize.Height <= packageList.Height,
+                    "all seven selected packages fit in the list at the current width and scaling");
+                if (width == 1710 && scale == 1F)
+                {
+                    using var collapsed = new Bitmap(form.Width, form.Height);
+                    form.DrawToBitmap(collapsed, new Rectangle(Point.Empty, collapsed.Size));
+                    collapsed.Save(Path.Combine(TestWorkspace.Artifacts, "main-packages.png"));
+                }
                 Rectangle tableBefore = InForm(form, table), filesBefore = InForm(form, files);
+                Rectangle settingsBefore = InForm(form, settings);
                 ClickSection(settings);
                 Assert(settings.Expanded && settings.Text.EndsWith('▲') &&
                     InForm(form, table) == tableBefore && InForm(form, files) == filesBefore,
                     "opening settings changes its arrow and overlays content without moving packages or hosts");
-                Assert(form.ClientRectangle.Contains(settings.Popup.Bounds), "settings popup stays within the window");
-                Assert(form.Controls.GetChildIndex(settings.Popup) == 0, "open content is above the main scroll area");
-                Assert(settings.Popup.Bounds.IntersectsWith(InForm(form, hosts)), "settings popup overlaps the following menu header");
+                Assert(form.ClientRectangle.Contains(settings.Bounds), "expanded settings stay within the window");
+                Assert(settings.Parent == form && form.Controls.GetChildIndex(settings) == 0 &&
+                    settings.Location == settingsBefore.Location && settings.Width == settingsBefore.Width && settings.Height > settingsBefore.Height,
+                    "the original card expands at its existing position above the main scroll area");
+                Assert(settings.BorderStyle == BorderStyle.None && !All(settings).OfType<SurfaceCard>().Any(),
+                    "expanded settings have no native rectangular border or nested card");
+                Assert(settings.Bounds.IntersectsWith(InForm(form, hosts)), "expanded settings overlap the following menu header");
                 var user = Field<TextBox>(form, "txtUser");
                 user.Text = "test-only-user";
                 var insideClick = Message.Create(user.Handle, 0x0201, IntPtr.Zero, IntPtr.Zero);
@@ -42,8 +69,8 @@ internal static partial class Program
                     "clicking a field inside the popup keeps it open");
                 if (width == 1710 && scale == 1F)
                 {
-                    using var popup = new Bitmap(settings.Popup.Width, settings.Popup.Height);
-                    settings.Popup.DrawToBitmap(popup, new Rectangle(Point.Empty, popup.Size));
+                    using var popup = new Bitmap(settings.Width, settings.Height);
+                    settings.DrawToBitmap(popup, new Rectangle(Point.Empty, popup.Size));
                     popup.Save(Path.Combine(TestWorkspace.Artifacts, "settings-popup.png"));
                     using var expanded = new Bitmap(form.Width, form.Height);
                     form.DrawToBitmap(expanded, new Rectangle(Point.Empty, expanded.Size));
@@ -51,7 +78,7 @@ internal static partial class Program
                     // child window, so compose its verified bounds explicitly.
                     Point clientOrigin = form.PointToScreen(Point.Empty) - (Size)form.Location;
                     using (var graphics = Graphics.FromImage(expanded))
-                        graphics.DrawImageUnscaled(popup, clientOrigin + (Size)settings.Popup.Location);
+                        graphics.DrawImageUnscaled(popup, clientOrigin + (Size)settings.Location);
                     expanded.Save(Path.Combine(TestWorkspace.Artifacts, "main-sections-open.png"));
                 }
                 ClickSection(settings);
@@ -61,8 +88,11 @@ internal static partial class Program
                 ClickSection(hosts);
                 Assert(hosts.Expanded && !settings.Expanded && hosts.Text.EndsWith('▲') && settings.Text.EndsWith('▼'),
                     "opening remote hosts closes settings and updates both arrows");
-                Assert(hosts.Popup.Contains(Field<Button>(form, "btnImport")) && settings.Popup.Contains(Field<Button>(form, "btnSaveConfig")),
-                    "host actions and configuration saving remain in their respective popups");
+                var save = Field<Button>(form, "btnSaveConfig");
+                var path = Field<TextBox>(form, "txtRemotePath");
+                Assert(hosts.Contains(Field<Button>(form, "btnImport")) && settings.Contains(save) && settings.Contains(path) &&
+                    InForm(form, path).Top < InForm(form, save).Top && !files.Contains(path),
+                    "the destination sits above configuration saving inside settings");
                 var escape = Message.Create(hosts.Handle, 0x0100, (IntPtr)Keys.Escape, IntPtr.Zero);
                 Assert(hosts.PreFilterMessage(ref escape) && !hosts.Expanded, "Escape closes the open section");
                 ClickSection(settings);
@@ -71,11 +101,58 @@ internal static partial class Program
                     "clicking outside closes the popup and still reaches the clicked control");
                 Assert(InForm(form, table) == tableBefore && InForm(form, files) == filesBefore,
                     "repeated opening and closing preserves the main layout");
+                ClickSection(files);
+                Assert(files.Expanded && files.Text == "Update-Dateien Einzeln  ▲" && files.Parent == form && !settings.Expanded && !hosts.Expanded,
+                    "individual update files expand as the original card");
+                if (width == 1710 && scale == 1F)
+                {
+                    using var expandedFiles = new Bitmap(files.Width, files.Height);
+                    files.DrawToBitmap(expandedFiles, new Rectangle(Point.Empty, expandedFiles.Size));
+                    expandedFiles.Save(Path.Combine(TestWorkspace.Artifacts, "individual-files.png"));
+                }
+                ClickSection(settings);
+                Assert(!files.Expanded && files.Parent == packages.Parent && InForm(form, files) == filesBefore,
+                    "switching to settings restores the individual-files header in its original column");
+                var ssl = Field<CheckBox>(form, "chkSsl");
+                var port = Field<NumericUpDown>(form, "nHttpsPort");
+                var https = All(settings).OfType<TableLayoutPanel>().Single(c => c.Name == "httpsOptions");
+                port.Value = 6443;
+                ssl.Checked = true;
+                Layout(settings);
+                Assert(https.GetColumnWidths()[1] > 0 && https.GetColumnWidths()[2] > 0 &&
+                    All(settings).Single(c => c.Name == "httpsPortLabel").Text == "Port:", "HTTPS shows the Port label and field");
+                ssl.Checked = false;
+                Layout(settings);
+                Assert(https.GetColumnWidths()[1] == 0 && https.GetColumnWidths()[2] == 0 && port.Value == 6443,
+                    "HTTP hides the complete port input while preserving its value");
+                if (width == 1000)
+                {
+                    form.ClientSize = new Size((int)(640 * scale), form.ClientSize.Height);
+                    for (int pass = 0; pass < 3; pass++) Layout(form);
+                    var anchor = All(form).Single(c => c.Name == "settingsCardPlaceholder");
+                    Assert(settings.Location == InForm(form, anchor).Location && settings.Width == anchor.Width &&
+                        form.ClientRectangle.Contains(settings.Bounds), "an expanded card follows its original header when the layout changes columns");
+                    form.ClientSize = new Size((int)(width * scale), form.ClientSize.Height);
+                    for (int pass = 0; pass < 3; pass++) Layout(form);
+                }
+                settings.Collapse();
             }
         }
+        var closingForm = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
+        var closingSection = All(closingForm).OfType<ExpandableSection>().Single(c => c.Name == "filesCard");
+        var payment = Field<Button>(closingForm, "btnPayment");
+        try { closingSection.Expand(); }
+        finally { closingForm.Dispose(); }
+        Assert(closingSection.IsDisposed && payment.IsDisposed, "closing the window also disposes an expanded card and its content");
     }
 
-    private static Rectangle InForm(Form form, Control control) => form.RectangleToClient(control.RectangleToScreen(control.ClientRectangle));
+    private static Rectangle InForm(Form form, Control control)
+    {
+        Point origin = Point.Empty;
+        for (Control? current = control; current is not null && current != form; current = current.Parent)
+            origin.Offset(current.Location);
+        return new Rectangle(origin, control.ClientSize);
+    }
 
     private static void ClickSection(ExpandableSection section) =>
         typeof(ExpandableSection).GetMethod("OnClick", Private)!.Invoke(section, [EventArgs.Empty]);

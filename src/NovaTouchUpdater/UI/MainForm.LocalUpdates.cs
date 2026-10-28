@@ -7,6 +7,14 @@ public sealed partial class MainForm
     private readonly Label packageStatus = new() { Name = "packageStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Pakete einlesen. Lokale Paketablage erst mit Updates starten." };
     private readonly Button browseSoftware = Button("Durchsuchen");
     private readonly Button readPackages = Button("Pakete einlesen");
+    private readonly Button useFolderPackages = Button("Ordnerauswahl verwenden");
+    private readonly Label selectedPackagesList = new()
+    {
+        Name = "selectedPackagesList", AutoSize = true, Dock = DockStyle.Fill,
+        Text = "Keine Pakete ausgewählt.", Margin = Padding.Empty
+    };
+    private SoftwarePackage[] folderPackages = [];
+    private bool individualPackageSelection;
     private readonly SoftwarePackageCatalog packageCatalog = new();
     private readonly Dictionary<UpdateComponents, MsiPackageRequest> msiPackages = [];
     private readonly Dictionary<UpdateComponents, (Button Button, Label Label)> msiControls = [];
@@ -63,9 +71,10 @@ public sealed partial class MainForm
                 try
                 {
                     var packages = await Task.Run(() => packageCatalog.ReadFileAsync(dialog.FileName, ct.Token), ct.Token);
+                    ct.Token.ThrowIfCancellationRequested();
                     SoftwarePackage? package = packages.Where(p => p.Component == component).OrderByDescending(p => SoftwarePackageCatalog.NumericVersion(p.Version)).FirstOrDefault();
                     if (package is null) throw new InvalidDataException("Das Paket enthält keine MSI für " + HostUpdateState.Label(component));
-                    ApplyPackage(package); UpdateButtons();
+                    SelectIndividualPackage(package);
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception ex) { MessageBox.Show(this, ex.Message, "Update-Paket", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
@@ -116,6 +125,48 @@ public sealed partial class MainForm
         }
     }
 
+    private void ClearPackageSelection()
+    {
+        paymentZip = fiscalZip = serverSuiteZip = paymentVersion = fiscalVersion = serverSuiteVersion = "";
+        paymentHash = fiscalHash = serverSuiteHash = "";
+        lblPayment.Text = "Payment Target: –"; lblFiscal.Text = "Fiscal Target: –"; lblServerSuite.Text = "Server Suite Target: –";
+        msiPackages.Clear();
+        foreach (var (component, controls) in msiControls) controls.Label.Text = component.ToString().ToUpperInvariant() + " Target: –";
+    }
+
+    private void SelectIndividualPackage(SoftwarePackage package)
+    {
+        if ((package.Component & UpdateComponents.Msi) != 0 && package.Msi is null)
+            throw new InvalidDataException("MSI-Paketinformationen fehlen.");
+        if (!individualPackageSelection) ClearPackageSelection();
+        individualPackageSelection = true;
+        ApplyPackage(package);
+        RefreshSelectedPackages();
+        UpdateButtons();
+    }
+
+    private void UseFolderPackages()
+    {
+        ClearPackageSelection();
+        individualPackageSelection = false;
+        foreach (var package in folderPackages) ApplyPackage(package);
+        RefreshSelectedPackages();
+        UpdateButtons();
+    }
+
+    private void RefreshSelectedPackages()
+    {
+        var packages = new List<SoftwarePackage>();
+        if (paymentZip.Length > 0) packages.Add(new(UpdateComponents.Payment, paymentZip, paymentVersion));
+        if (fiscalZip.Length > 0) packages.Add(new(UpdateComponents.Fiscal, fiscalZip, fiscalVersion));
+        if (serverSuiteZip.Length > 0) packages.Add(new(UpdateComponents.ServerSuite, serverSuiteZip, serverSuiteVersion));
+        packages.AddRange(msiPackages.Select(pair => new SoftwarePackage(pair.Key, pair.Value.PayloadPath, pair.Value.ProductVersion)));
+        selectedPackagesList.Text = packages.Count == 0 ? "Keine Pakete ausgewählt." :
+            string.Join(Environment.NewLine, packages.OrderBy(package => package.Component).Select(package =>
+                $"{HostUpdateState.Label(package.Component)} · {package.Version} · {Path.GetFileName(package.Path)}"));
+        selectedPackagesList.AccessibleDescription = individualPackageSelection ? "Einzeln ausgewählte Pakete" : "Pakete aus dem Softwareordner";
+    }
+
     private async Task LoadSoftwarePackagesAsync()
     {
         if (busy || selfUpdating || loadingPackages || string.IsNullOrWhiteSpace(softwarePath.Text)) return;
@@ -128,12 +179,11 @@ public sealed partial class MainForm
             string folder = softwarePath.Text.Trim();
             SoftwareCatalogResult catalog = await Task.Run(() => packageCatalog.ReadAsync(folder, null, ct.Token), ct.Token);
             ct.Token.ThrowIfCancellationRequested();
-            paymentZip = fiscalZip = serverSuiteZip = paymentVersion = fiscalVersion = serverSuiteVersion = "";
-            lblPayment.Text = "Payment Target: –"; lblFiscal.Text = "Fiscal Target: –"; lblServerSuite.Text = "Server Suite Target: –";
-            msiPackages.Clear();
-            foreach (var (component, controls) in msiControls) controls.Label.Text = component.ToString().ToUpperInvariant() + " Target: –";
-            foreach (SoftwarePackage package in catalog.Packages) ApplyPackage(package);
-            packageStatus.Text = $"{catalog.Packages.Length} Komponenten gefunden · Lokale Paketablage mit Updates starten" + (catalog.Warnings.Length == 0 ? "." : $" · {catalog.Warnings.Length} Pakete nicht lesbar (Details im Protokoll).");
+            folderPackages = catalog.Packages;
+            if (!individualPackageSelection) UseFolderPackages();
+            packageStatus.Text = $"{catalog.Packages.Length} Komponenten gefunden · " +
+                (individualPackageSelection ? "Einzelauswahl hat Vorrang" : "Lokale Paketablage mit Updates starten") +
+                (catalog.Warnings.Length == 0 ? "." : $" · {catalog.Warnings.Length} Pakete nicht lesbar (Details im Protokoll).");
             foreach (string warning in catalog.Warnings) Log("SYSTEM", "PAKETE: " + warning);
         }
         catch (OperationCanceledException) { packageStatus.Text = "Paketsuche abgebrochen."; }

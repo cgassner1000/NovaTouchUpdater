@@ -17,7 +17,7 @@ internal static partial class Program
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
             if (args.Contains("--updates")) { UpdateRetryTests(); return 0; }
             if (args.Contains("--staging")) { PackageStagingTests(); return 0; }
-            if (args.Contains("--local")) { Complete(PackageCatalogTests()); LocalExecutionTests(); return 0; }
+            if (args.Contains("--local")) { Complete(PackageCatalogTests()); PackageSelectionTests(); LocalExecutionTests(); return 0; }
             if (args.Contains("--columns")) { ColumnSizingTests(); return 0; }
             if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
             if (args.Contains("--startup")) { StartupChecksTests(); return 0; }
@@ -35,6 +35,7 @@ internal static partial class Program
                 ScanPipelineTests();
                 UpdateRetryTests();
                 Complete(PackageCatalogTests());
+                PackageSelectionTests();
                 LocalExecutionTests();
                 PackageStagingTests();
                 ColumnSizingTests();

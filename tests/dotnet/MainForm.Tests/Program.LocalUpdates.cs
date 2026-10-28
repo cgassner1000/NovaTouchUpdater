@@ -45,6 +45,45 @@ internal static partial class Program
         File.WriteAllText(Path.Combine(TestWorkspace.Artifacts, "local-msi-fixtures.json"), JsonSerializer.Serialize(msiPaths));
     }
 
+    private static void PackageSelectionTests()
+    {
+        string root = Path.Combine(TestWorkspace.Artifacts, "package-selection-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        foreach (string name in new[] { "nt.payment_2.0.0.zip", "nt.fiscal_2.0.0.zip", "nt.server.suite-2026.4.9792.zip" })
+            File.WriteAllText(Path.Combine(root, name), "fixture only");
+        MsiFixture.Create(Path.Combine(root, "control.msi"), "NovaTouch Control", "2.0.0", null);
+        using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
+        Populate(form);
+        Field<TextBox>(form, "softwarePath").Text = root;
+        Complete((Task)Call(form, "LoadSoftwarePackagesAsync")!);
+        var list = Field<Label>(form, "selectedPackagesList");
+        var folderButton = Field<Button>(form, "useFolderPackages");
+        UpdateComponents folderComponents = UpdateComponents.ZipServices | UpdateComponents.Ntc;
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Split(Environment.NewLine).Length == 4,
+            "folder discovery selects and lists all four fixture packages");
+        string individual = Path.Combine(root, "nt.payment_1.0.0.zip");
+        Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Payment, individual, "1.0.0"));
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.Payment && list.Text.Contains("1.0.0") &&
+            !list.Text.Contains("Fiscal") && Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages").Count == 0 && folderButton.Enabled,
+            "the first individual package clears every automatically selected service and MSI and updates the list");
+        Complete((Task)Call(form, "LoadSoftwarePackagesAsync")!);
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.Payment && Field<string>(form, "paymentZip") == individual,
+            "rereading the folder cannot replace a manual package even with a newer automatic version");
+        var request = (WorkerRequest)Call(form, "Request", "update", Targets(form)[0], (UpdateComponents)Call(form, "SelectedUpdateComponents")!)!;
+        Assert(request.PaymentZip == individual && request.FiscalZip.Length == 0 && request.ServerSuiteZip.Length == 0 && request.MsiPackages.Length == 0,
+            "the actual update request contains only the individual selection");
+        Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Fiscal, Path.Combine(root, "nt.fiscal_2.0.0.zip"), "2.0.0"));
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == (UpdateComponents.Payment | UpdateComponents.Fiscal) &&
+            list.Text.Split(Environment.NewLine).Length == 2, "further individual choices add components without restoring folder-only packages");
+        typeof(Button).GetMethod("OnClick", Private)!.Invoke(folderButton, [EventArgs.Empty]);
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Split(Environment.NewLine).Length == 4 && !folderButton.Enabled,
+            "the user can restore the complete folder selection explicitly");
+        var msi = Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages")[UpdateComponents.Ntc];
+        Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Ntc, msi.PayloadPath, msi.ProductVersion, msi));
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.Ntc && list.Text.Contains("control.msi") && !list.Text.Contains("nt.payment"),
+            "an individually selected MSI also overrides all automatic packages");
+    }
+
     private static void LocalExecutionTests()
     {
         var worker = new LocalRunner();
