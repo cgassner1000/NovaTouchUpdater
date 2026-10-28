@@ -35,9 +35,56 @@ public sealed partial class MainForm
 
     private async Task ExecuteHostUpdateAsync(HostState host, CancellationToken ct, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
+        if (host.IsLocal && !await PublishLocalMsiPackagesAsync(host, ct)) return;
         if (host.IsLocal && !await StageLocalUpdatePackagesAsync(host, ct)) return;
         await UpdateHostAsync(host, ct, delay);
     }
+
+    private async Task<bool> PublishLocalMsiPackagesAsync(HostState host, CancellationToken ct)
+    {
+        if (!NeedsDatabasePublication(host)) return true;
+        string selection = MsiDatabaseSelection();
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            Mark(host, h => { h.Result = "Läuft"; h.Phase = "MSI-Pakete werden in zzzSoftware bereitgestellt"; });
+            // Publish every selected MSI, including products absent on this computer.
+            WorkerRequest request = Request("publish-msi-packages", host, UpdateComponents.Msi);
+            WorkerResult result = await runner.RunAsync(request, ev =>
+            {
+                Log(host.Host, ev.Phase + ": " + ev.Message);
+                Mark(host, h => h.ApplyProgress(ev));
+            }, ct);
+            if (!result.Success) throw new IOException(FriendlyError(result));
+            if (host.Updates is not null)
+            {
+                host.Updates.DatabasePackagesPublished = true;
+                host.Updates.DatabasePackageSelection = selection;
+            }
+            Log(host.Host, "ZZZSOFTWARE => OK " + result.Message);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            Mark(host, h => { h.Result = "Abgebrochen"; h.Phase = "zzzSoftware-Upload abgebrochen"; });
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Mark(host, h => { h.Result = "Fehler"; h.UpdateFailed = true; h.Phase = "zzzSoftware-Upload fehlgeschlagen"; h.Error = ex.Message; });
+            Log(host.Host, "ZZZSOFTWARE => FEHLER " + ex.Message);
+            return false;
+        }
+    }
+
+    private bool NeedsDatabasePublication(HostState host) => msiPackages.Count > 0 &&
+        (host.Updates?.DatabasePackagesPublished != true || host.Updates.DatabasePackageSelection != MsiDatabaseSelection());
+
+    private string MsiDatabaseSelection() => System.Text.Json.JsonSerializer.Serialize(msiPackages.OrderBy(p => p.Key).Select(p => new
+    {
+        p.Value.Kind, p.Value.PayloadPath, p.Value.RelativeMsiPath, p.Value.ProductName,
+        p.Value.ProductVersion, p.Value.ProductCode, p.Value.Sha256
+    }));
 
     private async Task<bool> StageLocalUpdatePackagesAsync(HostState host, CancellationToken ct)
     {

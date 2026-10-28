@@ -82,3 +82,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\MsiUpda
 ```
 
 `MsiUpdates.Tests.ps1` prüft fehlende, gleiche, neuere und ältere Produkte, MSI-Versionsvergleiche, lokale und Remote-Ausführung, MSI in ZIP, externe CABs, erneute Metadatenprüfung, Installerfehler, Neustartbedarf und temporäre Bereinigung. `msiexec` wird dabei niemals gestartet: Der Prozessaufruf ist simuliert. `ServerSuiteUpdate.Tests.ps1` prüft zusätzlich den vollständigen lokalen ZIP-Dienstablauf und bricht ab, falls dabei ein WinRM-Aufruf versucht wird. Echte Programme oder Dienste werden nicht verändert.
+
+`SoftwareDatabase.Tests.ps1` verwendet dieselben MSI-Testdateien und einen InterSystems-Provider als reine Simulation im Speicher. Geprüft werden mehrere und doppelte XML-Verbindungen, SQLDSN, verschlüsselte Zugangsdaten, NTC ohne POS, alle Anwendungs-Namespaces, Binärdaten aus MSI und ZIP, Metadaten, Quellenänderungen, Transaktionen mit Rollback, Fehler ohne Zugangsdaten im Protokoll und temporäre Bereinigung. Es werden keine Datenbankverbindungen geöffnet. `MainForm.Tests --staging` prüft dazu die Reihenfolge vor Kopieren/Installieren, alle ausgewählten MSIs unabhängig vom lokalen Installationsbestand, Abbruch bei Uploadfehlern und die Wiederholung.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SoftwareDatabase.Tests.ps1
+```

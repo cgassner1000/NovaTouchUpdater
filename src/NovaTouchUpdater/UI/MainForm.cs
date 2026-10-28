@@ -1341,7 +1341,8 @@ public sealed partial class MainForm : Form
             paymentHash = (needed & UpdateComponents.Payment) != 0 ? await WorkerRunner.Sha256Async(paymentZip, ct) : "";
             fiscalHash = (needed & UpdateComponents.Fiscal) != 0 ? await WorkerRunner.Sha256Async(fiscalZip, ct) : "";
             serverSuiteHash = (needed & UpdateComponents.ServerSuite) != 0 ? await WorkerRunner.Sha256Async(serverSuiteZip, ct) : "";
-            await HashMsiPackagesAsync(needed, ct);
+            await HashMsiPackagesAsync(needed | (selected.Any(h => h.IsLocal && NeedsDatabasePublication(h))
+                ? UpdateComponents.Msi : UpdateComponents.None), ct);
             Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; LOKAL: {(activeSkipLocalPackageCopy ? "direkte Quellen" : activeLocalInstallPath)}; Remote-Zielpfad: {activeRemoteInstallPath}; Remote-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
             ResetProgress(selected.Length);
             var ready = selected;
@@ -1434,9 +1435,11 @@ public sealed partial class MainForm : Form
                 else
                 {
                     h.Error = "";
-                    h.Result = state.AllSkipped ? "Übersprungen" : state.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
-                    h.Phase = state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
-                    if (state.Changed) h.SetProgress(100);
+                    bool published = h.IsLocal && state.DatabasePackagesPublished;
+                    h.Result = published || state.Changed ? "Erfolgreich" : state.AllSkipped ? "Übersprungen" : "Bereits aktuell / übersprungen";
+                    h.Phase = state.AllSkipped ? (published ? "zzzSoftware bereitgestellt – keine lokale Installation erforderlich" : "Keine ausgewählten Komponenten installiert – übersprungen")
+                        : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : published ? "Verifiziert – zzzSoftware bereitgestellt" : "Verifiziert";
+                    if (state.Changed || published) h.SetProgress(100);
                 }
             });
         }
