@@ -35,6 +35,13 @@ internal sealed class HostUpdateState(UpdateComponents components)
 
     internal bool WasAttempted(UpdateComponents component) => (Attempted & component) != 0;
     internal void BeginComponent(UpdateComponents component) => Attempted |= component;
+    internal void RestrictTo(UpdateComponents allowed)
+    {
+        Pending &= allowed;
+        Attempted &= allowed;
+        foreach (UpdateComponents component in errors.Keys.Where(component => (component & allowed) == 0).ToArray())
+            errors.Remove(component);
+    }
     internal string ErrorText => string.Join(" | ", Each(Pending).Where(errors.ContainsKey).Select(c => Label(c) + ": " + errors[c]));
 
     internal void Complete(UpdateComponents component, WorkerResult result)

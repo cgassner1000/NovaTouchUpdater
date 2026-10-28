@@ -265,12 +265,12 @@ public sealed partial class MainForm
         if ((needed & UpdateComponents.ZipServices) != 0)
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Zielordner und zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen, einschließlich portable_python. Deaktivierte Dienste bleiben deaktiviert.");
-        if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
+        if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
         if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
             ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
             : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +
             "\nNur installierte Komponenten aktualisieren. Direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
-        if (selected.Any(h => !h.IsLocal)) text.AppendLine("Remote-Zielpfad: " + RemoteDestinationPath() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv"));
+        if (selected.Any(h => !h.IsLocal)) text.AppendLine("REMOTE: ausschließlich Payment, Fiscal und Server Suite. POS, NTC, SOL und NTV werden remote nicht installiert.\nRemote-Zielpfad: " + RemoteDestinationPath() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv"));
         return text.ToString();
     }
 }

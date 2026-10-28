@@ -65,8 +65,9 @@ internal static partial class Program
             remote[0].Updates = new(components);
             worker.Requests.Clear();
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", remote[0], CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.All(r => r.Action == "update" && !r.LocalExecution && r.SkipZipTransfer && r.ForceUpdate),
-                "remote updates perform no bulk staging and keep component-specific requests, Do not transfer and Force unchanged");
+            Assert(worker.Requests.Count == 1 && worker.Requests.All(r => r.Action == "update" && !r.LocalExecution && r.SkipZipTransfer && r.ForceUpdate &&
+                r.PaymentZip == payment && r.MsiPackage is null && r.MsiPackages.Length == 0),
+                "remote updates perform only the selected payment update, exclude every MSI and retain Do not transfer and Force");
 
             Field<CheckBox>(form, "chkSkipLocalPackageCopy").Checked = true;
             Call(form, "CaptureCredentials");

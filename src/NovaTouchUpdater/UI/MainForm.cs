@@ -1198,6 +1198,7 @@ public sealed partial class MainForm : Form
 
     private WorkerRequest Request(string action, HostState host, UpdateComponents components = UpdateComponents.All)
     {
+        components &= AllowedUpdateComponents(host);
         var request = new WorkerRequest
         {
         Action = action, Host = host.Host,
@@ -1227,8 +1228,10 @@ public sealed partial class MainForm : Form
         (string.IsNullOrWhiteSpace(serverSuiteZip) ? UpdateComponents.None : UpdateComponents.ServerSuite) |
         msiPackages.Keys.Aggregate(UpdateComponents.None, (mask, component) => mask | component);
 
+    private static UpdateComponents AllowedUpdateComponents(HostState host) => host.IsLocal ? UpdateComponents.All : UpdateComponents.ZipServices;
+
     private UpdateComponents ComponentsForUpdate(HostState host, bool onlyFailed) =>
-        onlyFailed && host.Updates is { Pending: not UpdateComponents.None } state ? state.Pending : SelectedUpdateComponents();
+        (onlyFailed && host.Updates is { Pending: not UpdateComponents.None } state ? state.Pending : SelectedUpdateComponents()) & AllowedUpdateComponents(host);
 
     private bool ValidateCredentials()
     {
@@ -1302,12 +1305,23 @@ public sealed partial class MainForm : Form
 
     private async Task RunUpdatesAsync(bool onlyFailed)
     {
-        if (busy || selfUpdating || SelectedHosts().Length == 0 || !ValidateCredentials()) return;
+        if (busy || selfUpdating || SelectedHosts().Length == 0) return;
         if (SelectedUpdateComponents() == UpdateComponents.None)
         {
             MessageBox.Show(this, "Mindestens ein Update-Paket auswählen oder den Softwareordner einlesen."); return;
         }
         var selected = UpdateTargets(onlyFailed);
+        if (selected.Length > 0)
+        {
+            selected = selected.Where(host => ComponentsForUpdate(host, onlyFailed) != UpdateComponents.None).ToArray();
+            if (selected.Length == 0)
+            {
+                MessageBox.Show(this, "Remote sind ausschließlich Payment, Fiscal und Server Suite erlaubt. POS, NTC, SOL und NTV können nur lokal aktualisiert werden.",
+                    "Keine passenden Update-Pakete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+        }
+        if (selected.Any(host => !host.IsLocal) && !ValidateCredentials()) return;
         if (!IsUpdatePathValid(selected))
         {
             MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad für die Update-Dateien eingeben, z. B. C:\\install\\Novacom.",
@@ -1335,6 +1349,8 @@ public sealed partial class MainForm : Form
             UpdateComponents components = ComponentsForUpdate(host, onlyFailed);
             if (!onlyFailed || host.Updates is null || host.Updates.Pending == UpdateComponents.None)
                 Mark(host, h => h.Updates = new HostUpdateState(components));
+            else
+                Mark(host, h => h.Updates!.RestrictTo(AllowedUpdateComponents(h)));
         }
         await InBatchAsync(selected, async ct =>
         {
@@ -1377,6 +1393,7 @@ public sealed partial class MainForm : Form
     private async Task UpdateHostAsync(HostState host, CancellationToken token, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         HostUpdateState state = host.Updates ?? throw new InvalidOperationException("Update-Komponenten wurden nicht vorbereitet.");
+        state.RestrictTo(AllowedUpdateComponents(host));
         delay ??= (duration, ct) => Task.Delay(duration, ct);
         try
         {

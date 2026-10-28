@@ -25,7 +25,7 @@ internal static partial class Program
         File.WriteAllText(Path.Combine(msiFolder, "data.cab"), "fixture only, never installed");
         foreach (string file in new[] { "nt.payment_1.0.0.zip", "nt.payment_2.0.0.zip", "nt.fiscal_2.0.0.zip", "nt.server.suite-2026.4.9792.zip" })
             using (var archive = ZipFile.Open(Path.Combine(file.Contains("1.0.0") ? root : zipFolder, file), ZipArchiveMode.Create)) archive.CreateEntry("fixture.txt");
-        using (var archive = ZipFile.Open(Path.Combine(root, "arbitrary-control-name.zip"), ZipArchiveMode.Create))
+        using (var archive = ZipFile.Open(Path.Combine(msiFolder, "arbitrary-control-name.zip"), ZipArchiveMode.Create))
             archive.CreateEntryFromFile(msiPaths["ntc"], "installer/Control.msi");
         string brokenMsi = Path.Combine(msiFolder, "broken.msi");
         File.WriteAllText(brokenMsi, "not an MSI");
@@ -36,7 +36,7 @@ internal static partial class Program
             "recursive discovery finds all seven components across multiple folder levels and selects a newer nested ZIP over the root version");
         Assert(result.Warnings[0].StartsWith(Path.GetRelativePath(root, brokenMsi) + ": ", StringComparison.OrdinalIgnoreCase),
             "an unreadable nested package is reported with its relative folder path while discovery continues");
-        SoftwarePackage[] zipped = await catalog.ReadFileAsync(Path.Combine(root, "arbitrary-control-name.zip"), CancellationToken.None);
+        SoftwarePackage[] zipped = await catalog.ReadFileAsync(Path.Combine(msiFolder, "arbitrary-control-name.zip"), CancellationToken.None);
         Assert(zipped is [{ Component: UpdateComponents.Ntc, Msi.RelativeMsiPath: "installer/Control.msi" }],
             "MSI packages inside arbitrarily named ZIPs are identified by product metadata");
         Assert(result.Packages.Single(p => p.Component == UpdateComponents.Ntv).Msi!.CompanionFiles is [{ RelativePath: "data.cab" } cabinet] &&
@@ -156,6 +156,57 @@ internal static partial class Program
             "combined mode uses the configured path on each respective local or remote machine");
         mode.SelectedIndex = 2;
         Assert(Targets(form).Length == 3 && Targets(form).All(h => !h.IsLocal), "remote-only execution excludes LOCALHOST from all remote requests");
+    }
+
+    private static void RemotePackageRestrictionTests()
+    {
+        var worker = new StagingRunner();
+        using var form = new MainForm(preview: true, worker, new FakeRunner());
+        HostState remote = Populate(form)[0];
+        Field<ComboBox>(form, "executionMode").SelectedIndex = (int)UpdateExecutionMode.LocalAndRemote;
+        HostState local = Targets(form).Single(h => h.IsLocal);
+        local.Scanned = true;
+        foreach (string kind in new[] { "payment", "fiscal", "serverSuite" })
+        {
+            SetField(form, kind + "Zip", kind + ".zip");
+            SetField(form, kind + "Version", "2.0.0");
+        }
+        var packages = Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages");
+        foreach (UpdateComponents component in HostUpdateState.Each(UpdateComponents.Msi))
+        {
+            packages[component] = new() { Kind = component.ToString().ToLowerInvariant(), ProductVersion = "2.0.0", PayloadPath = component + ".msi" };
+            var localRequest = (WorkerRequest)Call(form, "Request", "update", local, component)!;
+            var remoteRequest = (WorkerRequest)Call(form, "Request", "update", remote, component)!;
+            Assert(localRequest.MsiPackage == packages[component] && remoteRequest.MsiPackage is null && remoteRequest.MsiPackages.Length == 0,
+                component + " is permitted locally and stripped from remote update requests");
+        }
+        Assert((UpdateComponents)Call(form, "ComponentsForUpdate", remote, false)! == UpdateComponents.ZipServices &&
+            (UpdateComponents)Call(form, "ComponentsForUpdate", local, false)! == UpdateComponents.All,
+            "combined execution plans all seven components locally and only the three service ZIPs remotely");
+        var preflight = (WorkerRequest)Call(form, "Request", "check-upload-directory", remote, UpdateComponents.All)!;
+        Assert(preflight.MsiPackage is null && preflight.MsiPackages.Length == 0 && preflight.PaymentZip.Length > 0 && preflight.FiscalZip.Length > 0 && preflight.ServerSuiteZip.Length > 0,
+            "remote upload preparation excludes MSIs and retains all allowed service packages");
+        string confirmation = (string)Call(form, "UpdateConfirmation", new[] { local, remote }, UpdateComponents.All, false)!;
+        Assert(confirmation.Contains("NovaTouch Control 2.0.0: 1 Host(s)") && confirmation.Contains("nt.payment 2.0.0: 2 Host(s)") && confirmation.Contains("MSIs nur LOKAL"),
+            "the confirmation counts MSI targets locally and clearly states the remote restriction");
+        remote.Updates = new(UpdateComponents.All);
+        Update(form, remote);
+        Assert(worker.Requests.Count == 3 && worker.Requests.All(r => !r.LocalExecution && r.MsiPackage is null && r.MsiPackages.Length == 0) && remote.Updates.Pending == UpdateComponents.None,
+            "even an existing mixed remote update state executes only Payment, Fiscal and Server Suite");
+        worker.Requests.Clear();
+        remote.Updates = new(UpdateComponents.Msi);
+        remote.Updates.BeginComponent(UpdateComponents.Ntc);
+        remote.Updates.Fail(UpdateComponents.Ntc, "Old remote MSI failure");
+        remote.UpdateFailed = true;
+        Assert((UpdateComponents)Call(form, "ComponentsForUpdate", remote, true)! == UpdateComponents.None,
+            "a stale MSI-only remote retry requires no MSI package source");
+        Update(form, remote);
+        Assert(worker.Requests.IsEmpty && remote.Updates.Pending == UpdateComponents.None && remote.Updates.ErrorText == "" && !remote.CanRetryUpdate,
+            "stale remote MSI failures are removed without probe, upload, installation or repeated attempts");
+        local.Updates = new(UpdateComponents.Msi);
+        Update(form, local);
+        Assert(worker.Requests.Count == 4 && worker.Requests.All(r => r.LocalExecution && r.MsiPackage is not null),
+            "all four MSI products remain available for local updates");
     }
 
     private sealed class LocalRunner : IWorkerRunner

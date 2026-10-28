@@ -281,6 +281,11 @@ try {
     $req = $requestLine | ConvertFrom-Json
     $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
     if ($req.Action -eq 'publish-msi-packages') { throw 'Der zzzSoftware-Upload ist deaktiviert.' }
+    if (-not $localExecution -and $req.Action -in @('update','check-upload-directory','clean-upload-directory') -and
+        (($null -ne $req.PSObject.Properties['MsiPackage'] -and $null -ne $req.MsiPackage) -or
+         ($null -ne $req.PSObject.Properties['MsiPackages'] -and $null -ne $req.MsiPackages -and @($req.MsiPackages).Count -gt 0))) {
+        throw 'MSI-Updates (POS, NTC, SOL, NTV) sind ausschließlich lokal erlaubt. Remote sind nur Payment, Fiscal und Server Suite zugelassen.'
+    }
     if ($req.Action -eq 'stage-packages' -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
     $requestedPath = if ($null -ne $req.PSObject.Properties['RemoteInstallPath']) { [string]$req.RemoteInstallPath } else { '' }
     $skipLocalPackageCopy = $localExecution -and ([string]::IsNullOrWhiteSpace($requestedPath) -or
