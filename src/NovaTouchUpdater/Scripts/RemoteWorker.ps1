@@ -282,7 +282,12 @@ try {
     $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
     if ($req.Action -in @('stage-packages','publish-msi-packages') -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
     if ($req.Action -eq 'publish-msi-packages') {
+<<<<<<< HEAD
         PublishSelectedSoftwarePackages -Packages @($req.MsiPackages)
+=======
+        $software = ReadSoftwareInventory
+        PublishSelectedSoftwarePackages -Packages @($req.MsiPackages) -Programs @($software.InstalledPrograms)
+>>>>>>> 6ac4f29e551324452a0ab63e15ea7189e805adec
         exit 0
     }
     $requestedPath = if ($null -ne $req.PSObject.Properties['RemoteInstallPath']) { [string]$req.RemoteInstallPath } else { '' }
