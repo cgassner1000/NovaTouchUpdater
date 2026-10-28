@@ -8,6 +8,10 @@ $msis = Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json
 $fixture = [IO.Path]::GetFullPath((Join-Path $TestArtifactsRoot ('msi-worker-' + [guid]::NewGuid().ToString('N'))))
 Assert ($fixture.StartsWith([IO.Path]::GetFullPath($TestArtifactsRoot).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) 'MSI test writes stay within the workspace test-artifact directory'
 [void][IO.Directory]::CreateDirectory($fixture)
+$copyTestTemp = Join-Path $fixture 'temporary'
+[void][IO.Directory]::CreateDirectory($copyTestTemp)
+$copyTestOriginalTmp = $env:TMP; $copyTestOriginalTemp = $env:TEMP
+$env:TMP=$copyTestTemp; $env:TEMP=$copyTestTemp
 . ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $TestScriptsRoot 'MsiUpdates.ps1'))))
 function FixtureProductCode([string]$path) {
     $installer = New-Object -ComObject WindowsInstaller.Installer
@@ -91,26 +95,32 @@ function Start-Process {
         Assert (Test-Path -LiteralPath $cabArgument) ('an external MSI cabinet is present beside the staged MSI: ' + $cabArgument)
     }
     $global:installerCalls++
+    if ($global:directSource -and [IO.Path]::GetExtension([string]$package.PayloadPath) -ieq '.msi') {
+        $actualMsi = [regex]::Match($ArgumentList, '^/i "([^"]+)"').Groups[1].Value
+        Assert ($actualMsi -ieq [string]$package.PayloadPath) 'direct local MSI installation uses the original file without staging another MSI copy'
+    }
     if ($global:installerExit -in @(0,3010,1641)) { $global:installedVersion = '2.0.0' }
     [pscustomobject]@{ ExitCode=$global:installerExit }
 }
 
-function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, [bool]$expectedSuccess, [bool]$expectedInstall, [bool]$preparedFailure=$false, [string]$action='update') {
+function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, [bool]$expectedSuccess, [bool]$expectedInstall, [bool]$preparedFailure=$false, [string]$action='update', [bool]$direct=$false, [bool]$emptyPath=$false, [string]$expectedError='') {
     $script:localMode=$local
     $global:fixtureKind=$package.Kind; $global:fixtureName=$package.ProductName; $global:fixtureProductCode=$package.ProductCode
     $global:expectCab=@($package.CompanionFiles).Count -gt 0
     $global:installedVersion=$version; $global:installerExit=$exitCode
     $global:installerCalls=0; $global:copies=0; $global:sessions=0; $global:closed=0; $global:adminChecks=0
+    $global:directSource=$local -and ($direct -or $emptyPath)
     $base = Join-Path $fixture $name
     $global:currentBase=$base
     $request = @{ Action=$action; Host=$(if ($local) { 'LOCALHOST' } else { 'fixture.invalid' }); LocalExecution=$local; Username=''; Password='';
-        UseSsl=$false; ForceUpdate=$true; RetryUpdate=$true; SkipZipTransfer=$false; PaymentZip=''; FiscalZip=''; ServerSuiteZip=''; RemoteInstallPath=$base; MsiPackage=$package; MsiPackages=@($package); CheckUpdateUpload=$true }
+        UseSsl=$false; ForceUpdate=$true; RetryUpdate=$true; SkipZipTransfer=$false; SkipLocalPackageCopy=$direct; PaymentZip=''; FiscalZip=''; ServerSuiteZip=''; RemoteInstallPath=$(if ($emptyPath) { '' } else { $base }); MsiPackage=$package; MsiPackages=@($package); CheckUpdateUpload=$true }
     $script:requestJson = $request | ConvertTo-Json -Depth 8 -Compress
     $original = [Console]::Out; $writer = [IO.StringWriter]::new()
     try { [Console]::SetOut($writer); & $worker } finally { [Console]::SetOut($original) }
     $messages = @($writer.ToString() -split '\r?\n' | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
     $result = @($messages | Where-Object Event -eq 'result')[-1]
     Assert ($result.Success -eq $expectedSuccess) ("$name reports expected outcome: " + ($result | ConvertTo-Json -Depth 4 -Compress))
+    if ($expectedError) { Assert ($result.Error -like ('*' + $expectedError + '*')) "$name reports the source validation error" }
     Assert ($global:installerCalls -eq [int]$expectedInstall) "$name starts an installer only for an older installed product"
     if (-not $expectedInstall -and -not $preparedFailure) { Assert ($global:copies -eq 0 -and -not (Test-Path -LiteralPath $base)) "$name performs no transfer or extraction" }
     if ($preparedFailure) { Assert ($result.Error -like '*MSI-ProductName*' -and $global:copies -gt 0) "$name rejects inconsistent client MSI metadata before installation" }
@@ -119,6 +129,11 @@ function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, 
     else { Assert ($global:sessions -eq 1 -and $global:closed -eq 1) "$name closes the simulated remote session" }
     if ($expectedSuccess -and $expectedInstall) { Assert ($result.RebootRequired -eq ($exitCode -in @(3010,1641)) -and @($result.InstalledPrograms | Where-Object { $_.Kind -eq $package.Kind -and $_.Version -eq '2.0.0' }).Count -eq 1) "$name verifies the installed MSI version and preserves reboot-required status" }
     if (Test-Path -LiteralPath $base) { Assert (@(Get-ChildItem -LiteralPath $base -Directory -Filter '.novatouch-updater-msi-*').Count -eq 0) "$name removes its temporary MSI staging directory" }
+    if ($global:directSource) {
+        Assert ($global:copies -eq 0 -and -not (Test-Path -LiteralPath $base)) "$name creates no destination and makes no extra payload copy"
+        Assert (Test-Path -LiteralPath $package.PayloadPath) "$name retains the original package"
+        Assert (@(Get-ChildItem -LiteralPath $copyTestTemp -Directory -Filter '.novatouch-updater-msi-*').Count -eq 0) "$name cleans its temporary extraction folder"
+    }
 }
 try {
     RunCase 'local-absent' '' $true 0 $true $false
@@ -131,12 +146,19 @@ try {
     RunCase 'remote-upgrade' '1.0.0' $false 0 $true $true
     RunCase 'remote-current-force' '2.0.0' $false 0 $true $false
     RunCase 'remote-unknown-preflight' 'unknown' $false 0 $true $false $false 'check-upload-directory'
+    RunCase -name 'local-direct-msi' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
+    RunCase -name 'local-empty-destination' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -emptyPath $true
+    RunCase -name 'remote-ignores-local-option' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
+    $verifiedHash=$package.Sha256; $package.Sha256='0' * 64
+    RunCase -name 'local-direct-hash-failure' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $false -expectedInstall $false -direct $true -expectedError 'SHA256'
+    $package.Sha256=$verifiedHash
 
     $package.PayloadPath = Join-Path ([IO.Path]::GetDirectoryName([string]$msis.ntc)) 'arbitrary-control-name.zip'
     $package.RelativeMsiPath = 'installer/Control.msi'
     $package.Sha256 = (Get-FileHash -LiteralPath $package.PayloadPath -Algorithm SHA256).Hash
     RunCase 'local-msi-in-zip' '1.0.0' $true 0 $true $true
     RunCase 'remote-msi-in-zip' '1.0.0' $false 0 $true $true
+    RunCase -name 'local-direct-msi-zip' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
 
     $package.PayloadPath = [string]$msis.pos; $package.RelativeMsiPath = 'pos.msi'
     $package.Sha256 = (Get-FileHash -LiteralPath $package.PayloadPath -Algorithm SHA256).Hash
@@ -149,6 +171,7 @@ try {
     RunCase 'local-external-cabinet' '1.0.0' $true 0 $true $true
     Assert ($global:copies -eq 2) 'both MSI and external cabinet are transferred and verified'
     RunCase 'remote-external-cabinet' '1.0.0' $false 0 $true $true
+    RunCase -name 'local-direct-external-cabinet' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
 
     $serviceMsi = Join-Path $fixture 'control-with-services.msi'
     [IO.File]::Copy([string]$msis.ntc, $serviceMsi)
@@ -177,6 +200,7 @@ try {
     Assert ($global:serviceEvents.Contains('stop:NTUFixtureRunning') -and $global:serviceEvents.Contains('start:NTUFixtureRunning') -and
         $global:fixtureServices.NTUFixtureDisabled.StartType -eq 'Disabled' -and $global:fixtureServices.NTUFixtureDisabled.Status -eq 'Stopped') 'MSI service restarts preserve disabled services'
 } finally {
+    $env:TMP=$copyTestOriginalTmp; $env:TEMP=$copyTestOriginalTemp
     $checked = [IO.Path]::GetFullPath($fixture)
     if ($checked.StartsWith([IO.Path]::GetFullPath($TestArtifactsRoot).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { Microsoft.PowerShell.Management\Remove-Item -LiteralPath $checked -Recurse -Force }
 }

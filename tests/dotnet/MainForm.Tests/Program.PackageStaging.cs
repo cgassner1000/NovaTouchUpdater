@@ -64,6 +64,24 @@ internal static partial class Program
             Assert(worker.Requests.All(r => r.Action == "update" && !r.LocalExecution && r.SkipZipTransfer && r.ForceUpdate),
                 "remote updates perform no bulk staging and keep component-specific requests, Do not transfer and Force unchanged");
 
+            Field<CheckBox>(form, "chkSkipLocalPackageCopy").Checked = true;
+            Call(form, "CaptureCredentials");
+            worker.Requests.Clear(); worker.Installed = true; worker.FailStaging = true;
+            local.Updates = new(components);
+            Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
+            Assert(worker.Requests.Count == 4 && worker.Requests.All(r => r.Action == "update" && r.LocalExecution && r.SkipLocalPackageCopy && !r.SkipZipTransfer) &&
+                worker.Requests.Any(r => r.PaymentZip == payment) && worker.Requests.Any(r => r.MsiPackage?.PayloadPath == ntc),
+                "direct local updates skip bulk copying and retain the original ZIP and MSI sources");
+            Field<CheckBox>(form, "chkSkipLocalPackageCopy").Checked = false;
+            Field<TextBox>(form, "txtRemotePath").Clear();
+            Call(form, "CaptureCredentials");
+            worker.Requests.Clear(); local.Updates = new(components);
+            Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
+            Assert(worker.Requests.Count == 4 && worker.Requests.All(r => r.SkipLocalPackageCopy && r.RemoteInstallPath == ""),
+                "an empty local destination also skips all bulk copying");
+            Field<TextBox>(form, "txtRemotePath").Text = Path.Combine(root, "target");
+            Call(form, "CaptureCredentials");
+
             worker.Requests.Clear(); worker.FailStaging = true;
             local.Updates = new(components);
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);

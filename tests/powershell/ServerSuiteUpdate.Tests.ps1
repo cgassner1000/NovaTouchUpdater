@@ -645,6 +645,55 @@ try {
         Assert (@($script:events | Where-Object { $_ -match '^(copy|stop|start):' }).Count -eq 0) 'Transfer progress must not cause installation or service operations'
         Passed ('verified transfer progress, reuse=' + $reuse)
     }
+
+    foreach ($emptyDestination in @($false,$true)) {
+        ResetCase ('direct-local-sources-' + $emptyDestination)
+        Component 'payment'; Component 'fiscal'; Service 'a' 'one'
+        Package
+        Package @{ 'component.exe'='1.2.3.4'; 'nested/updated.txt'='new' } 'payment'
+        Package @{ 'component.exe'='1.2.3.4'; 'nested/updated.txt'='new' } 'fiscal'
+        $script:request.LocalExecution=$true; $script:request.Host='LOCALHOST'
+        $script:request.SkipLocalPackageCopy=-not $emptyDestination
+        $unusedDestination=$script:request.RemoteInstallPath
+        if ($emptyDestination) { $script:request.RemoteInstallPath='' }
+        $temporary=FixturePath (Join-Path $script:case 'temporary')
+        [void][IO.Directory]::CreateDirectory($temporary)
+        $sourceTmp=$env:TMP; $sourceTemp=$env:TEMP
+        try {
+            $env:TMP=$temporary; $env:TEMP=$temporary
+            $result=RunWorker
+            Assert ($result.Changed -and $result.Services.Count -eq 3) 'Direct local use updates every selected installed ZIP component'
+            Assert (-not [IO.Directory]::Exists($unusedDestination)) 'Direct local use never creates the configured update-file destination'
+            Assert (@($script:events | Where-Object { $_ -like 'transfer:*' }).Count -eq 0) 'Direct local use makes no additional ZIP copy'
+            foreach ($kind in @('Payment','Fiscal','ServerSuite')) {
+                $path=[string]$script:request[$kind + 'Zip']
+                Assert ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq $script:request[$kind + 'Sha256']) 'Original ZIP sources remain unchanged'
+            }
+            Assert (@(Get-ChildItem -LiteralPath $temporary -Directory -Filter '.novatouch-updater-stage-*').Count -eq 0) 'Direct ZIP use removes only the temporary extraction stage'
+            Passed ('direct local ZIP sources, empty destination=' + $emptyDestination)
+        } finally { $env:TMP=$sourceTmp; $env:TEMP=$sourceTemp }
+    }
+    ResetCase 'direct-local-source-hash-failure'
+    Service 'a' 'one'; Package
+    $script:request.LocalExecution=$true; $script:request.SkipLocalPackageCopy=$true
+    $script:request.ServerSuiteSha256='0' * 64
+    $temporary=FixturePath (Join-Path $script:case 'temporary')
+    [void][IO.Directory]::CreateDirectory($temporary)
+    $sourceTmp=$env:TMP; $sourceTemp=$env:TEMP
+    try {
+        $env:TMP=$temporary; $env:TEMP=$temporary
+        $null=RunWorker $false 'SHA256'
+        Assert (@($script:events | Where-Object { $_ -match '^(transfer|stop|copy):' }).Count -eq 0) 'A changed local ZIP source fails before any copy or service stop'
+        Assert (-not [IO.Directory]::Exists($script:request.RemoteInstallPath)) 'A changed source never creates the unused destination'
+        Passed 'direct local ZIP hashes protect the original source before installation'
+    } finally { $env:TMP=$sourceTmp; $env:TEMP=$sourceTemp }
+
+    ResetCase 'remote-ignores-local-copy-option'
+    Service 'a' 'one'; Package
+    $script:request.SkipLocalPackageCopy=$true
+    $result=RunWorker
+    Assert ($result.Changed -and @($script:events | Where-Object { $_ -like 'transfer:*' }).Count -gt 0) 'The local copy switch cannot suppress remote transfers'
+    Passed 'remote ZIP uploads remain independent of the local copy switch'
 }
 finally {
     # The resolved absolute GUID path was checked at creation; remove only it.

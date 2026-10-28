@@ -5,6 +5,8 @@
   "EncryptedPassword": "",
   "UseSsl": false,
   "ScanOnStartup": true,
+  "SkipLocalPackageCopy": false,
+  "SkipZipTransfer": false,
   "HttpsPort": 5986,
   "ExecutionMode": "Remote",
   "SoftwarePath": "",

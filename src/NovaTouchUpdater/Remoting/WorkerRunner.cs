@@ -23,6 +23,7 @@ public sealed class WorkerRequest
     public bool RetryUpdate { get; set; }
     public string RemoteInstallPath { get; set; } = "C:\\install\\Novacom";
     public bool SkipZipTransfer { get; set; }
+    public bool SkipLocalPackageCopy { get; set; }
     public bool CheckUpdateUpload { get; set; }
     public string ExpectedDirectorySnapshot { get; set; } = "";
     public string PaymentZip { get; set; } = "";

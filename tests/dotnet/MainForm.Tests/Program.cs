@@ -16,7 +16,7 @@ internal static partial class Program
             if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
             if (args.Contains("--updates")) { UpdateRetryTests(); return 0; }
-            if (args.Contains("--staging")) { PackageStagingTests(); return 0; }
+            if (args.Contains("--staging")) { PackageCopyOptionsTests(); PackageStagingTests(); return 0; }
             if (args.Contains("--local")) { Complete(PackageCatalogTests()); PackageSelectionTests(); LocalExecutionTests(); return 0; }
             if (args.Contains("--columns")) { ColumnSizingTests(); return 0; }
             if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
@@ -40,6 +40,7 @@ internal static partial class Program
                 PackageSelectionTests();
                 LocalExecutionTests();
                 PackageStagingTests();
+                PackageCopyOptionsTests();
                 ColumnSizingTests();
             }
             LayoutTests();

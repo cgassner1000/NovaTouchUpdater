@@ -278,6 +278,17 @@ try {
     $req = $requestLine | ConvertFrom-Json
     $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
     if ($req.Action -eq 'stage-packages' -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
+    $requestedPath = if ($null -ne $req.PSObject.Properties['RemoteInstallPath']) { [string]$req.RemoteInstallPath } else { '' }
+    $skipLocalPackageCopy = $localExecution -and ([string]::IsNullOrWhiteSpace($requestedPath) -or
+        ($null -ne $req.PSObject.Properties['SkipLocalPackageCopy'] -and [bool]$req.SkipLocalPackageCopy))
+    $req | Add-Member -NotePropertyName SkipLocalPackageCopy -NotePropertyValue $skipLocalPackageCopy -Force
+    if (-not $localExecution -and [string]::IsNullOrWhiteSpace($requestedPath)) {
+        $req | Add-Member -NotePropertyName RemoteInstallPath -NotePropertyValue 'C:\install\Novacom' -Force
+    }
+    if ($req.Action -eq 'stage-packages' -and $skipLocalPackageCopy) {
+        Emit @{ Event='result'; Success=$true; Changed=$false; Message='Lokale Paketquellen werden direkt verwendet; keine zusätzliche Kopie.'; Services=@() }
+        exit 0
+    }
     $sessionOptions = if ($localExecution) { $null } else { New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 180000 }
     $sessionArgs = @{
         ComputerName = [string]$req.Host
@@ -456,13 +467,15 @@ try {
         }
         if ($localExecution) { AssertLocalUpdateAccess }
 
-        $skipZipTransfer = [bool]$req.SkipZipTransfer
-        if ($skipZipTransfer) {
+        $skipZipTransfer = -not $localExecution -and [bool]$req.SkipZipTransfer
+        if ($skipLocalPackageCopy) {
+            Progress 'Paketquelle prüfen' 'Lokale ZIP-Quellen werden direkt geprüft; keine zusätzliche Paketkopie'
+        } elseif ($skipZipTransfer) {
             Progress 'ZIP-Prüfung' 'Vorhandene ZIP-Dateien auf dem Host werden geprüft; Übertragung ist deaktiviert'
         } else {
             Progress 'Übertragung' 'ZIP-Dateien werden auf den Host übertragen und geprüft'
         }
-        $remotePath = [string]$req.RemoteInstallPath
+        $remotePath = if ($skipLocalPackageCopy) { [IO.Path]::GetTempPath() } else { [string]$req.RemoteInstallPath }
         if ([string]::IsNullOrWhiteSpace($remotePath)) { throw 'RemoteInstallPath wurde nicht übergeben.' }
 
         # Verzeichnis im Dateisystem des Hosts der bestehenden WinRM-Session anlegen.
@@ -490,7 +503,8 @@ try {
         }
         $remoteHost = [string]$remoteInfo.ComputerName
         $remotePath = [string]$remoteInfo.Directory
-        Progress 'Übertragung' ("Remote-Ordner vorhanden auf $remoteHost als $($remoteInfo.Account): $remotePath")
+        if ($skipLocalPackageCopy) { Progress 'Pakete vorbereiten' 'Gewählte Quellen direkt verwenden; Archive werden temporär entpackt' }
+        else { Progress 'Übertragung' ("Remote-Ordner vorhanden auf $remoteHost als $($remoteInfo.Account): $remotePath") }
 
         # Die exakten, auf dem Remote-Host verifizierten Pfade fuer das Entpacken merken.
         $remoteZipFiles = @{ payment = ''; fiscal = ''; serversuite = '' }
@@ -502,9 +516,10 @@ try {
             $expectedHash = if ($kind -eq 'payment') { [string]$req.PaymentSha256 } elseif ($kind -eq 'fiscal') { [string]$req.FiscalSha256 } else { [string]$req.ServerSuiteSha256 }
             if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) { throw "Lokale ZIP fehlt auf dem Updater-PC: $zip" }
             if ([string]::IsNullOrWhiteSpace($expectedHash)) { throw "Lokale SHA256-Pruefsumme fehlt fuer $kind" }
-            $remoteFile = Join-Path $remotePath (Split-Path -Path $zip -Leaf)
+            $remoteFile = if ($skipLocalPackageCopy) { [IO.Path]::GetFullPath($zip) } else { Join-Path $remotePath (Split-Path -Path $zip -Leaf) }
             $fileLabel = "ZIP $($verifiedZips + 1)/$zipCount ($kind)"
-            Progress 'Übertragung' ("$fileLabel : Prüfe $([IO.Path]::GetFileName($zip))") 0
+            $checkPhase = if ($skipLocalPackageCopy) { 'Paketquelle prüfen' } else { 'Übertragung' }
+            Progress $checkPhase ("$fileLabel : Prüfe $([IO.Path]::GetFileName($zip))") 0
             $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
                 param([string]$path)
                 if (Test-Path -LiteralPath $path -PathType Leaf) {
@@ -512,6 +527,7 @@ try {
                 } else { '' }
             }
             if ($remoteHash -ne $expectedHash) {
+                if ($skipLocalPackageCopy) { throw "SHA256-Prüfung der lokalen ZIP-Quelle fehlgeschlagen: $remoteFile" }
                 if ($skipZipTransfer) {
                     throw "ZIP-Übertragung deaktiviert: '$remoteFile' fehlt auf $remoteHost oder stimmt nicht mit der ausgewählten lokalen ZIP überein (SHA256)."
                 }
@@ -530,7 +546,8 @@ try {
             }
             if ($remoteHash -ne $expectedHash) { throw "SHA256-Pruefung fehlgeschlagen ($remoteHost; $remoteFile)" }
             $remoteZipFiles[$kind] = [string]$remoteFile
-            $verifiedMessage = if ($skipZipTransfer) { "Vorhandene ZIP verifiziert: $remoteHost : $remoteFile" } else { "ZIP verifiziert: $remoteHost : $remoteFile" }
+            $verifiedMessage = if ($skipLocalPackageCopy) { "Lokale ZIP-Quelle verifiziert: $remoteFile" }
+                elseif ($skipZipTransfer) { "Vorhandene ZIP verifiziert: $remoteHost : $remoteFile" } else { "ZIP verifiziert: $remoteHost : $remoteFile" }
             $verifiedZips++
             Progress 'ZIP-Prüfung' ($verifiedMessage + " ($verifiedZips/$zipCount ZIPs fertig)") 100
         }

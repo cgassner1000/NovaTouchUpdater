@@ -197,16 +197,33 @@ function InvokeMsiPackageUpdate {
     if (-not $decision.Install) { $outcome = [pscustomobject]@{ Changed=$false; Skipped=$decision.Skipped; RebootRequired=$false; Software=$software; Message=$decision.Message } }
     else {
         if (TestLocalSession $Session) { AssertLocalUpdateAccess }
-        $base = [string]$Request.RemoteInstallPath
-        InvokeWorkerCommand -Session $Session -ArgumentList $base -ScriptBlock { param($path) [void][IO.Directory]::CreateDirectory($path) } -ErrorAction Stop
+        $directLocal = (TestLocalSession $Session) -and
+            (($null -ne $Request.PSObject.Properties['SkipLocalPackageCopy'] -and [bool]$Request.SkipLocalPackageCopy) -or
+             [string]::IsNullOrWhiteSpace([string]$Request.RemoteInstallPath))
+        $base = if ($directLocal) { [IO.Path]::GetTempPath() } else { [string]$Request.RemoteInstallPath }
+        if (-not $directLocal) {
+            InvokeWorkerCommand -Session $Session -ArgumentList $base -ScriptBlock { param($path) [void][IO.Directory]::CreateDirectory($path) } -ErrorAction Stop
+        }
         $files = @([pscustomobject]@{ LocalPath=[string]$package.PayloadPath; RelativePath=[IO.Path]::GetFileName([string]$package.PayloadPath); Sha256=[string]$package.Sha256 }) + @($package.CompanionFiles)
         $remotePayload = ''
         foreach ($file in $files) {
-            $remoteFile = [IO.Path]::GetFullPath((Join-Path $base ([string]$file.RelativePath)))
-            if (-not $remoteFile.StartsWith([IO.Path]::GetFullPath($base).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'MSI-Dateipfad verlässt den Arbeitsordner.' }
+            if ($directLocal) {
+                $remoteFile = [IO.Path]::GetFullPath([string]$file.LocalPath)
+                if ($remotePayload -and [IO.Path]::GetExtension($remotePayload) -ieq '.msi') {
+                    $sourceFolder = [IO.Path]::GetDirectoryName($remotePayload).TrimEnd('\') + '\'
+                    $expectedCab = [IO.Path]::GetFullPath((Join-Path $sourceFolder ([string]$file.RelativePath)))
+                    if (-not $expectedCab.StartsWith($sourceFolder, [StringComparison]::OrdinalIgnoreCase) -or $expectedCab -ine $remoteFile) {
+                        throw 'Die MSI-CAB-Datei muss am ursprünglichen relativen Pfad neben der MSI liegen.'
+                    }
+                }
+            } else {
+                $remoteFile = [IO.Path]::GetFullPath((Join-Path $base ([string]$file.RelativePath)))
+                if (-not $remoteFile.StartsWith([IO.Path]::GetFullPath($base).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'MSI-Dateipfad verlässt den Arbeitsordner.' }
+            }
             $remoteHash = InvokeWorkerCommand -Session $Session -ArgumentList $remoteFile -ScriptBlock { param($path) if (Test-Path -LiteralPath $path -PathType Leaf) { (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash } else { '' } } -ErrorAction Stop
             if ([string]::IsNullOrWhiteSpace([string]$file.Sha256)) { throw 'MSI-Prüfsumme fehlt.' }
             if ($remoteHash -ne $file.Sha256) {
+                if ($directLocal) { throw "SHA256-Prüfung der lokalen MSI-Paketquelle fehlgeschlagen: $remoteFile" }
                 if ([bool]$Request.SkipZipTransfer -and -not (TestLocalSession $Session)) { throw "MSI-Übertragung deaktiviert; Paket fehlt oder Prüfsumme weicht ab: $remoteFile" }
                 InvokeWorkerCommand -Session $Session -ArgumentList ([IO.Path]::GetDirectoryName($remoteFile)) -ScriptBlock { param($dir) [void][IO.Directory]::CreateDirectory($dir) } -ErrorAction Stop
                 CopyRemoteFileWithProgress $Session ([string]$file.LocalPath) $remoteFile ([string]$package.ProductName)
@@ -216,11 +233,16 @@ function InvokeMsiPackageUpdate {
             Progress 'MSI-Paket geprüft' ([IO.Path]::GetFileName($remoteFile)) 100
             if (-not $remotePayload) { $remotePayload = $remoteFile }
         }
-        Progress 'MSI entpacken' ([string]$package.ProductName) 0
-        $companionsJson = ConvertTo-Json -InputObject @($package.CompanionFiles | ForEach-Object { [string]$_.RelativePath }) -Compress
-        $expandArgs = @($base, $remotePayload, [string]$package.RelativeMsiPath, $companionsJson)
-        $stage = InvokeWorkerCommand -Session $Session -ArgumentList $expandArgs -ScriptBlock ${function:ExpandMsiUpdatePackage} -ErrorAction Stop |
-            ForEach-Object { if ($null -eq $_) { return }; if ($null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') { Progress $_.Phase $_.Message $_.ProgressPercent } else { $_ } }
+        if ($directLocal -and [IO.Path]::GetExtension($remotePayload) -ieq '.msi') {
+            $stage = [pscustomobject]@{ Directory=''; MsiPath=$remotePayload }
+            Progress 'MSI-Quelle geprüft' 'MSI wird direkt aus dem ursprünglichen Speicherort verwendet' 100
+        } else {
+            Progress 'MSI entpacken' ([string]$package.ProductName) 0
+            $companionsJson = ConvertTo-Json -InputObject @($package.CompanionFiles | ForEach-Object { [string]$_.RelativePath }) -Compress
+            $expandArgs = @($base, $remotePayload, [string]$package.RelativeMsiPath, $companionsJson)
+            $stage = InvokeWorkerCommand -Session $Session -ArgumentList $expandArgs -ScriptBlock ${function:ExpandMsiUpdatePackage} -ErrorAction Stop |
+                ForEach-Object { if ($null -eq $_) { return }; if ($null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') { Progress $_.Phase $_.Message $_.ProgressPercent } else { $_ } }
+        }
         try {
             $packageJson = $package | ConvertTo-Json -Depth 6 -Compress
             $log = Join-Path $base ('MSI-' + $package.Kind + '-' + [DateTime]::Now.ToString('yyyyMMdd-HHmmss') + '.log')
@@ -228,7 +250,9 @@ function InvokeMsiPackageUpdate {
             $outcome = InvokeWorkerCommand -Session $Session -ArgumentList $installArgs -ScriptBlock ${function:InstallMsiUpdatePackage} -ErrorAction Stop |
                 ForEach-Object { if ($null -eq $_) { return }; if ($null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') { Progress $_.Phase $_.Message $_.ProgressPercent } else { $_ } }
         }
-        finally { InvokeWorkerCommand -Session $Session -ArgumentList $stage.Directory, $base -ScriptBlock ${function:RemoveMsiUpdateStage} -ErrorAction SilentlyContinue | Out-Null }
+        finally {
+            if ($stage.Directory) { InvokeWorkerCommand -Session $Session -ArgumentList $stage.Directory, $base -ScriptBlock ${function:RemoveMsiUpdateStage} -ErrorAction SilentlyContinue | Out-Null }
+        }
     }
     $services = @(InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
     return @{ Event='result'; Success=$true; Message=$outcome.Message; Changed=$outcome.Changed; Skipped=$outcome.Skipped; RebootRequired=$outcome.RebootRequired;

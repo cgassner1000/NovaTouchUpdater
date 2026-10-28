@@ -53,6 +53,7 @@ public sealed partial class MainForm : Form
     private readonly CheckBox chkSsl = new ModernToggleSwitch();
     private readonly CheckBox chkForceUpdate = new ModernToggleSwitch();
     private readonly CheckBox chkSkipZipTransfer = new ModernToggleSwitch();
+    private readonly CheckBox chkSkipLocalPackageCopy = new ModernToggleSwitch();
     private readonly CheckBox chkScanOnStartup = new ModernToggleSwitch { Checked = true };
     private readonly ProgressBar progress = new ModernProgressBar();
     private readonly Button btnImport = Button("Hostliste laden");
@@ -88,8 +89,11 @@ public sealed partial class MainForm : Form
     private bool activeSsl;
     private int activeHttpsPort = 5986;
     private bool activeForceUpdate;
-    private string activeRemoteInstallPath = @"C:\install\Novacom";
+    private const string DefaultRemoteInstallPath = @"C:\install\Novacom";
+    private string activeRemoteInstallPath = DefaultRemoteInstallPath;
+    private string activeLocalInstallPath = DefaultRemoteInstallPath;
     private bool activeSkipZipTransfer;
+    private bool activeSkipLocalPackageCopy;
     private bool lastUpdateForce;
 
     public MainForm() : this(preview: false) { }
@@ -190,10 +194,12 @@ public sealed partial class MainForm : Form
     private void ApplyLoadedConfig(LoadedConfig loaded)
     {
         var config = loaded.Settings;
-        txtRemotePath.Text = string.IsNullOrWhiteSpace(config.RemotePath) ? activeRemoteInstallPath : config.RemotePath;
+        txtRemotePath.Text = config.RemotePath ?? DefaultRemoteInstallPath;
         txtUser.Text = config.Username ?? "";
         chkSsl.Checked = config.UseSsl;
         chkScanOnStartup.Checked = config.ScanOnStartup;
+        chkSkipLocalPackageCopy.Checked = config.SkipLocalPackageCopy;
+        chkSkipZipTransfer.Checked = config.SkipZipTransfer;
         nHttpsPort.Value = config.HttpsPort;
         softwarePath.Text = config.SoftwarePath ?? "";
         txtPassword.Text = loaded.Password;
@@ -221,7 +227,8 @@ public sealed partial class MainForm : Form
         Hosts = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
         Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
         SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(),
-        ScanOnStartup = chkScanOnStartup.Checked
+        ScanOnStartup = chkScanOnStartup.Checked,
+        SkipLocalPackageCopy = chkSkipLocalPackageCopy.Checked, SkipZipTransfer = chkSkipZipTransfer.Checked
     };
 
     private void SaveConfig()
@@ -413,7 +420,10 @@ public sealed partial class MainForm : Form
         chkForceUpdate.Anchor = AnchorStyles.Left;
         chkForceUpdate.Margin = new Padding(3);
         chkForceUpdate.Checked = false;
-        chkSkipZipTransfer.Text = "Installationsdatei nicht übertragen" + Environment.NewLine + "Lokale Datei verwenden";
+        chkSkipLocalPackageCopy.Text = "LOKAL - Keine Kopie in Update-Datein Zielpfad";
+        chkSkipLocalPackageCopy.AutoSize = true;
+        chkSkipLocalPackageCopy.Anchor = AnchorStyles.Left;
+        chkSkipZipTransfer.Text = "REMOTE - Lokale Datei am Client verwenden ohne upload";
         chkSkipZipTransfer.AutoSize = true;
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
         chkSkipZipTransfer.Anchor = AnchorStyles.Left;
@@ -426,17 +436,18 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Zum Ergänzen von TrustedHosts sind Administratorrechte erforderlich.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
-        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, Benutzer, Passwort, HTTPS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
+        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, lokale Kopieroption, Remote-Uploadoption, Benutzer, Passwort, HTTPS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
         tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
-        tips.SetToolTip(txtRemotePath, "Ablage für ZIPs, MSIs und temporäre Update-Dateien. Gilt für LOKAL und für jeden ausgewählten Remote-Host. Wird bei einem nötigen Update angelegt und mit der Config gespeichert.");
-        tips.SetToolTip(chkSkipZipTransfer, "ZIP- und MSI-Pakete müssen bereits im Remote-Zielpfad liegen; sie werden anhand der lokalen Auswahl und SHA256 geprüft. Lokale Updates stellen ihre Pakete direkt bereit.");
+        tips.SetToolTip(txtRemotePath, "Ablage für Update-Pakete. Leer: LOKAL verwendet die gewählten Quellen direkt; Remote-Hosts verwenden C:\\install\\Novacom. Mit dem lokalen Kopierschalter wird dieser Pfad für lokale Updates nicht verwendet.");
+        tips.SetToolTip(chkSkipLocalPackageCopy, "LOKAL verwendet ZIPs, MSIs und CAB-Dateien direkt aus der Auswahl, ohne zusätzliche Paketkopie in den Zielpfad. ZIPs werden für die Installation temporär entpackt. Ein leerer lokaler Zielpfad verwendet ebenfalls direkt die Quellen.");
+        tips.SetToolTip(chkSkipZipTransfer, "REMOTE: ZIP- und MSI-Pakete müssen bereits im Zielpfad des Clients liegen. Dateiname und SHA256 müssen zur gewählten Quelle passen. Die Einstellung betrifft keine lokalen Updates.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
         executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            login, optionBar, chkScanOnStartup, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
+            login, optionBar, chkScanOnStartup, chkSkipLocalPackageCopy, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(0, 0, 0, 12);
@@ -664,8 +675,8 @@ public sealed partial class MainForm : Form
             // Even the longest option must remain readable if a vertical scrollbar
             // reduces the available width at very large text sizes.
             int width = main.Padding.Horizontal + configuration.Margin.Horizontal + configuration.Padding.Horizontal
-                + Math.Max(chkSkipZipTransfer.PreferredSize.Width + chkSkipZipTransfer.Margin.Horizontal,
-                    httpsOptions.PreferredSize.Width + httpsOptions.Margin.Horizontal) + settings.Padding.Horizontal;
+                + new Control[] { chkSkipLocalPackageCopy, chkSkipZipTransfer, httpsOptions }
+                    .Max(control => control.PreferredSize.Width + control.Margin.Horizontal) + settings.Padding.Horizontal;
             if (main.MinimumSize.Width != width) main.MinimumSize = new Size(width, 0);
         };
         var scrollArea = WindowLayout.CreateScrollArea(main, table);
@@ -931,7 +942,7 @@ public sealed partial class MainForm : Form
     {
         HostState[] targets = SelectedRemoteHosts();
         if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
-        string remotePath = txtRemotePath.Text.Trim();
+        string remotePath = RemoteDestinationPath();
         if (!Regex.IsMatch(remotePath, @"^[A-Za-z]:\\"))
         {
             MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad auf den Clients eingeben, z. B. C:\\install\\Novacom.",
@@ -972,7 +983,7 @@ public sealed partial class MainForm : Form
             return;
         }
         if (MessageBox.Show(this,
-            $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'Installationsdateien nicht übertragen' aktiviert ist.",
+            $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'REMOTE - Lokale Datei am Client verwenden ohne upload' aktiviert ist.",
             "Dateiübertragung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
         CaptureCredentials();
@@ -1179,8 +1190,10 @@ public sealed partial class MainForm : Form
         activeSsl = chkSsl.Checked;
         activeHttpsPort = (int)nHttpsPort.Value;
         activeForceUpdate = chkForceUpdate.Checked;
-        activeRemoteInstallPath = txtRemotePath.Text.Trim();
+        activeLocalInstallPath = txtRemotePath.Text.Trim();
+        activeRemoteInstallPath = RemoteDestinationPath();
         activeSkipZipTransfer = chkSkipZipTransfer.Checked;
+        activeSkipLocalPackageCopy = UseLocalPackageSources;
     }
 
     private WorkerRequest Request(string action, HostState host, UpdateComponents components = UpdateComponents.All)
@@ -1190,7 +1203,8 @@ public sealed partial class MainForm : Form
         Action = action, Host = host.Host,
         LocalExecution = host.IsLocal,
         Username = host.IsLocal ? "" : activeUser, Password = host.IsLocal ? "" : activePassword, UseSsl = !host.IsLocal && activeSsl, HttpsPort = activeHttpsPort, ForceUpdate = activeForceUpdate,
-        RemoteInstallPath = activeRemoteInstallPath, SkipZipTransfer = !host.IsLocal && activeSkipZipTransfer,
+        RemoteInstallPath = host.IsLocal ? activeLocalInstallPath : activeRemoteInstallPath,
+        SkipZipTransfer = !host.IsLocal && activeSkipZipTransfer, SkipLocalPackageCopy = host.IsLocal && activeSkipLocalPackageCopy,
         PaymentZip = (components & UpdateComponents.Payment) != 0 ? paymentZip : "",
         PaymentVersion = (components & UpdateComponents.Payment) != 0 ? paymentVersion : "",
         PaymentSha256 = (components & UpdateComponents.Payment) != 0 ? paymentHash : "",
@@ -1293,13 +1307,13 @@ public sealed partial class MainForm : Form
         {
             MessageBox.Show(this, "Mindestens ein Update-Paket auswählen oder den Softwareordner einlesen."); return;
         }
-        if (!Regex.IsMatch(txtRemotePath.Text.Trim(), @"^[A-Za-z]:\\"))
+        var selected = UpdateTargets(onlyFailed);
+        if (!IsUpdatePathValid(selected))
         {
             MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad für die Update-Dateien eingeben, z. B. C:\\install\\Novacom.",
                 "Zielpfad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        var selected = UpdateTargets(onlyFailed);
         if (selected.Length == 0)
         {
             MessageBox.Show(this, onlyFailed ? "Keine ausgewählten Hosts mit Prüf- oder Updatefehlern vorhanden." : "Zuerst die ausgewählten Hosts prüfen und Versionen auslesen."); return;
@@ -1328,7 +1342,7 @@ public sealed partial class MainForm : Form
             fiscalHash = (needed & UpdateComponents.Fiscal) != 0 ? await WorkerRunner.Sha256Async(fiscalZip, ct) : "";
             serverSuiteHash = (needed & UpdateComponents.ServerSuite) != 0 ? await WorkerRunner.Sha256Async(serverSuiteZip, ct) : "";
             await HashMsiPackagesAsync(needed, ct);
-            Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; Zielpfad: {activeRemoteInstallPath}; ZIP-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
+            Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; LOKAL: {(activeSkipLocalPackageCopy ? "direkte Quellen" : activeLocalInstallPath)}; Remote-Zielpfad: {activeRemoteInstallPath}; Remote-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
             ResetProgress(selected.Length);
             var ready = selected;
             if (!activeSkipZipTransfer)
@@ -1839,6 +1853,7 @@ public sealed partial class MainForm : Form
         chkScanOnStartup.Enabled = idle;
         nHttpsPort.Enabled = idle && remote && chkSsl.Checked;
         txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle && remote;
+        chkSkipLocalPackageCopy.Enabled = idle && selected.Any(h => h.IsLocal);
         txtUser.Enabled = txtPassword.Enabled = idle && remote; statusFilter.Enabled = idle;
         executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = readPackages.Enabled = idle;
         useFolderPackages.Enabled = idle && individualPackageSelection && folderPackages.Length > 0;

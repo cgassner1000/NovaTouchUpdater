@@ -60,6 +60,7 @@ try
         Hosts=[" KASSE-01 ","kasse-01","KASSE-02","# comment",";comment"," ","invalid host","192.0.2.1"],
         RemotePath=@"D:\upload\Novacom", Username=@"DOMAIN\support", UseSsl=true, HttpsPort=443,
         SoftwarePath=@"D:\software packages", ExecutionMode="LocalAndRemote", ScanOnStartup=true,
+        SkipLocalPackageCopy=true, SkipZipTransfer=true,
         LegacyPassword="A legacy field must never be saved"
     };
     AppConfigStore.Save(path,settings,password);
@@ -76,9 +77,14 @@ try
     }
     var loaded=AppConfigStore.Load(path);
     Assert(loaded.Settings.ScanOnStartup, "enabled startup scanning survives saving and loading");
+    Assert(loaded.Settings.SkipLocalPackageCopy && loaded.Settings.SkipZipTransfer, "both independent package-copy settings survive saving and loading");
     settings.ScanOnStartup=false;
+    settings.SkipLocalPackageCopy=false; settings.SkipZipTransfer=false; settings.RemotePath="";
     AppConfigStore.Save(path,settings,password);
     Assert(!AppConfigStore.Load(path).Settings.ScanOnStartup, "disabled startup scanning survives saving and loading");
+    var cleared=AppConfigStore.Load(path).Settings;
+    Assert(!cleared.SkipLocalPackageCopy && !cleared.SkipZipTransfer && cleared.RemotePath == "", "disabled copy settings and an explicitly empty destination persist");
+    settings.RemotePath=loaded.Settings.RemotePath;
     Assert(loaded.Settings.SoftwarePath == settings.SoftwarePath && loaded.Settings.ExecutionMode == "LocalAndRemote",
         "software directory and local/remote execution mode survive configuration round trips");
     Assert(loaded.Password==password && loaded.PasswordWarning is null && loaded.Settings.Hosts!.SequenceEqual(new[] {"KASSE-01","KASSE-02","192.0.2.1"}) &&
@@ -89,6 +95,7 @@ try
     File.WriteAllText(legacy,JsonSerializer.Serialize(new { Hosts=new[] {"OLD-HOST"}, Username="support", Password=password }));
     var old=AppConfigStore.Load(legacy);
     Assert(old.Settings.ScanOnStartup, "configs without a startup setting enable automatic scanning by default");
+    Assert(!old.Settings.SkipLocalPackageCopy && !old.Settings.SkipZipTransfer, "older configs retain package copying and remote uploads by default");
     Assert(old.Password==password && old.Settings.HttpsPort==5986 && !old.Settings.UseSsl && old.Settings.ExecutionMode == "Remote","legacy plaintext configs remain readable and missing settings keep remote-mode defaults");
     AppConfigStore.Save(legacy,old.Settings,old.Password);
     using (var migrated=JsonDocument.Parse(File.ReadAllText(legacy)))

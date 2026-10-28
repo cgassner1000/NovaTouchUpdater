@@ -27,6 +27,11 @@ public sealed partial class MainForm
     private bool hostRowsRebuildQueued;
     private IEnumerable<HostState> ExecutionHosts() => hosts.Where(h => h.IsLocal ? IncludeLocalHost : Mode != UpdateExecutionMode.Local);
     private HostState[] SelectedRemoteHosts() => SelectedHosts().Where(h => !h.IsLocal).ToArray();
+    private bool UseLocalPackageSources => chkSkipLocalPackageCopy.Checked || string.IsNullOrWhiteSpace(txtRemotePath.Text);
+    private string RemoteDestinationPath() => string.IsNullOrWhiteSpace(txtRemotePath.Text) ? DefaultRemoteInstallPath : txtRemotePath.Text.Trim();
+    private bool IsUpdatePathValid(HostState[] selected) =>
+        !selected.Any(h => !h.IsLocal || !UseLocalPackageSources) ||
+        System.Text.RegularExpressions.Regex.IsMatch(RemoteDestinationPath(), @"^[A-Za-z]:\\");
 
     private void EnsureLocalHost()
     {
@@ -271,8 +276,11 @@ public sealed partial class MainForm
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Zielordner und zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen, einschließlich portable_python. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
-        if (selected.Any(h => h.IsLocal)) text.AppendLine("Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen; nur installierte Komponenten aktualisieren. Direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
-        if (selected.Any(h => !h.IsLocal)) text.AppendLine("Remote-Zielpfad: " + txtRemotePath.Text.Trim() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv"));
+        if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
+            ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
+            : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +
+            "\nNur installierte Komponenten aktualisieren. Direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
+        if (selected.Any(h => !h.IsLocal)) text.AppendLine("Remote-Zielpfad: " + RemoteDestinationPath() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv"));
         return text.ToString();
     }
 }

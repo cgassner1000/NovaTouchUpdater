@@ -41,7 +41,7 @@ public sealed partial class MainForm
 
     private async Task<bool> StageLocalUpdatePackagesAsync(HostState host, CancellationToken ct)
     {
-        if (!host.IsLocal) return true;
+        if (!host.IsLocal || activeSkipLocalPackageCopy) return true;
         try
         {
             ct.ThrowIfCancellationRequested();
