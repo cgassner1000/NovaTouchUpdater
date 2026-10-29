@@ -9,7 +9,12 @@ using System.Linq;
 namespace SoftwareDatabaseFixture
 {
     public enum ClientType { tStatus, tString, tInt, tBool, tObject }
-    public sealed class Status { public bool IsOK { get { return true; } } }
+    public sealed class Status
+    {
+        public string Error = "";
+        public bool IsOK { get { return Error.Length == 0; } }
+        public void ThrowException() { if (!IsOK) throw new Exception(Error); }
+    }
     public sealed class ReturnValue { public object Value { get; set; } }
     public sealed class Signature
     {
@@ -34,6 +39,8 @@ namespace SoftwareDatabaseFixture
         public static List<string> Events = new List<string>();
         public static string FailTarget = "";
         public static string FailOpenTarget = "";
+        public static string FailStreamOperation = "";
+        public static bool FailObjectSave;
         public static string[] Namespaces = { "%SYS", "MANDANT1", "MANDANT2" };
         public static string[] MissingSchemaNamespaces = { "EMPTY" };
     }
@@ -54,6 +61,7 @@ namespace SoftwareDatabaseFixture
     }
     public sealed class Connection : IDisposable
     {
+        public System.Reflection.Assembly GeneratedAssembly;
         public string ConnectionString { get; set; }
         public string Target, Namespace;
         public void Open()
@@ -115,8 +123,15 @@ namespace SoftwareDatabaseFixture
     }
     public sealed class BinaryStream : MemoryStream
     {
-        public void Clear() { SetLength(0); }
-        public Status Save() { return new Status(); }
+        public Status Clear()
+        {
+            if (Database.FailStreamOperation == "Clear") return new Status { Error = "IRIS status 5001: simulated stream clear failure; Password=synthetic-secret" };
+            SetLength(0); return new Status();
+        }
+        public Status Save()
+        {
+            return new Status { Error = Database.FailStreamOperation == "Save" ? "IRIS status 5002: simulated stream save failure; Password=synthetic-secret" : "" };
+        }
     }
     public sealed class DynamicObject
     {
@@ -132,16 +147,30 @@ namespace SoftwareDatabaseFixture
         }
         public static void RunClassMethod(Connection connection, string className, string method, Signature signature)
         {
+            throw new NullReferenceException("Dynamic class metadata must not be queried by the uploader");
+        }
+        public static void RunClassMethodS(Connection connection, string className, string method, Signature signature)
+        {
             if (className != "%Dictionary.CompiledClass" || method != "%ExistsId" || signature.Arguments[0] != "User.zzzSoftware") throw new Exception("Unexpected class method");
             signature.ReturnValue.Value = connection.Namespace != "%SYS" && !Database.MissingSchemaNamespaces.Contains(connection.Namespace);
         }
-        public void SetProperty(string name, Signature signature) { properties[name] = signature.Arguments[0]; }
+        public void SetProperty(string name, Signature signature) { throw new NullReferenceException("Dynamic property metadata lookup failed"); }
+        public void SetPropertyS(string name, Signature signature) { properties[name] = signature.Arguments[0]; }
         public void GetProperty(string name, Signature signature)
         {
+            throw new NullReferenceException("Dynamic property metadata lookup failed");
+        }
+        public void GetPropertyS(string name, Signature signature)
+        {
             if (name != "Datei") throw new Exception("Unexpected property");
+            if (connection.GeneratedAssembly == null) throw new Exception("The binding assembly is required for binary stream projection");
             signature.ReturnValue.Value = stream;
         }
         public void RunMethod(string method, Signature signature)
+        {
+            throw new NullReferenceException("Dynamic method metadata lookup failed");
+        }
+        public void RunMethodS(string method, Signature signature)
         {
             switch (method)
             {
@@ -149,6 +178,11 @@ namespace SoftwareDatabaseFixture
                 case "Next": signature.ReturnValue.Value = ++position < Database.Namespaces.Length ? 1 : 0; break;
                 case "Get": signature.ReturnValue.Value = Database.Namespaces[position]; break;
                 case "%Save":
+                    if (Database.FailObjectSave)
+                    {
+                        signature.ReturnValue.Value = new Status { Error = "IRIS status 5003: simulated object save failure; Password=synthetic-secret" };
+                        break;
+                    }
                     Database.Entries.Add(new Entry { Target = connection.Target, Application = properties["Application"], Version = properties["Version"],
                         Ordner = properties["Ordner"], Dateiname = properties["Dateiname"], Pfad = properties["Pfad"], Bytes = stream.ToArray() });
                     signature.ReturnValue.Value = new Status(); break;

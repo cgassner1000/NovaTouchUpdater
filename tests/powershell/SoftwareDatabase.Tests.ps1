@@ -161,7 +161,24 @@ try {
     [SoftwareDatabaseFixture.Database]::FailTarget = '127.0.0.1:1972/MANDANT1'
     ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets $fixture } 'local write failure stops before installation and sanitizes provider secrets'
     Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and [SoftwareDatabaseFixture.Database]::Events.Contains('rollback:127.0.0.1:1972/MANDANT1')) 'local namespace failure preserves the old complete MSI set with transaction rollback'
+    $detail = ''
+    try { PublishLocalIrisSoftwarePackages $selected $targets $fixture } catch { $detail = $_.Exception.Message }
+    Assert ($detail.Contains('alte Setups und Servicepacks ersetzen') -and $detail.Contains('simulated provider failure') -and -not $detail.Contains('synthetic-secret')) 'upload errors identify the failed operation and original provider cause without credentials'
     [SoftwareDatabaseFixture.Database]::FailTarget = ''
+    foreach ($operation in @('Clear','Save','ObjectSave')) {
+        [SoftwareDatabaseFixture.Database]::FailStreamOperation = $operation
+        [SoftwareDatabaseFixture.Database]::FailObjectSave = $operation -eq 'ObjectSave'
+        $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
+        $detail = ''
+        try { PublishLocalIrisSoftwarePackages $selected $targets $fixture } catch { $detail = $_.Exception.Message }
+        Assert ($detail.Contains('IRIS status 500') -and $detail.Contains('MSI') -and -not $detail.Contains('synthetic-secret')) "$operation failures preserve the actual InterSystems status and redact passwords"
+        $newEvents = @([SoftwareDatabaseFixture.Database]::Events | Select-Object -Skip $eventsBefore)
+        Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and @($newEvents | Where-Object { $_ -like 'commit:*' }).Count -eq 0 -and
+            @($newEvents | Where-Object { $_ -like 'rollback:*' }).Count -eq 1 -and @($newEvents | Where-Object { $_ -like 'begin:*' }).Count -eq 1) "$operation failures roll back before replacement and stop all subsequent namespaces"
+    }
+    [SoftwareDatabaseFixture.Database]::FailStreamOperation = ''; [SoftwareDatabaseFixture.Database]::FailObjectSave = $false
+    $redacted = GetSoftwareDatabaseError ([pscustomobject]@{ Exception=[Exception]::new('IRIS error 5618; Password="synthetic-secret"; UID=test; diagnostic remains') }) @('test','synthetic-secret')
+    Assert ($redacted.Contains('IRIS error 5618') -and $redacted.Contains('diagnostic remains') -and -not $redacted.Contains('synthetic-secret') -and -not $redacted.Contains('UID=test')) 'diagnostics retain error codes while removing quoted connection credentials'
     $ntc.Sha256 = '0' * 64
     $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
     ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets $fixture } 'local source checksum failure prevents all database connections'
@@ -172,6 +189,9 @@ try {
     [SoftwareDatabaseFixture.Database]::Events.Clear()
     [SoftwareDatabaseFixture.Database]::FailOpenTarget = '127.0.0.1:51774/MANDANT2'
     ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets $fixture } 'an inaccessible later instance fails preflight without exposing credentials'
+    $detail = ''
+    try { PublishLocalIrisSoftwarePackages $selected $targets $fixture } catch { $detail = $_.Exception.Message }
+    Assert ($detail.Contains('simulated login failure') -and -not $detail.Contains('synthetic-secret')) 'preflight retains the provider login error instead of replacing it with generic advice'
     Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.StartsWith('begin:') }) -and
         [SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'all namespace connections are checked before the first transaction or replacement'
     [SoftwareDatabaseFixture.Database]::FailOpenTarget = ''

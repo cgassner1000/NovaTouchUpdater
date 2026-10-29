@@ -37,6 +37,17 @@ internal static partial class Program
                         if ($provider.BinaryStreamType.FullName -ne 'InterSystems.Data.IRISTypes.IRISBinaryStream') { throw 'Binary stream API unavailable' }
                         if ($null -eq $provider.ObjectType.GetConstructor([type[]]@($provider.ConnectionType,[string],[object[]]))) { throw 'Dynamic object constructor unavailable' }
                         if ($null -eq $provider.BinaryStreamType.GetMethod('Write',[type[]]@([byte[]],[int],[int]))) { throw 'Binary stream Write API unavailable' }
+                        $connection.GeneratedAssembly = $provider.ObjectType.Assembly
+                        if ($connection.GeneratedAssembly -ne $provider.ObjectType.Assembly) { throw 'Binding assembly projection unavailable' }
+                        $signature = [Activator]::CreateInstance($provider.ObjectType.Assembly.GetType('InterSystems.Data.IRISTypes.IRISMethodSignature',$true))
+                        try {
+                            foreach ($method in @('SetPropertyS','GetPropertyS','RunMethodS')) {
+                                if ($null -eq $provider.ObjectType.GetMethod($method,[type[]]@([string],$signature.GetType()))) { throw "Direct $method API unavailable" }
+                            }
+                            if ($null -eq $provider.ObjectType.GetMethod('RunClassMethodS',[type[]]@($provider.ConnectionType,[string],[string],$signature.GetType()))) { throw 'Direct class method API unavailable' }
+                            $signature.SetReturnType($connection,$provider.BinaryStreamType)
+                            if ($signature.ReturnValue.ClientType -ne $provider.BinaryStreamType) { throw 'Typed binary stream signature unavailable' }
+                        } finally { $signature.Clear() }
                         Write-Output 'BUNDLED_PROVIDER_OK'
                     } finally { $connection.Dispose() }
                     """;

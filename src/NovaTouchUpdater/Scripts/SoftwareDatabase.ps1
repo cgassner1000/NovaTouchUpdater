@@ -244,8 +244,36 @@ function OpenSoftwareDatabase($Provider, $Definition, [string]$Namespace) {
     $builder.set_Namespace($Namespace); $builder.set_User($Definition.User); $builder.set_Password($Definition.Password)
     $builder.set_Ssl($Definition.Ssl); $builder.set_Pooling($false); $builder.set_ConnectionTimeout(15)
     $connection = [Activator]::CreateInstance($Provider.ConnectionType)
-    try { $connection.ConnectionString = $builder.get_ConnectionString(); $connection.Open(); return $connection }
-    catch { $connection.Dispose(); throw 'Datenbankverbindung fehlgeschlagen. Server, Port, SQL-Zugang und Berechtigungen prüfen.' }
+    try {
+        $connection.ConnectionString = $builder.get_ConnectionString(); $connection.Open()
+        # The bindings otherwise return generic IRISObjects even when the
+        # signature explicitly requests IRISBinaryStream. Built-in projections
+        # live in this assembly; no generated application DLL is needed.
+        $connection.GeneratedAssembly = $Provider.ObjectType.Assembly
+        return $connection
+    }
+    catch {
+        $detail = GetSoftwareDatabaseError $_ @($Definition.User, $Definition.Password)
+        $connection.Dispose()
+        throw "Datenbankverbindung fehlgeschlagen. Server, Port, SQL-Zugang und Berechtigungen prüfen. Ursache: $detail"
+    }
+}
+
+function GetSoftwareDatabaseError($Failure, [string[]]$Secrets = @()) {
+    $exception = $Failure.Exception
+    $cause = $exception.GetBaseException()
+    $text = $exception.Message
+    if ($text -ne $cause.Message) { $text += ' | ' + $cause.GetType().Name + ': ' + $cause.Message }
+    else { $text = $cause.GetType().Name + ': ' + $text }
+    # Keep actionable provider/status details, while excluding connection credentials.
+    $text = [regex]::Replace($text, '(?i)\b(Password|Pwd|Passwort|User\s*ID|UID|User\s*Name|User)\s*=\s*(?:"[^"]*"|''[^'']*''|[^;\r\n]*)', '$1=[geschützt]')
+    foreach ($secret in $Secrets) { if (-not [string]::IsNullOrEmpty($secret)) { $text = $text.Replace($secret, '[geschützt]') } }
+    return ($text -replace '[\r\n]+', ' ').Trim()
+}
+
+function AssertSoftwareDatabaseStatus($Status, [string]$Operation) {
+    if ($null -eq $Status) { throw "$Operation lieferte keinen InterSystems-Status." }
+    if (-not $Status.IsOK) { $Status.ThrowException(); throw "$Operation lieferte einen Fehlerstatus." }
 }
 
 function InvokeSoftwareObjectMethod($Provider, $Connection, $Object, [string]$Method, [string]$ReturnType, [object[]]$Arguments = @(), [string]$Class = '') {
@@ -253,10 +281,12 @@ function InvokeSoftwareObjectMethod($Provider, $Connection, $Object, [string]$Me
     try {
         $signature.SetReturnType($Connection, [Enum]::Parse($Provider.ClientType, $ReturnType))
         foreach ($argument in $Arguments) { $signature.Add([string]$argument, $false) }
-        if ($Class) { $type = $Provider.ObjectType; $type::RunClassMethod($Connection, $Class, $Method, $signature) }
-        else { $Object.RunMethod($Method, $signature) }
+        # Match the generated nt2-dotnet proxy. The dynamic APIs query additional
+        # class metadata and can fail in MsgGetDynClassDef for existing classes.
+        if ($Class) { $type = $Provider.ObjectType; $type::RunClassMethodS($Connection, $Class, $Method, $signature) }
+        else { $Object.RunMethodS($Method, $signature) }
         $value = $signature.ReturnValue.Value
-        if ($ReturnType -eq 'tStatus') { if (-not $value.IsOK) { throw 'InterSystems-Operation lieferte einen Fehlerstatus.' }; return }
+        if ($ReturnType -eq 'tStatus') { AssertSoftwareDatabaseStatus $value $Method; return }
         return $value
     } finally { $signature.Clear() }
 }
@@ -278,7 +308,7 @@ function GetSoftwareDatabaseNamespaces($Provider, $Connection) {
 
 function SetSoftwareDatabaseProperty($Connection, $Object, [string]$Name, [string]$Value) {
     $signature = $Connection.GetMtdSignature()
-    try { $signature.Add($Value, $false); $Object.SetProperty($Name, $signature) }
+    try { $signature.Add($Value, $false); $Object.SetPropertyS($Name, $signature) }
     finally { $signature.Clear() }
 }
 
@@ -295,21 +325,27 @@ function InvokeSoftwareDatabaseSql($Connection, [string]$Sql, [string[]]$Values,
 function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transaction) {
     $package = $Resolved.Package
     $temporaryApplication = $Resolved.Application + '-Updater-' + [guid]::NewGuid().ToString('N')
-    $obj = NewSoftwareDatabaseObject $Provider $Connection 'User.zzzSoftware'
+    $obj = $null
     $stream = $null; $file = $null; $hasher = $null
+    $operation = 'zzzSoftware-Objekt anlegen'
     try {
+        $obj = NewSoftwareDatabaseObject $Provider $Connection 'User.zzzSoftware'
         foreach ($pair in @(@('Application',$temporaryApplication), @('Version',[string]$package.ProductVersion), @('Ordner','Setup'), @('Dateiname','MSI'), @('Pfad','0'))) {
+            $operation = 'Eigenschaft ' + $pair[0] + ' setzen'
             SetSoftwareDatabaseProperty $Connection $obj $pair[0] $pair[1]
         }
+        $operation = 'MSI-Binärstream öffnen'
         $signature = $Connection.GetMtdSignature()
         try {
             # Like the generated nt2-dotnet proxy, request the binary-stream
             # projection, rather than a generic IRISObject with no Write method.
             $signature.SetReturnType($Connection, $Provider.BinaryStreamType)
-            $obj.GetProperty('Datei', $signature); $stream = $signature.ReturnValue.Value
+            $obj.GetPropertyS('Datei', $signature); $stream = $signature.ReturnValue.Value
         } finally { $signature.Clear() }
-        if ($null -eq $stream) { throw 'zzzSoftware.Datei ist kein Binärstream.' }
-        [void]$stream.Clear()
+        if ($null -eq $stream -or -not $Provider.BinaryStreamType.IsInstanceOfType($stream)) { throw 'zzzSoftware.Datei wurde nicht als Binärstream projiziert.' }
+        $operation = 'MSI-Binärstream leeren'
+        AssertSoftwareDatabaseStatus ($stream.Clear()) $operation
+        $operation = 'MSI-Binärdaten übertragen'
         $file = [IO.File]::Open($Resolved.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
         $hasher = [Security.Cryptography.SHA256]::Create()
         $buffer = New-Object byte[] 30720
@@ -325,15 +361,20 @@ function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transactio
         [void]$hasher.TransformFinalBlock([byte[]]@(), 0, 0)
         $actual = [BitConverter]::ToString($hasher.Hash).Replace('-', '')
         if ($actual -ine $Resolved.Sha256 -or $stream.Length -ne $file.Length) { throw 'MSI-Inhalt wurde während des Uploads verändert oder unvollständig übertragen.' }
-        if (-not $stream.Save().IsOK) { throw 'MSI-Binärstream konnte nicht gespeichert werden.' }
+        $operation = 'MSI-Binärstream speichern'
+        AssertSoftwareDatabaseStatus ($stream.Save()) $operation
+        $operation = 'zzzSoftware-Objekt speichern'
         InvokeSoftwareObjectMethod $Provider $Connection $obj '%Save' 'tStatus'
         # Replace only after a complete stream has been saved, within the caller's
         # transaction. As in InstallMSI, old service packs belong to the old setup.
+        $operation = 'alte Setups und Servicepacks ersetzen'
         InvokeSoftwareDatabaseSql $Connection "DELETE FROM zzzSoftware WHERE Application=? AND Ordner IN ('Setup','ServicePacks')" @($Resolved.Application) $Transaction
         InvokeSoftwareDatabaseSql $Connection 'UPDATE zzzSoftware SET Application=? WHERE Application=?' @($Resolved.Application, $temporaryApplication) $Transaction
+    } catch {
+        throw [InvalidOperationException]::new("MSI '$($package.ProductName)': $operation fehlgeschlagen.", $_.Exception)
     } finally {
         if ($null -ne $hasher) { $hasher.Dispose() }; if ($null -ne $file) { $file.Dispose() }
-        if ($null -ne $stream) { $stream.Close() }; $obj.Close()
+        if ($null -ne $stream) { $stream.Close() }; if ($null -ne $obj) { $obj.Close() }
     }
 }
 
@@ -492,9 +533,12 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
                     $connection = OpenSoftwareDatabase $provider $definition $namespace
                     $exists = InvokeSoftwareObjectMethod $provider $connection $null '%ExistsId' 'tBool' @('User.zzzSoftware') '%Dictionary.CompiledClass'
                     if (-not $exists) { Progress 'zzzSoftware' ($key + ' · keine zzzSoftware-Klasse, übersprungen') 0; $skipped++; continue }
-                    $eligible.Add([pscustomobject]@{ Key=$key; Provider=$provider; Connection=$connection })
+                    $eligible.Add([pscustomobject]@{ Key=$key; Provider=$provider; Connection=$connection; Definition=$definition })
                     $connection = $null # Ownership is transferred to the eligible list.
-                } catch { throw "zzzSoftware-Vorprüfung für $key fehlgeschlagen. IRIS-Zugang und Berechtigungen prüfen. Keine lokale Installation gestartet." }
+                } catch {
+                    $detail = GetSoftwareDatabaseError $_ @($definition.User, $definition.Password)
+                    throw "zzzSoftware-Vorprüfung für $key fehlgeschlagen. IRIS-Zugang und Berechtigungen prüfen. Keine lokale Installation gestartet. Ursache: $detail"
+                }
                 finally { if ($null -ne $connection) { $connection.Dispose() } }
             }
         }
@@ -510,8 +554,14 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
                 $transaction.Commit(); $count++
                 Progress 'zzzSoftware' ($destination.Key + ' · alle ausgewählten MSIs gespeichert') 100
             } catch {
-                if ($null -ne $transaction) { try { $transaction.Rollback() } catch { } }
-                throw "zzzSoftware-Upload nach $($destination.Key) fehlgeschlagen. Der betroffene Namespace wurde zurückgesetzt. Keine lokale Installation gestartet; bereits abgeschlossene Namespaces: $count."
+                $secrets = @($destination.Definition.User, $destination.Definition.Password)
+                $detail = GetSoftwareDatabaseError $_ $secrets
+                $rollback = 'Keine Namespace-Transaktion gestartet.'
+                if ($null -ne $transaction) {
+                    try { $transaction.Rollback(); $rollback = 'Der betroffene Namespace wurde zurückgesetzt.' }
+                    catch { $rollback = 'Rollback fehlgeschlagen: ' + (GetSoftwareDatabaseError $_ $secrets) }
+                }
+                throw "zzzSoftware-Upload nach $($destination.Key) fehlgeschlagen. $rollback Keine lokale Installation gestartet; bereits abgeschlossene Namespaces: $count. Ursache: $detail"
             } finally { if ($null -ne $transaction) { $transaction.Dispose() } }
         }
         Emit @{ Event='result'; Success=$true; Changed=($count -gt 0); Message=($resolved.Count.ToString() + " MSI-Paket(e) in $count lokalen Namespace(s) gespeichert; $skipped ohne zzzSoftware übersprungen."); Services=@() }
