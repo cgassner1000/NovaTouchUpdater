@@ -1220,6 +1220,7 @@ public sealed partial class MainForm : Form
         activeRemoteInstallPath = RemoteDestinationPath();
         activeSkipZipTransfer = chkSkipZipTransfer.Checked;
         activeSkipLocalPackageCopy = UseLocalPackageSources;
+        activeDatabaseUploadParallelism = (int)nUpdate.Value;
     }
 
     private WorkerRequest Request(string action, HostState host, UpdateComponents components = UpdateComponents.All)

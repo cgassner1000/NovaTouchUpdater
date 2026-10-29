@@ -12,8 +12,20 @@ static void Assert(bool condition, string message)
 var now = DateTimeOffset.Now.AddMinutes(1);
 var progressEvent = JsonSerializer.Deserialize<WorkerEvent>("{\"Event\":\"progress\",\"Phase\":\"Kopieren\",\"Message\":\"12/20 Dateien\",\"ProgressPercent\":60}")!;
 var progressHost = new HostState();
+progressHost.Error = "Earlier upload failed";
+progressHost.Updates = new(UpdateComponents.Fiscal);
+progressHost.Updates.Fail(UpdateComponents.Fiscal, "Remember final fiscal failure");
 progressHost.ApplyProgress(progressEvent);
 Assert(progressHost.ProgressPercent == 60 && progressHost.Phase.Contains("12/20 Dateien"), "worker percentages and readable status text reach the host state together");
+Assert(progressHost.Error == "" && progressHost.Updates.ErrorText.Contains("Remember final fiscal failure"), "new progress clears stale displayed errors while retaining pending component failures for the final result");
+string uploadError = "zzzSoftware-Upload nach IRIS:1972/GUTSCHEIN fehlgeschlagen. Der betroffene Namespace wurde zurückgesetzt. Ursache: MSI 'NovaTouch POS': MSI-Binärstream speichern fehlgeschlagen. | IRISStatusException: ERROR #5002: ObjectScript error: <FILEFULL>SaveStream+18^%Library.GlobalStreamAdaptor.1 ^User.zzzSoftwareS(29,1322),c:\\intersystems\\iris\\mgr\\gutschein\\ | Position: In Worker.ps1:514";
+Assert(DisplayText.DatabaseUploadError(uploadError) == "IRIS:1972/GUTSCHEIN · NovaTouch POS: <FILEFULL>", "ObjectScript error 5002 is reduced to its error token while preserving namespace and MSI context");
+Assert(DisplayText.DatabaseUploadError(uploadError + " || " + uploadError.Replace("GUTSCHEIN", "HKS").Replace("<FILEFULL>", "<PROTECT>")) ==
+    "IRIS:1972/GUTSCHEIN · NovaTouch POS: <FILEFULL>" + Environment.NewLine + "IRIS:1972/HKS · NovaTouch POS: <PROTECT>", "each namespace keeps its compact error even if its detail has a script position");
+string noPosition = uploadError[..uploadError.IndexOf(" | Position:", StringComparison.Ordinal)];
+Assert(DisplayText.DatabaseUploadError(noPosition + " || " + noPosition.Replace("GUTSCHEIN", "HKS").Replace("<FILEFULL>", "<PROTECT>")) ==
+    "IRIS:1972/GUTSCHEIN · NovaTouch POS: <FILEFULL>" + Environment.NewLine + "IRIS:1972/HKS · NovaTouch POS: <PROTECT>", "all namespace failures remain in the final compact summary");
+Assert(DisplayText.DatabaseUploadError("Login failed | Position: In Worker.ps1:1") == "Login failed" && DisplayText.DatabaseUploadError("ERROR #5002: no ObjectScript token") == "ERROR #5002: no ObjectScript token", "unrecognized upload failures retain their useful error text");
 progressHost.Phase = "Update fehlgeschlagen";
 Assert(progressHost.ProgressPercent is null, "a new phase or failure clears stale green progress");
 progressHost.SetProgress(120);

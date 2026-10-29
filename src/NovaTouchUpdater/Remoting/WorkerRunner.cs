@@ -14,6 +14,7 @@ public sealed class WorkerRequest
     public MsiPackageRequest[] MsiPackages { get; set; } = [];
     public IrisUploadTarget[] DatabaseTargets { get; set; } = [];
     public string DatabaseProviderDirectory { get; set; } = "";
+    public int DatabaseUploadParallelism { get; set; } = 8;
     public string Host { get; set; } = "";
     public string[] Hosts { get; set; } = [];
     public int Parallelism { get; set; } = 40;

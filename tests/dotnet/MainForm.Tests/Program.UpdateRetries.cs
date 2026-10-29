@@ -50,6 +50,15 @@ internal static partial class Program
             HostState host = Populate(form)[0];
             host.Updates = new(UpdateComponents.ZipServices);
             bool repair = false;
+            permanent.Progress = (request, report) =>
+            {
+                Assert(host.Error.Length == 0 && host.ProgressPercent is null, "each component or retry begins with a fresh displayed status");
+                report(new WorkerEvent { Phase="Installieren", Message=HostUpdateState.Label(permanent.Kind(request)), ProgressPercent=35 });
+                Call(form, "PaintRow", host);
+                string information = Convert.ToString(host.Row!.Cells["information"].Value)!;
+                Assert(information.Contains("35 %") && information.Contains("Installieren") && !information.Contains("Simulated fiscal"),
+                    "the running information cell shows current progress without earlier component errors");
+            };
             permanent.Outcome = request => permanent.Kind(request) == UpdateComponents.Fiscal && !repair
                 ? throw new IOException("Simulated fiscal installation failure") : permanent.Success(request);
             Update(form, host);
@@ -57,6 +66,9 @@ internal static partial class Program
                 "a persistent component error does not prevent the other components from finishing once");
             Assert(host.UpdateFailed && host.CanRetryUpdate && host.Updates.Pending == UpdateComponents.Fiscal && host.Error.Contains("nt.fiscal") && host.Payment == "2.0.0" && host.ServerSuite == "2.0.0",
                 "partial inventory and the exact failed component remain visible after three attempts");
+            Call(form, "PaintRow", host);
+            Assert(Convert.ToString(host.Row!.Cells["information"].Value)!.Contains("Simulated fiscal installation failure") && host.Row.Cells["information"].Tag is null,
+                "the final information cell restores unresolved failures and removes the green progress bar");
             Assert((UpdateComponents)Call(form, "ComponentsForUpdate", host, true)! == UpdateComponents.Fiscal &&
                 (UpdateComponents)Call(form, "ComponentsForUpdate", host, false)! == UpdateComponents.ZipServices,
                 "manual retry retains pending components while an explicit new update selects a fresh run");
@@ -131,6 +143,7 @@ internal static partial class Program
     {
         internal List<WorkerRequest> Requests { get; } = [];
         internal Func<WorkerRequest, WorkerResult>? Outcome { get; set; }
+        internal Action<WorkerRequest, Action<WorkerEvent>>? Progress { get; set; }
         private readonly Dictionary<(string Host, UpdateComponents Component), int> counts = [];
         private readonly Dictionary<(string Host, UpdateComponents Component), string> versions = [];
         internal int Count(string host, UpdateComponents kind) => counts.GetValueOrDefault((host, kind));
@@ -163,6 +176,7 @@ internal static partial class Program
             if (request.Action != "update") throw new InvalidOperationException("Unexpected action: " + request.Action);
             UpdateComponents kind = Kind(request);
             counts[(request.Host, kind)] = Count(request.Host, kind) + 1;
+            Progress?.Invoke(request, onProgress);
             return Task.FromResult((Outcome ?? Success)(request));
         }
         public void Dispose() { }

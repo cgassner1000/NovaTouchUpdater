@@ -54,6 +54,8 @@ internal static class DisplayText
     public static string DatabaseUploadError(string? message)
     {
         string text = Clean(message).Trim();
+        string[] failures = text.Split(" || ", StringSplitOptions.RemoveEmptyEntries);
+        if (failures.Length > 1) return string.Join(Environment.NewLine, failures.Select(DatabaseUploadError));
         int position = text.IndexOf(" | Position:", StringComparison.Ordinal);
         if (position >= 0) text = text[..position].TrimEnd();
         Match failure = ObjectScriptFailure.Match(text);

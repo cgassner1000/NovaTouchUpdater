@@ -493,9 +493,98 @@ function PublishSelectedSoftwarePackages([object[]]$Packages) {
     }
 }
 
+function InvokeSoftwareDatabaseNamespaceUpload($Provider, $Destination, [object[]]$Resolved) {
+    $connection = $null; $transaction = $null
+    try {
+        # Connections belong to this namespace's runspace and are never shared.
+        $connection = OpenSoftwareDatabase $Provider $Destination.Definition $Destination.Namespace
+        $transaction = $connection.BeginTransaction()
+        foreach ($msi in $Resolved) {
+            Progress 'zzzSoftware' ($Destination.Key + ' · ' + $msi.Package.ProductName + ' ' + $msi.Package.ProductVersion) 0
+            WriteSoftwareDatabaseMsi $Provider $connection $msi $transaction $Destination.Key
+        }
+        $transaction.Commit()
+        Progress 'zzzSoftware' ($Destination.Key + ' · alle ausgewählten MSIs gespeichert') 100
+        return [pscustomobject]@{ Key=$Destination.Key; Success=$true; Error='' }
+    } catch {
+        $secrets = @($Destination.Definition.User, $Destination.Definition.Password)
+        $detail = GetSoftwareDatabaseError $_ $secrets
+        $rollback = 'Keine Namespace-Transaktion gestartet.'
+        if ($null -ne $transaction) {
+            try { $transaction.Rollback(); $rollback = 'Der betroffene Namespace wurde zurückgesetzt.' }
+            catch { $rollback = 'Rollback fehlgeschlagen: ' + (GetSoftwareDatabaseError $_ $secrets) }
+        }
+        return [pscustomobject]@{ Key=$Destination.Key; Success=$false; Error="zzzSoftware-Upload nach $($Destination.Key) fehlgeschlagen. $rollback Ursache: $detail" }
+    } finally {
+        if ($null -ne $transaction) { $transaction.Dispose() }
+        if ($null -ne $connection) { $connection.Dispose() }
+    }
+}
+
+function InvokeSoftwareDatabaseNamespaceUploads($Provider, [object[]]$Destinations, [object[]]$Resolved, [int]$Parallelism) {
+    $limit = [Math]::Min($Destinations.Count, [Math]::Max(1, $Parallelism))
+    if ($limit -le 1) {
+        foreach ($destination in $Destinations) { InvokeSoftwareDatabaseNamespaceUpload $Provider $destination $Resolved }
+        return
+    }
+    $queue = [Collections.Concurrent.ConcurrentQueue[object]]::new()
+    $state = [Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+    foreach ($name in @('OpenSoftwareDatabase','GetSoftwareDatabaseError','AssertSoftwareDatabaseStatus','InvokeSoftwareObjectMethod',
+            'NewSoftwareDatabaseObject','SetSoftwareDatabaseProperty','InvokeSoftwareDatabaseSql','WriteSoftwareDatabaseMsi','InvokeSoftwareDatabaseNamespaceUpload')) {
+        $definition = (Get-Command $name -CommandType Function).Definition
+        $state.Commands.Add([Management.Automation.Runspaces.SessionStateFunctionEntry]::new($name, $definition))
+    }
+    $state.Variables.Add([Management.Automation.Runspaces.SessionStateVariableEntry]::new('databaseUploadProgressQueue', $queue, 'Upload progress relay'))
+    $state.Commands.Add([Management.Automation.Runspaces.SessionStateFunctionEntry]::new('Progress', {
+        param($Phase, $Message, $Percent = $null)
+        $databaseUploadProgressQueue.Enqueue([pscustomobject]@{ Phase=$Phase; Message=$Message; Percent=$Percent })
+    }.ToString()))
+    $pool = [Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, $limit, $state, $Host)
+    $jobs = [Collections.Generic.List[object]]::new()
+    try {
+        $pool.Open()
+        foreach ($destination in $Destinations) {
+            $pipeline = [Management.Automation.PowerShell]::Create()
+            $pipeline.RunspacePool = $pool
+            [void]$pipeline.AddScript({
+                param($Provider, $Destination, $Resolved)
+                $ErrorActionPreference = 'Stop'
+                Set-StrictMode -Version Latest
+                InvokeSoftwareDatabaseNamespaceUpload $Provider $Destination $Resolved
+            }.ToString()).AddArgument($Provider).AddArgument($destination).AddArgument($Resolved)
+            $job = [pscustomobject]@{ Pipeline=$pipeline; Async=$null; Destination=$destination }
+            $jobs.Add($job)
+            $job.Async = $pipeline.BeginInvoke()
+        }
+        do {
+            $entry = $null
+            while ($queue.TryDequeue([ref]$entry)) { Progress $entry.Phase $entry.Message $entry.Percent }
+            foreach ($job in $jobs.ToArray()) {
+                if (-not $job.Async.IsCompleted) { continue }
+                try {
+                    $output = @($job.Pipeline.EndInvoke($job.Async))
+                    if ($output.Count -ne 1 -or $null -eq $output[0].PSObject.Properties['Success']) { throw 'Keine gültige Namespace-Rückmeldung erhalten.' }
+                    $output[0]
+                } catch {
+                    $detail = GetSoftwareDatabaseError $_ @($job.Destination.Definition.User, $job.Destination.Definition.Password)
+                    [pscustomobject]@{ Key=$job.Destination.Key; Success=$false; Error="zzzSoftware-Upload nach $($job.Destination.Key) fehlgeschlagen. Ursache: $detail" }
+                } finally { $job.Pipeline.Dispose(); [void]$jobs.Remove($job) }
+            }
+            if ($jobs.Count -gt 0) { [Threading.Thread]::Sleep(25) }
+        } while ($jobs.Count -gt 0)
+        $entry = $null
+        while ($queue.TryDequeue([ref]$entry)) { Progress $entry.Phase $entry.Message $entry.Percent }
+    } finally {
+        foreach ($job in $jobs) {
+            try { $job.Pipeline.Stop() } finally { $job.Pipeline.Dispose() }
+        }
+        $pool.Dispose()
+    }
+}
+
 # Targets come from the same local registry/active-CPF inventory as Database
 # Check. Never use an application's SERVER setting as an upload destination.
-function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Targets, [string]$ProviderDirectory) {
+function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Targets, [string]$ProviderDirectory, [int]$Parallelism = 8) {
     if ($Packages.Count -eq 0) { throw 'Keine MSI-Pakete für zzzSoftware ausgewählt.' }
     if ($Targets.Count -eq 0) { throw 'Keine lokalen IRIS-Instanzen für zzzSoftware übergeben.' }
     if ([string]::IsNullOrWhiteSpace($ProviderDirectory) -or -not [IO.Path]::IsPathRooted($ProviderDirectory)) {
@@ -514,6 +603,7 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
     $workRoot = [IO.Path]::GetFullPath((Join-Path $tempBase ('database-msi-' + [guid]::NewGuid().ToString('N'))))
     [void][IO.Directory]::CreateDirectory($workRoot)
     $eligible = [Collections.Generic.List[object]]::new()
+    $preflightFailures = [Collections.Generic.List[object]]::new()
     $count = 0; $skipped = 0
     try {
         # Verify every selected MSI before modifying any namespace. Only the MSI
@@ -534,40 +624,24 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
                     $connection = OpenSoftwareDatabase $provider $definition $namespace
                     $exists = InvokeSoftwareObjectMethod $provider $connection $null '%ExistsId' 'tBool' @('User.zzzSoftware') '%Dictionary.CompiledClass'
                     if (-not $exists) { Progress 'zzzSoftware' ($key + ' · keine zzzSoftware-Klasse, übersprungen') 0; $skipped++; continue }
-                    $eligible.Add([pscustomobject]@{ Key=$key; Provider=$provider; Connection=$connection; Definition=$definition })
-                    $connection = $null # Ownership is transferred to the eligible list.
+                    $eligible.Add([pscustomobject]@{ Key=$key; Namespace=$namespace; Definition=$definition })
                 } catch {
                     $detail = GetSoftwareDatabaseError $_ @($definition.User, $definition.Password)
-                    throw "zzzSoftware-Vorprüfung für $key fehlgeschlagen. IRIS-Zugang und Berechtigungen prüfen. Keine lokale Installation gestartet. Ursache: $detail"
+                    $preflightFailures.Add([pscustomobject]@{ Key=$key; Success=$false; Error="zzzSoftware-Vorprüfung für $key fehlgeschlagen. Ursache: $detail" })
                 }
                 finally { if ($null -ne $connection) { $connection.Dispose() } }
             }
         }
-        if ($eligible.Count -eq 0) { throw 'Keine zzzSoftware in den konfigurierten lokalen IRIS-Namespaces gefunden. Keine lokale Installation gestartet.' }
-        foreach ($destination in $eligible) {
-            $transaction = $null
-            try {
-                $transaction = $destination.Connection.BeginTransaction()
-                foreach ($msi in $resolved) {
-                    Progress 'zzzSoftware' ($destination.Key + ' · ' + $msi.Package.ProductName + ' ' + $msi.Package.ProductVersion) 0
-                    WriteSoftwareDatabaseMsi $destination.Provider $destination.Connection $msi $transaction $destination.Key
-                }
-                $transaction.Commit(); $count++
-                Progress 'zzzSoftware' ($destination.Key + ' · alle ausgewählten MSIs gespeichert') 100
-            } catch {
-                $secrets = @($destination.Definition.User, $destination.Definition.Password)
-                $detail = GetSoftwareDatabaseError $_ $secrets
-                $rollback = 'Keine Namespace-Transaktion gestartet.'
-                if ($null -ne $transaction) {
-                    try { $transaction.Rollback(); $rollback = 'Der betroffene Namespace wurde zurückgesetzt.' }
-                    catch { $rollback = 'Rollback fehlgeschlagen: ' + (GetSoftwareDatabaseError $_ $secrets) }
-                }
-                throw "zzzSoftware-Upload nach $($destination.Key) fehlgeschlagen. $rollback Keine lokale Installation gestartet; bereits abgeschlossene Namespaces: $count. Ursache: $detail"
-            } finally { if ($null -ne $transaction) { $transaction.Dispose() } }
+        if ($eligible.Count -eq 0 -and $preflightFailures.Count -eq 0) { throw 'Keine zzzSoftware in den konfigurierten lokalen IRIS-Namespaces gefunden. Keine lokale Installation gestartet.' }
+        $outcomes = @($preflightFailures.ToArray())
+        if ($eligible.Count -gt 0) { $outcomes += @(InvokeSoftwareDatabaseNamespaceUploads $provider @($eligible) $resolved $Parallelism) }
+        $count = @($outcomes | Where-Object Success).Count
+        $failed = @($outcomes | Where-Object { -not $_.Success } | Sort-Object Key)
+        if ($failed.Count -gt 0) {
+            throw ("$count Namespace(s) erfolgreich, $($failed.Count) fehlgeschlagen. Keine lokale Installation gestartet. " + (($failed | ForEach-Object Error) -join ' || '))
         }
         Emit @{ Event='result'; Success=$true; Changed=($count -gt 0); Message=($resolved.Count.ToString() + " MSI-Paket(e) in $count lokalen Namespace(s) gespeichert; $skipped ohne zzzSoftware übersprungen."); Services=@() }
     } finally {
-        foreach ($destination in $eligible) { $destination.Connection.Dispose() }
         if ($workRoot.StartsWith($tempBase + '\', [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($workRoot) -match '^database-msi-[0-9a-f]{32}$') {
             Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

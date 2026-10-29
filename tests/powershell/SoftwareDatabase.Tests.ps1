@@ -174,9 +174,33 @@ try {
         Assert ($detail.Contains('IRIS status 500') -and $detail.Contains('MSI') -and -not $detail.Contains('synthetic-secret')) "$operation failures preserve the actual InterSystems status and redact passwords"
         $newEvents = @([SoftwareDatabaseFixture.Database]::Events | Select-Object -Skip $eventsBefore)
         Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and @($newEvents | Where-Object { $_ -like 'commit:*' }).Count -eq 0 -and
-            @($newEvents | Where-Object { $_ -like 'rollback:*' }).Count -eq 1 -and @($newEvents | Where-Object { $_ -like 'begin:*' }).Count -eq 1) "$operation failures roll back before replacement and stop all subsequent namespaces"
+            @($newEvents | Where-Object { $_ -like 'rollback:*' }).Count -eq 3 -and @($newEvents | Where-Object { $_ -like 'begin:*' }).Count -eq 3) "$operation failures roll back each affected namespace without replacing old packages"
     }
     [SoftwareDatabaseFixture.Database]::FailStreamOperation = ''; [SoftwareDatabaseFixture.Database]::FailObjectSave = $false
+    $script:progress.Clear(); [SoftwareDatabaseFixture.Database]::PeakTransactions = 0
+    [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds = 300
+    try { PublishLocalIrisSoftwarePackages @($ntc) $targets $fixture 2 }
+    finally { [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds = 0 }
+    Assert ([SoftwareDatabaseFixture.Database]::PeakTransactions -eq 2 -and [SoftwareDatabaseFixture.Database]::ActiveTransactions -eq 0) 'namespace uploads overlap within the configured limit and close every transaction'
+    $byteProgress = @($script:progress | Where-Object { $_ -like '* Bytes' })
+    Assert ($byteProgress.Count -ge 3 -and @($byteProgress | Where-Object { $_ -notmatch '(FIRST:1972/(MANDANT1|USER)|SECOND:51774/MANDANT2) · NovaTouch Control' }).Count -eq 0) 'every byte-progress event identifies the active namespace, instance port and MSI'
+    $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
+    [SoftwareDatabaseFixture.Database]::FailTarget = '127.0.0.1:1972/MANDANT1'
+    ExpectFailure { PublishLocalIrisSoftwarePackages @($ntc) $targets $fixture 2 } 'an individual namespace error fails the complete upload after independent namespaces finish'
+    $newEvents = @([SoftwareDatabaseFixture.Database]::Events | Select-Object -Skip $eventsBefore)
+    Assert (@($newEvents | Where-Object { $_ -like 'commit:*' }).Count -eq 2 -and @($newEvents | Where-Object { $_ -like 'rollback:*' }).Count -eq 1) 'a namespace rollback does not cancel or undo the other namespace uploads'
+    [SoftwareDatabaseFixture.Database]::FailTarget = ''; [SoftwareDatabaseFixture.Database]::PeakTransactions = 0
+    PublishLocalIrisSoftwarePackages @($ntc) $targets $fixture 1
+    Assert ([SoftwareDatabaseFixture.Database]::PeakTransactions -eq 1) 'parallelism one retains the same independent results with serial namespace uploads'
+    $limitTarget = [pscustomobject]@{ Instance='LIMIT'; Directory=$fixture; Port=1972; Namespaces=@('LIMIT1','LIMIT2','LIMIT3','LIMIT4','LIMIT5','LIMIT6'); User='test'; Password='synthetic-secret'; Ssl=$false }
+    [SoftwareDatabaseFixture.Database]::PeakTransactions = 0; [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds = 500
+    try {
+        PublishLocalIrisSoftwarePackages @($ntc) @($limitTarget) $fixture 5
+        Assert ([SoftwareDatabaseFixture.Database]::PeakTransactions -eq 5 -and [SoftwareDatabaseFixture.Database]::ActiveTransactions -eq 0) 'configured namespace parallelism above four is honored without exceeding the configured limit'
+    } finally {
+        [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds = 0
+        [void][SoftwareDatabaseFixture.Database]::Entries.RemoveAll([Predicate[SoftwareDatabaseFixture.Entry]]{ param($entry) $entry.Target.StartsWith('127.0.0.1:1972/LIMIT') })
+    }
     $redacted = GetSoftwareDatabaseError ([pscustomobject]@{ Exception=[Exception]::new('IRIS error 5618; Password="synthetic-secret"; UID=test; diagnostic remains') }) @('test','synthetic-secret')
     Assert ($redacted.Contains('IRIS error 5618') -and $redacted.Contains('diagnostic remains') -and -not $redacted.Contains('synthetic-secret') -and -not $redacted.Contains('UID=test')) 'diagnostics retain error codes while removing quoted connection credentials'
     $ntc.Sha256 = '0' * 64
@@ -192,8 +216,10 @@ try {
     $detail = ''
     try { PublishLocalIrisSoftwarePackages $selected $targets $fixture } catch { $detail = $_.Exception.Message }
     Assert ($detail.Contains('simulated login failure') -and -not $detail.Contains('synthetic-secret')) 'preflight retains the provider login error instead of replacing it with generic advice'
-    Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.StartsWith('begin:') }) -and
-        [SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'all namespace connections are checked before the first transaction or replacement'
+    Assert ([SoftwareDatabaseFixture.Database]::Events.FindIndex([Predicate[string]]{ param($line) $line.StartsWith('begin:') }) -gt
+        [SoftwareDatabaseFixture.Database]::Events.IndexOf('open:127.0.0.1:51774/MANDANT2') -and
+        @([SoftwareDatabaseFixture.Database]::Events | Where-Object { $_ -like 'commit:*' }).Count -eq 4 -and
+        [SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'all namespaces are preflighted before upload; an inaccessible namespace does not prevent the accessible namespaces from finishing'
     [SoftwareDatabaseFixture.Database]::FailOpenTarget = ''
 
     # Dispatch also enforces local-only execution before any remoting or service work.

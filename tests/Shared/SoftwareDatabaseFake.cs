@@ -35,8 +35,11 @@ namespace SoftwareDatabaseFixture
     }
     public static class Database
     {
+        public static readonly object Gate = new object();
         public static List<Entry> Entries = new List<Entry>();
         public static List<string> Events = new List<string>();
+        public static int WriteDelayMilliseconds, ActiveTransactions, PeakTransactions;
+        public static void Record(string value) { lock (Gate) Events.Add(value); }
         public static string FailTarget = "";
         public static string FailOpenTarget = "";
         public static string FailStreamOperation = "";
@@ -61,20 +64,23 @@ namespace SoftwareDatabaseFixture
     }
     public sealed class Connection : IDisposable
     {
+        private readonly int ownerThread = System.Threading.Thread.CurrentThread.ManagedThreadId;
+        private void AssertThread() { if (ownerThread != System.Threading.Thread.CurrentThread.ManagedThreadId) throw new Exception("Connection crossed runspace threads"); }
         public System.Reflection.Assembly GeneratedAssembly;
         public string ConnectionString { get; set; }
         public string Target, Namespace;
         public void Open()
         {
+            AssertThread();
             var b = new DbConnectionStringBuilder(); b.ConnectionString = ConnectionString;
             Namespace = (string)b["Namespace"]; Target = b["Server"] + ((string)b["Server"] == "127.0.0.1" ? ":" + b["Port"] : "") + "/" + Namespace;
-            Database.Events.Add("open:" + Target);
+            Database.Record("open:" + Target);
             if (Database.FailOpenTarget == Target) throw new Exception("Password=synthetic-secret; simulated login failure");
         }
-        public Signature GetMtdSignature() { return new Signature(); }
-        public Transaction BeginTransaction() { return new Transaction(this); }
-        public Command CreateCommand() { return new Command(this); }
-        public void Dispose() { Database.Events.Add("close:" + Target); }
+        public Signature GetMtdSignature() { AssertThread(); return new Signature(); }
+        public Transaction BeginTransaction() { AssertThread(); return new Transaction(this); }
+        public Command CreateCommand() { AssertThread(); return new Command(this); }
+        public void Dispose() { AssertThread(); Database.Record("close:" + Target); }
     }
     public sealed class Transaction : IDisposable
     {
@@ -83,14 +89,24 @@ namespace SoftwareDatabaseFixture
         private bool finished;
         public Transaction(Connection value)
         {
-            connection = value; snapshot = Database.Entries.ToList();
-            Database.Events.Add("begin:" + connection.Target);
+            connection = value;
+            lock (Database.Gate)
+            {
+                snapshot = Database.Entries.Where(e => e.Target == connection.Target).ToList();
+                Database.PeakTransactions = Math.Max(Database.PeakTransactions, ++Database.ActiveTransactions);
+                Database.Events.Add("begin:" + connection.Target);
+            }
         }
-        public void Commit() { finished = true; Database.Events.Add("commit:" + connection.Target); }
+        public void Commit() { lock (Database.Gate) { finished = true; Database.ActiveTransactions--; Database.Events.Add("commit:" + connection.Target); } }
         public void Rollback()
         {
             if (finished) throw new Exception("Transaction already completed");
-            Database.Entries = snapshot; finished = true; Database.Events.Add("rollback:" + connection.Target);
+            lock (Database.Gate)
+            {
+                Database.Entries.RemoveAll(e => e.Target == connection.Target);
+                Database.Entries.AddRange(snapshot); finished = true; Database.ActiveTransactions--;
+                Database.Events.Add("rollback:" + connection.Target);
+            }
         }
         public void Dispose() { if (!finished) Rollback(); }
     }
@@ -105,6 +121,10 @@ namespace SoftwareDatabaseFixture
         public Command(Connection value) { connection = value; }
         public Parameter CreateParameter() { return new Parameter(); }
         public int ExecuteNonQuery()
+        {
+            lock (Database.Gate) return ExecuteLocked();
+        }
+        private int ExecuteLocked()
         {
             if (Transaction == null) throw new Exception("Missing SQL transaction");
             string application = (string)Parameters[0].Value;
@@ -123,6 +143,11 @@ namespace SoftwareDatabaseFixture
     }
     public sealed class BinaryStream : MemoryStream
     {
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (Database.WriteDelayMilliseconds > 0) System.Threading.Thread.Sleep(Database.WriteDelayMilliseconds);
+            base.Write(buffer, offset, count);
+        }
         public Status Clear()
         {
             if (Database.FailStreamOperation == "Clear") return new Status { Error = "IRIS status 5001: simulated stream clear failure; Password=synthetic-secret" };
@@ -183,7 +208,7 @@ namespace SoftwareDatabaseFixture
                         signature.ReturnValue.Value = new Status { Error = "IRIS status 5003: simulated object save failure; Password=synthetic-secret" };
                         break;
                     }
-                    Database.Entries.Add(new Entry { Target = connection.Target, Application = properties["Application"], Version = properties["Version"],
+                    lock (Database.Gate) Database.Entries.Add(new Entry { Target = connection.Target, Application = properties["Application"], Version = properties["Version"],
                         Ordner = properties["Ordner"], Dateiname = properties["Dateiname"], Pfad = properties["Pfad"], Bytes = stream.ToArray() });
                     signature.ReturnValue.Value = new Status(); break;
                 default: throw new Exception("Unexpected method");

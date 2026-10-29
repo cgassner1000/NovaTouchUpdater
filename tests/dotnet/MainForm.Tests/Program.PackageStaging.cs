@@ -112,16 +112,35 @@ internal static partial class Program
                 new IrisUploadTarget { Instance="TEST", Directory=root, Port=51774, Namespaces=["APP", "USER"], User="fixture", Password="synthetic-secret" }
             })));
             local.Updates = new(components); local.Scanned = true;
+            Field<NumericUpDown>(form, "nUpdate").Value = 2;
+            Call(form, "CaptureCredentials");
             worker.Requests.Clear();
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
             WorkerRequest upload = worker.Requests.First();
-            Assert(upload is { Action: "publish-msi-packages", LocalExecution: true, MsiPackages.Length: 3, DatabaseTargets.Length: 1 } &&
+            Assert(upload is { Action: "publish-msi-packages", LocalExecution: true, MsiPackages.Length: 3, DatabaseTargets.Length: 1, DatabaseUploadParallelism: 2 } &&
                 upload.MsiPackages.All(package => package.Sha256.Length == 64) && worker.Requests.ElementAt(1).Action == "stage-packages",
                 "all selected MSI packages upload to local CPF targets before copying or installation, independently of installed versions");
+            Field<NumericUpDown>(form, "nUpdate").Value = 8;
+            Call(form, "CaptureCredentials");
+            worker.PublicationError = "zzzSoftware-Upload nach TEST:51774/APP fehlgeschlagen. Ursache: MSI 'NovaTouch POS': ERROR #5002: ObjectScript error: <FILEFULL>SaveStream+18^%Library.GlobalStreamAdaptor.1 || zzzSoftware-Upload nach TEST:51774/USER fehlgeschlagen. Ursache: MSI 'NovaTouch POS': ERROR #5002: ObjectScript error: <PROTECT>SaveStream+18";
+            worker.ObservePublication = () =>
+            {
+                Call(form, "PaintRow", local);
+                string information = Convert.ToString(local.Row!.Cells["information"].Value)!;
+                Assert(local.Error == "" && information.Contains("TEST:51774/APP") && information.Contains("NovaTouch POS") && !information.Contains("<FILEFULL>") &&
+                    local.Row.Cells["information"].Tag is 40,
+                    "resumed uploads display the active namespace and MSI progress without the previous upload error");
+            };
+            local.Error = "Earlier upload error <FILEFULL>";
             worker.Requests.Clear(); worker.FailPublication = true; local.Updates = new(components);
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
             Assert(worker.Requests.Count == 1 && local.Result == "Fehler" && local.Updates.Pending == components && !local.Updates.DatabaseUploadCompleted,
                 "publication failure prevents copying and installation and retains every pending component");
+            Call(form, "PaintRow", local);
+            Assert(local.Error == "TEST:51774/APP · NovaTouch POS: <FILEFULL>" + Environment.NewLine + "TEST:51774/USER · NovaTouch POS: <PROTECT>" &&
+                local.Row!.Cells["information"].Tag is null && local.Log.Any(line => line.Contains("GlobalStreamAdaptor")) &&
+                worker.Requests.Single().DatabaseUploadParallelism == 8,
+                "final upload errors list all failed namespaces compactly, retain full log details and use Update parallel without an additional cap");
             worker.Requests.Clear(); worker.FailPublication = false; worker.FailStaging = true;
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
             Assert(local.Updates.DatabaseUploadCompleted && worker.Requests.Select(request => request.Action).SequenceEqual(["publish-msi-packages", "stage-packages"]),
@@ -147,12 +166,19 @@ internal static partial class Program
         internal bool Installed { get; set; } = true;
         internal bool FailStaging { get; set; }
         internal bool FailPublication { get; set; }
+        internal string PublicationError { get; set; } = "Upload fixture failure";
+        internal Action? ObservePublication { get; set; }
         public Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> onProgress, CancellationToken ct)
         {
             Requests.Enqueue(request);
             if (request.Action is not ("probe" or "scan" or "stage-packages" or "publish-msi-packages" or "update")) throw new InvalidOperationException("Unexpected request in update fixture");
             if (request.Action == "publish-msi-packages" && !request.LocalExecution) throw new InvalidOperationException("Database upload must remain local");
-            if (request.Action == "publish-msi-packages" && FailPublication) return Task.FromResult(new WorkerResult { Success=false, Error="Upload fixture failure" });
+            if (request.Action == "publish-msi-packages")
+            {
+                onProgress(new WorkerEvent { Phase="zzzSoftware", Message="TEST:51774/APP · NovaTouch POS · 400 / 1000 Bytes", ProgressPercent=40 });
+                ObservePublication?.Invoke();
+                if (FailPublication) return Task.FromResult(new WorkerResult { Success=false, Error=PublicationError });
+            }
             if (request.Action == "stage-packages" && !request.LocalExecution) throw new InvalidOperationException("Bulk staging must never target a remote host");
             if (request.Host == "PC-C.invalid") return Task.FromResult(new WorkerResult { Success=false, Error="Offline test fixture" });
             if (request.Action == "stage-packages" && FailStaging) return Task.FromResult(new WorkerResult { Success=false, Error="Copy fixture failure" });

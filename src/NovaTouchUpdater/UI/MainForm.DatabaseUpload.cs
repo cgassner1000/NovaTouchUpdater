@@ -6,6 +6,7 @@ public sealed partial class MainForm
     private Func<CancellationToken, Task<IrisInventoryResult>> readIrisInventory = new IrisDatabaseInventory().ReadAsync;
     private IrisUploadTarget[]? activeDatabaseTargets;
     private bool preparingDatabaseUpload;
+    private int activeDatabaseUploadParallelism = 8;
 
     private async Task<bool> PrepareLocalDatabaseUploadAsync(CancellationToken ct)
     {
@@ -50,7 +51,7 @@ public sealed partial class MainForm
                     ? hash : await WorkerRunner.Sha256Async(path, ct);
             }
             var request = new WorkerRequest { Action = "publish-msi-packages", Host = host.Host, LocalExecution = true,
-                MsiPackages = packages, DatabaseTargets = targets };
+                MsiPackages = packages, DatabaseTargets = targets, DatabaseUploadParallelism = activeDatabaseUploadParallelism };
             WorkerResult result = await runner.RunAsync(request, ev =>
             {
                 Log(host.Host, ev.Phase + ": " + ev.Message);
