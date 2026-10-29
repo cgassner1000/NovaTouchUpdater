@@ -347,7 +347,11 @@ Die Spalten passen sich automatisch an die Überschrift und den längsten enthal
 Nur **Information** erhält die gesamte übrige Breite; ihr Inhalt beeinflusst die Spaltenverteilung nicht. **Status** bleibt am rechten Tabellenrand sichtbar. Reicht der Platz für außergewöhnlich lange Werte nicht aus, werden diese umgebrochen; die Überschriften behalten ihre Mindestbreite. Erst bei einem Fenster, in dem schon die einzeiligen Überschriften nicht mehr nebeneinander passen, werden auch diese umgebrochen. Platz für die senkrechte Scrollleiste wird nur bei sichtbarer Scrollleiste abgezogen. Das HTML-Layout wird getrennt in `src/NovaTouchUpdater/Reporting/HtmlReport.cs` über CSS gesteuert.
 ### Windows-Release-Build
 
-Die Basisversion wird ausschließlich in **`version.txt`** im Projektordner geändert. Die Datei enthält eine Anleitung; die mit `#` beginnenden Beschreibungszeilen werden beim Einlesen ignoriert. Nur die Zahl in der letzten Zeile ändern: beispielsweise `1.1` für die Reihe `1.1.x` oder `1.2` für `1.2.x`. Lokale Builds erhalten damit die Version `1.1.0`. Bei GitHub-Releases wird die fortlaufende Workflow-Laufnummer angehängt, beispielsweise `1.1.123`. Die Laufnummer beginnt beim Wechsel der Basisversion nicht erneut bei null. EXE-Dateiname und Release-Tag werden aus der eingebetteten EXE-Version übernommen; weitere Dateien müssen für einen Versionswechsel nicht geändert werden.
+Die Basisversion wird ausschließlich in **`version.txt`** im Projektordner geändert. Die Datei enthält eine Anleitung; die mit `#` beginnenden Beschreibungszeilen werden beim Einlesen ignoriert. Nur die Zahl in der letzten Zeile ändern: beispielsweise `1.1` für die Reihe `1.1.x` oder `1.2` für `1.2.x`. Lokale Builds erhalten die Endung `.0`, beispielsweise `1.2.0`. Bei GitHub-Releases wird die nächste Buildnummer aus dem höchsten vorhandenen Tag **derselben Versionsreihe** bestimmt: Nach `v1.1.53` folgt `v1.1.54`; eine neue Reihe beginnt bei `v1.2.1`, danach `v1.2.2` usw. Das gilt ebenso für `1.3`, `1.4`, `2.1` und alle weiteren Basisversionen. Die globale GitHub-Laufnummer hat keinen Einfluss auf diese Nummerierung. Der Workflow übergibt die berechnete Nummer über `UPDATER_BUILD_NUMBER` an MSBuild und prüft die gebaute EXE gegen die vorbereitete Release-Version. EXE-Dateiname und Release-Tag stammen aus der eingebetteten EXE-Version.
+
+Die **höchste veröffentlichte stabile Versionsreihe** behält ihre **letzten drei Releases**. Von **jeder älteren Reihe** bleibt **der jeweils letzte Release einschließlich EXE und Tag** erhalten. Beispiel: Bei `1.2.10` bleiben `1.2.8`, `1.2.9`, `1.2.10` und der letzte `1.1.x`-Release. Sobald `1.3.1` erscheint, bleiben der letzte `1.1.x`-Release, `1.2.10` und die letzten bis zu drei `1.3.x`-Releases. Drafts, Prereleases und anders benannte manuelle Releases werden nicht bereinigt. `Latest` zeigt auf die höchste stabile Version, auch wenn ein älterer Versionszweig erneut gebaut wird.
+
+Release-Läufe werden über eine gemeinsame [GitHub-Concurrency-Gruppe mit Warteschlange](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) nacheinander ausgeführt, damit parallele Pushes keine identischen Buildnummern erhalten. Schlägt die GitHub-Abfrage fehl, wird keine Nummer vergeben und keine Bereinigung durchgeführt. Erst nach erfolgreicher Veröffentlichung und erneuter Prüfung der Release-Liste werden veraltete Releases und ihre Tags entfernt. Die Logik liegt in `build/ReleasePolicy.ps1` und `build/Release.ps1`.
 
 `Build-win64.cmd` im Projektordner ausführen (Visual Studio / .NET-8-SDK notwendig).
 Damit wird eine eigenständige `win-x64`-EXE veröffentlicht.
@@ -356,6 +360,7 @@ Lokaler Test der Versionsübernahme und Release-Benennung (isolierte Testdateien
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\Version.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\ReleasePolicy.Tests.ps1
 ```
 
 ### Single EXE Build

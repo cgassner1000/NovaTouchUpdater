@@ -5,11 +5,12 @@
 # Beispiele: 1.1 für Version 1.1.x, 1.2 für Version 1.2.x, 2.0 für Version 2.0.x.
 #
 # Die letzte Zahl (x) wird automatisch ergänzt:
-# - GitHub-Release: fortlaufende Workflow-Laufnummer, z. B. 1.1.123.
+# - GitHub-Release: nächste Buildnummer innerhalb dieser Reihe, z. B. 1.2.1.
 # - Lokaler Build / Visual Studio: 0, also z. B. 1.1.0.
-# Die GitHub-Laufnummer wird bei einem Versionswechsel nicht zurückgesetzt.
+# Jede neue Reihe beginnt bei 1 (1.2.1, 1.3.1, 2.1.1 usw.).
+# Aktuelle Reihe: letzte 3 Releases; ältere Reihen: jeweils der letzte Release.
 # EXE-Version, EXE-Dateiname und GitHub-Release übernehmen diese Einstellung.
 # Weitere Dateien müssen für einen Versionswechsel nicht geändert werden.
 #
 # Aktuelle Basisversion (nur diese Zeile ändern; kein x und kein v eintragen):
-1.1
+1.2

@@ -10,6 +10,11 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: novatouchupdater-releases
+  cancel-in-progress: false
+  queue: max
+
 jobs:
   release:
     runs-on: windows-2022
@@ -22,6 +27,12 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+
+      - name: Naechste Buildnummer der Versionsreihe bestimmen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./build/Release.ps1 -Mode Prepare
 
       - name: Windows-x64-EXE bauen
         shell: cmd
@@ -46,6 +57,9 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
             throw "Keine gueltige Versionsnummer in der EXE gefunden: $version"
           }
+          if ($version -ne $env:UPDATER_RELEASE_VERSION) {
+            throw "EXE-Version $version entspricht nicht der vorbereiteten Release-Version $env:UPDATER_RELEASE_VERSION."
+          }
           $releaseTag = "v$version"
           "RELEASE_TAG=$releaseTag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           $versionedName = "NovaTouchUpdater-$releaseTag.exe"
@@ -68,33 +82,13 @@ jobs:
             --target "$env:GITHUB_SHA" `
             --title "NovaTouchUpdater $env:RELEASE_TAG" `
             --generate-notes `
-            --latest
+            --latest=false
           if ($LASTEXITCODE -ne 0) {
             throw "GitHub Release konnte nicht erstellt werden: $env:RELEASE_TAG"
           }
 
-      - name: Nur die 3 neuesten Releases behalten
+      - name: Aktuelle Reihe mit 3 Releases und aeltere Reihen mit je einem Release behalten
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          $json = gh api --paginate `
-            "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
-            --slurp
-          if ($LASTEXITCODE -ne 0) {
-            throw "Releases konnten nicht geladen werden."
-          }
-
-          $releases = @($json | ConvertFrom-Json |
-            ForEach-Object { $_ } |
-            ForEach-Object { $_ } |
-            Where-Object { -not $_.draft } |
-            Sort-Object published_at -Descending)
-
-          foreach ($release in ($releases | Select-Object -Skip 3)) {
-            gh release delete "$($release.tag_name)" `
-              --yes --cleanup-tag
-            if ($LASTEXITCODE -ne 0) {
-              throw "Loeschen fehlgeschlagen: $($release.tag_name)"
-            }
-          }
+        run: ./build/Release.ps1 -Mode Cleanup -ExpectedVersion $env:UPDATER_RELEASE_VERSION

@@ -118,3 +118,5 @@ dotnet run --project tests\dotnet\MainForm.Tests\MainForm.Tests.csproj -c Releas
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\PowerShellValidation.Tests.ps1
 ```
+
+`Version.Tests.ps1` prüft die Basisversion aus `version.txt`, lokale `.0`-Builds, die per Versionsreihe vorbereitete `UPDATER_BUILD_NUMBER`, Unabhängigkeit von `GITHUB_RUN_NUMBER`, Pflichtwerte im GitHub-Workflow sowie übereinstimmende EXE-Versionen, Dateinamen und Tags. `ReleasePolicy.Tests.ps1` prüft Neustart bei `.1` für neue Reihen, numerische Fortsetzung, Archivierung des letzten Releases jeder alten Reihe, drei Releases der aktuellen Reihe, Schutz manueller Releases/Drafts/Prereleases, vollständige paginierte Antworten und Abbruch bei API-/Bereinigungsfehlern. Die echten Release-Skripte laufen dabei mit einer simulierten GitHub-CLI; es werden keine Releases oder Tags auf GitHub verändert.

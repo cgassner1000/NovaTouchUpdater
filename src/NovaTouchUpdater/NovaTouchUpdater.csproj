@@ -11,7 +11,7 @@
     <RootNamespace>NovaTouchUpdater</RootNamespace>
     <UpdaterBaseVersion>$([System.Text.RegularExpressions.Regex]::Replace($([System.IO.File]::ReadAllText('$(RepositoryRoot)version.txt')), '(?m)^\s*#.*$', '').Trim())</UpdaterBaseVersion>
     <UpdaterBuildNumber>0</UpdaterBuildNumber>
-    <UpdaterBuildNumber Condition="'$(GITHUB_RUN_NUMBER)' != ''">$(GITHUB_RUN_NUMBER)</UpdaterBuildNumber>
+    <UpdaterBuildNumber Condition="'$(UPDATER_BUILD_NUMBER)' != ''">$(UPDATER_BUILD_NUMBER)</UpdaterBuildNumber>
     <Version>$(UpdaterBaseVersion).$(UpdaterBuildNumber)</Version>
     <ApplicationIcon>Assets\NovaTouchUpdater.ico</ApplicationIcon>
   </PropertyGroup>
@@ -49,6 +49,8 @@
     <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(UpdaterBaseVersion)', '^\d+\.\d+$'))"
            Text="version.txt muss genau eine Basisversion im Format Hauptversion.Nebenversion enthalten, zum Beispiel 1.1. Beschreibungszeilen beginnen mit #." />
     <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(UpdaterBuildNumber)', '^\d+$'))"
-           Text="GITHUB_RUN_NUMBER muss eine ganze, nicht negative Zahl sein." />
+           Text="UPDATER_BUILD_NUMBER muss eine ganze, nicht negative Zahl sein." />
+    <Error Condition="'$(GITHUB_ACTIONS)' == 'true' and '$(UPDATER_BUILD_NUMBER)' == ''"
+           Text="UPDATER_BUILD_NUMBER fehlt. Zuerst die Release-Version für diese Versionsreihe vorbereiten." />
   </Target>
 </Project>
