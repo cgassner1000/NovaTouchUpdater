@@ -172,29 +172,68 @@ function FindSoftwareDatabaseConfiguration {
     [pscustomobject]@{ Paths=@($paths.Keys | Sort-Object); Directories=@($directories.Keys | Sort-Object); CheckedPaths=@($checkedPaths.Keys | Sort-Object); Services=$sources }
 }
 
+function GetSoftwareDatabaseProviderDirectories([string]$InstallationDirectory) {
+    $root = Join-Path $InstallationDirectory 'dev\dotnet\bin'
+    $versions = @{}
+    # Windows PowerShell runs on .NET Framework: do not load net8.0/net10.0
+    # assemblies into its CLR. Newer IRIS releases ship v4.6.2 instead of v4.5.
+    foreach ($name in @('v4.6.2', 'v4.5', 'v4.0.30319')) { $versions[$name] = Join-Path $root $name }
+    if (Test-Path -LiteralPath $root -PathType Container) {
+        foreach ($directory in Get-ChildItem -LiteralPath $root -Directory -ErrorAction Stop) {
+            if ($directory.Name -match '^v4\.\d+(?:\.\d+){0,2}$') { $versions[$directory.Name] = $directory.FullName }
+        }
+    }
+    $versions.Keys | Sort-Object { [version]$_.Substring(1) } -Descending | ForEach-Object { $versions[$_] }
+}
+
+function GetSoftwareDatabaseProviderError($Exception) {
+    $cause = $Exception.GetBaseException()
+    $text = $cause.GetType().Name + ': ' + $cause.Message + (' (HRESULT 0x{0:X8})' -f $cause.HResult)
+    if ($cause -is [Reflection.ReflectionTypeLoadException]) {
+        foreach ($loader in @($cause.LoaderExceptions | Select-Object -First 8)) {
+            if ($null -ne $loader) { $text += ' | ' + $loader.GetType().Name + ': ' + $loader.Message }
+        }
+    }
+    return ($text -replace '[\r\n]+', ' ').Trim()
+}
+
 function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
     # Use a provider shipped with the installation. Dynamic binding avoids
     # loading AP.Sys and its UI/configuration side effects or distributing its DLLs.
+    $failures = [Collections.Generic.List[string]]::new()
     foreach ($family in @('IRIS', 'Cache')) {
         foreach ($directory in $Directories) {
             $file = Join-Path $directory "InterSystems.Data.${family}Client.dll"
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
             try {
-                if ($family -eq 'IRIS') { [void][Reflection.Assembly]::LoadFrom((Join-Path $directory 'InterSystems.Data.Bindings.dll')) }
+                $bindingFile = Join-Path $directory 'InterSystems.Data.Bindings.dll'
+                if ($family -eq 'IRIS' -and -not (Test-Path -LiteralPath $bindingFile -PathType Leaf)) {
+                    throw [IO.FileNotFoundException]::new('Die für Objektzugriffe benötigte InterSystems.Data.Bindings.dll fehlt.', $bindingFile)
+                }
+                # Load the client first, then its bindings from the same directory.
                 $assembly = [Reflection.Assembly]::LoadFrom($file)
+                $bindings = if ($family -eq 'IRIS') { [Reflection.Assembly]::LoadFrom($bindingFile) } else { $assembly }
                 $connection = if ($family -eq 'IRIS') { 'InterSystems.Data.IRISClient.BindingsConnection' } else { 'InterSystems.Data.CacheClient.CacheConnection' }
                 $types = 'InterSystems.Data.' + $family + 'Types.'
-                $connectionType = $connection -as [type]
-                $objectType = ($types + $family + 'Object') -as [type]
-                $clientType = ($types + 'ClientTypeId') -as [type]
-                $binaryStreamType = ($types + $family + 'BinaryStream') -as [type]
-                $builderType = ('InterSystems.Data.' + $family + 'Client.' + $family + 'ConnectionStringBuilder') -as [type]
-                if ($null -eq $connectionType -or $null -eq $objectType -or $null -eq $clientType -or $null -eq $builderType -or $null -eq $binaryStreamType) { throw 'Provider unvollständig.' }
+                # Resolve on the loaded assemblies, not PowerShell's global type
+                # cache, which may retain a failed lookup or a different version.
+                $connectionType = $bindings.GetType($connection, $true)
+                $objectType = $bindings.GetType(($types + $family + 'Object'), $true)
+                $clientType = $bindings.GetType(($types + 'ClientTypeId'), $true)
+                $binaryStreamType = $bindings.GetType(($types + $family + 'BinaryStream'), $true)
+                $builderType = $assembly.GetType(('InterSystems.Data.' + $family + 'Client.' + $family + 'ConnectionStringBuilder'), $true)
+                Progress 'IRIS-Provider' ("$family aus '$directory' geladen; " + $(if ([Environment]::Is64BitProcess) { '64' } else { '32' }) + '-Bit Windows PowerShell.')
                 return [pscustomobject]@{ ConnectionType=$connectionType; ObjectType=$objectType; ClientType=$clientType; BuilderType=$builderType; BinaryStreamType=$binaryStreamType }
-            } catch { throw "InterSystems-$family-Provider in '$directory' konnte nicht geladen werden. Installation prüfen." }
+            } catch {
+                $failure = "$family '$directory': " + (GetSoftwareDatabaseProviderError $_.Exception)
+                $failures.Add($failure)
+                Progress 'IRIS-Provider' ($failure + ' Weiteren Provider prüfen.')
+            }
         }
     }
-    throw 'Kein InterSystems-.NET-Framework-Provider in den Installationsverzeichnissen gefunden.'
+    $details = if ($failures.Count -gt 0) { $failures -join ' | ' } else { 'Keine Client-DLL gefunden. Gesuchte Verzeichnisse: ' + ($Directories -join ', ') }
+    $runtime = $(if ([Environment]::Is64BitProcess) { '64' } else { '32' }) + '-Bit Windows PowerShell, CLR ' + [Environment]::Version
+    throw ("Kein ladbarer InterSystems-.NET-Framework-Provider für Objektzugriffe gefunden ($runtime). " + $details)
 }
 
 function OpenSoftwareDatabase($Provider, $Definition, [string]$Namespace) {
@@ -437,7 +476,7 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
         $resolved = @($Packages | ForEach-Object { ResolveSoftwareMsi $_ $workRoot })
         if (@($resolved.Application | Sort-Object -Unique).Count -ne $resolved.Count) { throw 'Ein MSI-Produkt wurde mehrfach ausgewählt.' }
         foreach ($target in $Targets) {
-            $directories = @('dev\dotnet\bin\v4.5', 'dev\dotnet\bin\v4.0.30319') | ForEach-Object { Join-Path ([string]$target.Directory) $_ }
+            $directories = @(GetSoftwareDatabaseProviderDirectories ([string]$target.Directory))
             $provider = InitializeSoftwareDatabaseProvider $directories
             $definition = [pscustomobject]@{ Server='127.0.0.1'; Port=[int]$target.Port; User=[string]$target.User; Password=[string]$target.Password; Ssl=[bool]$target.Ssl }
             $namespaces = @($target.Namespaces | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -and -not $_.StartsWith('%') } | Sort-Object -Unique)

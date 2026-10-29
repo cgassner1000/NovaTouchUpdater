@@ -102,8 +102,11 @@ Die Python-Bereinigung wird lokal und remote mit alten Dateien und Unterordnern,
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SoftwareDatabase.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SoftwareDatabaseProvider.Tests.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\SoftwareDatabaseDiscovery.Tests.ps1
 ```
+
+`SoftwareDatabaseProvider.Tests.ps1` lädt eigens erzeugte minimale Assemblies mit der tatsächlichen CLR von Windows PowerShell. Geprüft werden die Suche nach Framework-Providern einschließlich `v4.6.2`, Ausschluss inkompatibler .NET/Core-Verzeichnisse, Versionsreihenfolge, abhängige Bindings, Fallback nach fehlenden oder beschädigten DLLs und genaue Fehlermeldungen mit Pfad, Exception-Typ und HRESULT. Es werden keine installierten Anwendungs-DLLs verwendet oder Datenbankverbindungen geöffnet. Bereits geladene Test-DLLs können bis zum Prozessende gesperrt bleiben und liegen ausschließlich unter `artifacts/test-results`.
 
 `SoftwareDatabaseDiscovery.Tests.ps1` verwendet simulierte Update-Dienste und Konfigurationen in Testordnern. Geprüft werden NTC-XML, POS-INI ohne Einstellungen-Ordner, Unicode, verschlüsselte Zugangsdaten, Server/Port/Namespace/SSL, doppelte Verbindungen, gestoppte Dienste, Dienstnamen und Anzeigenamen, EXE-Pfade mit Leerzeichen/Parametern/Umgebungsvariablen sowie fehlende und ungültige Konfigurationen. Registrierungszugriffe auf Programme sowie Dienststarts und Prozessstarts führen im Test zum Fehler. Die tatsächlichen Windows-Dienste werden nicht abgefragt oder verändert.
 
