@@ -46,8 +46,8 @@ internal static partial class Program
             Assert(staged.LocalExecution && worker.Requests.First().Action == "stage-packages" && worker.Requests.Count(r => r.Action == "update") == 4,
                 "the confirmed update execution stages all chosen LOCALHOST packages before individual component updates");
             Assert(worker.Requests.All(r => r.Action != "publish-msi-packages") &&
-                !((string)Call(form, "UpdateConfirmation", (object)new[] { local }, components, false)!).Contains("zzzSoftware"),
-                "local updates and their confirmation contain no database upload or database prerequisite");
+                ((string)Call(form, "UpdateConfirmation", (object)new[] { local }, components, false)!).Contains("zzzSoftware"),
+                "local updates without local IRIS instances skip database upload and the confirmation describes the upload step");
             Assert(staged.TransferFiles.Length == 4 && staged.TransferFiles.Any(f => f.RelativePath == @"cabinets\data.cab") &&
                 staged.TransferFiles.Select(f => f.RelativePath).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 4 && staged.TransferFiles.All(f => f.Sha256.Length == 64),
                 "local staging includes ZIPs, MSI payloads and companion cabinets while deduplicating a shared ZIP");
@@ -60,7 +60,7 @@ internal static partial class Program
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
             Assert(worker.Requests.Single(r => r.Action == "stage-packages") is { LocalExecution: true, SkipZipTransfer: false } &&
                 local.Result == "Übersprungen" && !local.Phase.Contains("zzzSoftware"),
-                "absent products are skipped without a database upload and the remote transfer option stays remote-only");
+                "absent products are skipped and the remote transfer option stays remote-only");
 
             remote[0].Updates = new(components);
             worker.Requests.Clear();
@@ -106,6 +106,33 @@ internal static partial class Program
             Assert(worker.Requests.Single(r => r.Action == "stage-packages").TransferFiles.Length == 2 &&
                 worker.Requests.Single(r => r.Action == "update").MsiPackage?.Kind == "ntc" && worker.Requests.All(r => r.Action != "publish-msi-packages"),
                 "local retries stage and update only the pending component without needing completed package sources");
+
+            File.WriteAllText(payment, "Restored payment"); File.WriteAllText(bundle, "Restored shared ZIP");
+            SetField(form, "prepareDatabaseTargets", new Func<CancellationToken, Task<IrisUploadTarget[]>>(_ => Task.FromResult(new[] {
+                new IrisUploadTarget { Instance="TEST", Directory=root, Port=51774, Namespaces=["APP", "USER"], User="fixture", Password="synthetic-secret" }
+            })));
+            local.Updates = new(components); local.Scanned = true;
+            worker.Requests.Clear();
+            Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
+            WorkerRequest upload = worker.Requests.First();
+            Assert(upload is { Action: "publish-msi-packages", LocalExecution: true, MsiPackages.Length: 3, DatabaseTargets.Length: 1 } &&
+                upload.MsiPackages.All(package => package.Sha256.Length == 64) && worker.Requests.ElementAt(1).Action == "stage-packages",
+                "all selected MSI packages upload to local CPF targets before copying or installation, independently of installed versions");
+            worker.Requests.Clear(); worker.FailPublication = true; local.Updates = new(components);
+            Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
+            Assert(worker.Requests.Count == 1 && local.Result == "Fehler" && local.Updates.Pending == components && !local.Updates.DatabaseUploadCompleted,
+                "publication failure prevents copying and installation and retains every pending component");
+            worker.Requests.Clear(); worker.FailPublication = false; worker.FailStaging = true;
+            Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
+            Assert(local.Updates.DatabaseUploadCompleted && worker.Requests.Select(request => request.Action).SequenceEqual(["publish-msi-packages", "stage-packages"]),
+                "a successful publication is retained when later copying fails");
+            foreach (UpdateComponents completed in new[] { UpdateComponents.Payment, UpdateComponents.Pos, UpdateComponents.Ntv })
+                local.Updates.Complete(completed, new WorkerResult { Success=true });
+            File.Delete(payment); File.Delete(bundle);
+            worker.Requests.Clear(); worker.FailStaging = false;
+            Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
+            Assert(worker.Requests.All(request => request.Action != "publish-msi-packages") && worker.Requests.Last().MsiPackage?.Kind == "ntc",
+                "retry after a successful upload neither republishes completed MSIs nor requires their deleted source files");
         }
         finally
         {
@@ -119,10 +146,13 @@ internal static partial class Program
         internal ConcurrentQueue<WorkerRequest> Requests { get; } = new();
         internal bool Installed { get; set; } = true;
         internal bool FailStaging { get; set; }
+        internal bool FailPublication { get; set; }
         public Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> onProgress, CancellationToken ct)
         {
             Requests.Enqueue(request);
-            if (request.Action is not ("probe" or "scan" or "stage-packages" or "update")) throw new InvalidOperationException("Unexpected request in update fixture");
+            if (request.Action is not ("probe" or "scan" or "stage-packages" or "publish-msi-packages" or "update")) throw new InvalidOperationException("Unexpected request in update fixture");
+            if (request.Action == "publish-msi-packages" && !request.LocalExecution) throw new InvalidOperationException("Database upload must remain local");
+            if (request.Action == "publish-msi-packages" && FailPublication) return Task.FromResult(new WorkerResult { Success=false, Error="Upload fixture failure" });
             if (request.Action == "stage-packages" && !request.LocalExecution) throw new InvalidOperationException("Bulk staging must never target a remote host");
             if (request.Host == "PC-C.invalid") return Task.FromResult(new WorkerResult { Success=false, Error="Offline test fixture" });
             if (request.Action == "stage-packages" && FailStaging) return Task.FromResult(new WorkerResult { Success=false, Error="Copy fixture failure" });

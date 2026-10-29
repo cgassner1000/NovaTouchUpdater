@@ -4,6 +4,7 @@
   "PasswordProtectionScope": "LocalMachine",
   "EncryptedPassword": "",
   "UseSsl": false,
+  "IrisUseTls": false,
   "ScanOnStartup": true,
   "SkipLocalPackageCopy": false,
   "SkipZipTransfer": false,

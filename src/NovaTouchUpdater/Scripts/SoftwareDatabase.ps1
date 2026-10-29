@@ -173,7 +173,7 @@ function FindSoftwareDatabaseConfiguration {
 }
 
 function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
-    # Use the provider shipped with the installed NTC/POS. Dynamic binding avoids
+    # Use a provider shipped with the installation. Dynamic binding avoids
     # loading AP.Sys and its UI/configuration side effects or distributing its DLLs.
     foreach ($family in @('IRIS', 'Cache')) {
         foreach ($directory in $Directories) {
@@ -187,13 +187,14 @@ function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
                 $connectionType = $connection -as [type]
                 $objectType = ($types + $family + 'Object') -as [type]
                 $clientType = ($types + 'ClientTypeId') -as [type]
+                $binaryStreamType = ($types + $family + 'BinaryStream') -as [type]
                 $builderType = ('InterSystems.Data.' + $family + 'Client.' + $family + 'ConnectionStringBuilder') -as [type]
-                if ($null -eq $connectionType -or $null -eq $objectType -or $null -eq $clientType -or $null -eq $builderType) { throw 'Provider unvollständig.' }
-                return [pscustomobject]@{ ConnectionType=$connectionType; ObjectType=$objectType; ClientType=$clientType; BuilderType=$builderType }
+                if ($null -eq $connectionType -or $null -eq $objectType -or $null -eq $clientType -or $null -eq $builderType -or $null -eq $binaryStreamType) { throw 'Provider unvollständig.' }
+                return [pscustomobject]@{ ConnectionType=$connectionType; ObjectType=$objectType; ClientType=$clientType; BuilderType=$builderType; BinaryStreamType=$binaryStreamType }
             } catch { throw "InterSystems-$family-Provider in '$directory' konnte nicht geladen werden. Installation prüfen." }
         }
     }
-    throw 'Kein InterSystems-.NET-Provider im NTC/POS-Programmverzeichnis gefunden.'
+    throw 'Kein InterSystems-.NET-Framework-Provider in den Installationsverzeichnissen gefunden.'
 }
 
 function OpenSoftwareDatabase($Provider, $Definition, [string]$Namespace) {
@@ -263,14 +264,16 @@ function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transactio
         }
         $signature = $Connection.GetMtdSignature()
         try {
-            $signature.SetReturnType($Connection, [Enum]::Parse($Provider.ClientType, 'tObject'))
+            # Like the generated nt2-dotnet proxy, request the binary-stream
+            # projection, rather than a generic IRISObject with no Write method.
+            $signature.SetReturnType($Connection, $Provider.BinaryStreamType)
             $obj.GetProperty('Datei', $signature); $stream = $signature.ReturnValue.Value
         } finally { $signature.Clear() }
         if ($null -eq $stream) { throw 'zzzSoftware.Datei ist kein Binärstream.' }
         [void]$stream.Clear()
         $file = [IO.File]::Open($Resolved.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
         $hasher = [Security.Cryptography.SHA256]::Create()
-        $buffer = New-Object byte[] 65536
+        $buffer = New-Object byte[] 30720
         $done = 0L; $clock = [Diagnostics.Stopwatch]::StartNew()
         while (($read = $file.Read($buffer, 0, $buffer.Length)) -gt 0) {
             $stream.Write($buffer, 0, $read)
@@ -403,6 +406,74 @@ function PublishSelectedSoftwarePackages([object[]]$Packages) {
         Emit @{ Event='result'; Success=$true; Changed=($count -gt 0); Message=($resolved.Count.ToString() + " MSI-Paket(e) in $count Namespace(s) gespeichert."); Services=@() }
     } finally {
         # Only delete our own, resolved GUID directory, never application settings.
+        if ($workRoot.StartsWith($tempBase + '\', [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($workRoot) -match '^database-msi-[0-9a-f]{32}$') {
+            Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+# Targets come from the same local registry/active-CPF inventory as Database
+# Check. Never use an application's SERVER setting as an upload destination.
+function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Targets) {
+    if ($Packages.Count -eq 0) { throw 'Keine MSI-Pakete für zzzSoftware ausgewählt.' }
+    if ($Targets.Count -eq 0) { throw 'Keine lokalen IRIS-Instanzen für zzzSoftware übergeben.' }
+    $seenInstances = @{}; $seenPorts = @{}
+    foreach ($target in $Targets) {
+        if (-not $target.Instance -or -not [IO.Path]::IsPathRooted([string]$target.Directory) -or
+            [int]$target.Port -lt 1 -or [int]$target.Port -gt 65535 -or -not $target.User -or -not $target.Password) {
+            throw 'Lokale IRIS-Konfiguration oder Zugangsdaten fehlen. BETA: Database Check prüfen.'
+        }
+        if ($seenInstances.ContainsKey([string]$target.Instance) -or $seenPorts.ContainsKey([int]$target.Port)) { throw 'Mehrdeutige lokale IRIS-Instanz oder mehrfach verwendeter SuperServer-Port.' }
+        $seenInstances[[string]$target.Instance] = $true; $seenPorts[[int]$target.Port] = $true
+    }
+    $tempBase = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) 'NovaTouchUpdater'))
+    $workRoot = [IO.Path]::GetFullPath((Join-Path $tempBase ('database-msi-' + [guid]::NewGuid().ToString('N'))))
+    [void][IO.Directory]::CreateDirectory($workRoot)
+    $eligible = [Collections.Generic.List[object]]::new()
+    $count = 0; $skipped = 0
+    try {
+        # Verify every selected MSI before modifying any namespace. Only the MSI
+        # inside an archive is resolved; ZIPs and companion cabinets are excluded.
+        $resolved = @($Packages | ForEach-Object { ResolveSoftwareMsi $_ $workRoot })
+        if (@($resolved.Application | Sort-Object -Unique).Count -ne $resolved.Count) { throw 'Ein MSI-Produkt wurde mehrfach ausgewählt.' }
+        foreach ($target in $Targets) {
+            $directories = @('dev\dotnet\bin\v4.5', 'dev\dotnet\bin\v4.0.30319') | ForEach-Object { Join-Path ([string]$target.Directory) $_ }
+            $provider = InitializeSoftwareDatabaseProvider $directories
+            $definition = [pscustomobject]@{ Server='127.0.0.1'; Port=[int]$target.Port; User=[string]$target.User; Password=[string]$target.Password; Ssl=[bool]$target.Ssl }
+            $namespaces = @($target.Namespaces | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) -and $_ -ine '%SYS' } | Sort-Object -Unique)
+            foreach ($namespace in $namespaces) {
+                $key = [string]$target.Instance + ':' + $target.Port + '/' + $namespace
+                $connection = $null
+                try {
+                    Progress 'zzzSoftware-Vorprüfung' $key 0
+                    $connection = OpenSoftwareDatabase $provider $definition $namespace
+                    $exists = InvokeSoftwareObjectMethod $provider $connection $null '%ExistsId' 'tBool' @('User.zzzSoftware') '%Dictionary.CompiledClass'
+                    if (-not $exists) { Progress 'zzzSoftware' ($key + ' · keine zzzSoftware-Klasse, übersprungen') 0; $skipped++; continue }
+                    $eligible.Add([pscustomobject]@{ Key=$key; Provider=$provider; Connection=$connection })
+                    $connection = $null # Ownership is transferred to the eligible list.
+                } catch { throw "zzzSoftware-Vorprüfung für $key fehlgeschlagen. IRIS-Zugang und Berechtigungen prüfen. Keine lokale Installation gestartet." }
+                finally { if ($null -ne $connection) { $connection.Dispose() } }
+            }
+        }
+        if ($eligible.Count -eq 0) { throw 'Keine zzzSoftware in den konfigurierten lokalen IRIS-Namespaces gefunden. Keine lokale Installation gestartet.' }
+        foreach ($destination in $eligible) {
+            $transaction = $null
+            try {
+                $transaction = $destination.Connection.BeginTransaction()
+                foreach ($msi in $resolved) {
+                    Progress 'zzzSoftware' ($destination.Key + ' · ' + $msi.Package.ProductName + ' ' + $msi.Package.ProductVersion) 0
+                    WriteSoftwareDatabaseMsi $destination.Provider $destination.Connection $msi $transaction
+                }
+                $transaction.Commit(); $count++
+                Progress 'zzzSoftware' ($destination.Key + ' · alle ausgewählten MSIs gespeichert') 100
+            } catch {
+                if ($null -ne $transaction) { try { $transaction.Rollback() } catch { } }
+                throw "zzzSoftware-Upload nach $($destination.Key) fehlgeschlagen. Der betroffene Namespace wurde zurückgesetzt. Keine lokale Installation gestartet; bereits abgeschlossene Namespaces: $count."
+            } finally { if ($null -ne $transaction) { $transaction.Dispose() } }
+        }
+        Emit @{ Event='result'; Success=$true; Changed=($count -gt 0); Message=($resolved.Count.ToString() + " MSI-Paket(e) in $count lokalen Namespace(s) gespeichert; $skipped ohne zzzSoftware übersprungen."); Services=@() }
+    } finally {
+        foreach ($destination in $eligible) { $destination.Connection.Dispose() }
         if ($workRoot.StartsWith($tempBase + '\', [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($workRoot) -match '^database-msi-[0-9a-f]{32}$') {
             Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

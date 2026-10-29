@@ -22,6 +22,8 @@ internal static partial class Program
             if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
             if (args.Contains("--startup")) { StartupChecksTests(); return 0; }
             if (args.Contains("--winrm")) { WinRmPreparationTests(); return 0; }
+            if (args.Contains("--database")) { DatabaseCheckTests(); return 0; }
+            if (args.Contains("--database-live")) { DatabaseCheckLiveSmoke(); return 0; }
             if (args.Contains("--sections")) { ExpandableSectionTests(); return 0; }
             if (args.Contains("--hosts")) { HostManagementTests(); SelectionTests(); return 0; }
             if (!args.Contains("--layout"))
@@ -33,6 +35,7 @@ internal static partial class Program
                 HostManagementTests();
                 StartupChecksTests();
                 WinRmPreparationTests();
+                DatabaseCheckTests();
                 ScanTests();
                 ScanPipelineTests();
                 UpdateRetryTests();

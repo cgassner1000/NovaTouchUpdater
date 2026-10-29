@@ -16,6 +16,10 @@ namespace SoftwareDatabaseFixture
         public ReturnValue ReturnValue = new ReturnValue();
         public List<string> Arguments = new List<string>();
         public void SetReturnType(Connection connection, ClientType type) { }
+        public void SetReturnType(Connection connection, Type type)
+        {
+            if (type != typeof(BinaryStream)) throw new Exception("Unexpected stream projection");
+        }
         public void Add(string value, bool byReference) { Arguments.Add(value); }
         public void Clear() { Arguments.Clear(); ReturnValue.Value = null; }
     }
@@ -29,7 +33,9 @@ namespace SoftwareDatabaseFixture
         public static List<Entry> Entries = new List<Entry>();
         public static List<string> Events = new List<string>();
         public static string FailTarget = "";
+        public static string FailOpenTarget = "";
         public static string[] Namespaces = { "%SYS", "MANDANT1", "MANDANT2" };
+        public static string[] MissingSchemaNamespaces = { "EMPTY" };
     }
     public sealed class Builder
     {
@@ -43,7 +49,7 @@ namespace SoftwareDatabaseFixture
         public int ConnectionTimeout { get; set; }
         public string ConnectionString
         {
-            get { var b = new DbConnectionStringBuilder(); b["Server"] = Server; b["Namespace"] = Namespace; return b.ConnectionString; }
+            get { var b = new DbConnectionStringBuilder(); b["Server"] = Server; b["Port"] = Port; b["Namespace"] = Namespace; return b.ConnectionString; }
         }
     }
     public sealed class Connection : IDisposable
@@ -53,8 +59,9 @@ namespace SoftwareDatabaseFixture
         public void Open()
         {
             var b = new DbConnectionStringBuilder(); b.ConnectionString = ConnectionString;
-            Namespace = (string)b["Namespace"]; Target = b["Server"] + "/" + Namespace;
+            Namespace = (string)b["Namespace"]; Target = b["Server"] + ((string)b["Server"] == "127.0.0.1" ? ":" + b["Port"] : "") + "/" + Namespace;
             Database.Events.Add("open:" + Target);
+            if (Database.FailOpenTarget == Target) throw new Exception("Password=synthetic-secret; simulated login failure");
         }
         public Signature GetMtdSignature() { return new Signature(); }
         public Transaction BeginTransaction() { return new Transaction(this); }
@@ -126,7 +133,7 @@ namespace SoftwareDatabaseFixture
         public static void RunClassMethod(Connection connection, string className, string method, Signature signature)
         {
             if (className != "%Dictionary.CompiledClass" || method != "%ExistsId" || signature.Arguments[0] != "User.zzzSoftware") throw new Exception("Unexpected class method");
-            signature.ReturnValue.Value = connection.Namespace != "%SYS";
+            signature.ReturnValue.Value = connection.Namespace != "%SYS" && !Database.MissingSchemaNamespaces.Contains(connection.Namespace);
         }
         public void SetProperty(string name, Signature signature) { properties[name] = signature.Arguments[0]; }
         public void GetProperty(string name, Signature signature)

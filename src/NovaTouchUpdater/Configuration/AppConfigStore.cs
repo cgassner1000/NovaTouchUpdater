@@ -12,6 +12,7 @@ internal sealed class UpdaterConfig
     public string? RemotePath { get; set; }
     public string? Username { get; set; }
     public bool UseSsl { get; set; }
+    public bool IrisUseTls { get; set; }
     public bool ScanOnStartup { get; set; } = true;
     public bool SkipLocalPackageCopy { get; set; }
     public bool SkipZipTransfer { get; set; }
@@ -67,6 +68,7 @@ internal static class AppConfigStore
         {
             Hosts = NormalizeHosts(settings.Hosts), RemotePath = settings.RemotePath,
             Username = settings.Username, UseSsl = settings.UseSsl, HttpsPort = settings.HttpsPort,
+            IrisUseTls = settings.IrisUseTls,
             ExecutionMode = settings.ExecutionMode, SoftwarePath = settings.SoftwarePath,
             ScanOnStartup = settings.ScanOnStartup,
             SkipLocalPackageCopy = settings.SkipLocalPackageCopy, SkipZipTransfer = settings.SkipZipTransfer,

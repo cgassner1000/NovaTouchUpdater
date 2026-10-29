@@ -18,7 +18,7 @@ Add-Type -Path (Join-Path $PSScriptRoot '..\Shared\SoftwareDatabaseFake.cs') -Re
 function Progress { param($Phase,$Message,$Percent) $script:progress.Add([string]$Message) }
 function Emit($Value) { $script:results.Add($Value) }
 function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
-    [pscustomobject]@{ ConnectionType=[SoftwareDatabaseFixture.Connection]; BuilderType=[SoftwareDatabaseFixture.Builder]; ObjectType=[SoftwareDatabaseFixture.DynamicObject]; ClientType=[SoftwareDatabaseFixture.ClientType] }
+    [pscustomobject]@{ ConnectionType=[SoftwareDatabaseFixture.Connection]; BuilderType=[SoftwareDatabaseFixture.Builder]; ObjectType=[SoftwareDatabaseFixture.DynamicObject]; ClientType=[SoftwareDatabaseFixture.ClientType]; BinaryStreamType=[SoftwareDatabaseFixture.BinaryStream] }
 }
 function Get-CimInstance {
     param($ClassName,$Filter,$ErrorAction,$ComputerName)
@@ -139,7 +139,40 @@ try {
     ExpectFailure { PublishSelectedSoftwarePackages @($pos) } 'missing NTC/POS update services prevent local installation'
     Assert (@(Get-ChildItem -LiteralPath (Join-Path $fixture 'NovaTouchUpdater') -Directory).Count -eq 0) 'temporary MSI extraction is also cleaned on errors'
 
-    # The reference upload routine is isolated; the app must reject this action.
+    # CPF targets determine local destinations, independently of NTC/POS or the
+    # provider's namespace enumeration. Only %SYS is excluded, including USER.
+    [SoftwareDatabaseFixture.Database]::Entries.Clear(); [SoftwareDatabaseFixture.Database]::Events.Clear()
+    $targets = @(
+        [pscustomobject]@{ Instance='FIRST'; Directory=$fixture; Port=1972; Namespaces=@('%SYS','USER','MANDANT1','EMPTY','user'); User='test'; Password='synthetic-secret'; Ssl=$false },
+        [pscustomobject]@{ Instance='SECOND'; Directory=$fixture; Port=51774; Namespaces=@('MANDANT2'); User='test'; Password='synthetic-secret'; Ssl=$false }
+    )
+    $selected = @($ntc,$pos,$ntv,$oman); $script:results.Clear()
+    $queriesBefore = $script:serviceQueries
+    PublishLocalIrisSoftwarePackages $selected $targets
+    Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and $script:results[0].Success -and $script:serviceQueries -eq $queriesBefore) 'local CPF targets upload all selected MSIs into every eligible namespace on both instance ports without NTC/POS queries'
+    Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.Contains('/%SYS') }) -and
+        [SoftwareDatabaseFixture.Database]::Events -contains 'commit:127.0.0.1:1972/USER') 'local upload never connects to %SYS but includes USER, deduplicates names and uses only loopback'
+    Assert ($script:progress.Exists([Predicate[string]]{ param($line) $line.Contains('/EMPTY') -and $line.Contains('übersprungen') })) 'a namespace without zzzSoftware is explicitly reported and skipped'
+    PublishLocalIrisSoftwarePackages $selected $targets
+    Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'local repeat replaces existing setups without duplicates'
+    [SoftwareDatabaseFixture.Database]::FailTarget = '127.0.0.1:1972/MANDANT1'
+    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets } 'local write failure stops before installation and sanitizes provider secrets'
+    Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and [SoftwareDatabaseFixture.Database]::Events.Contains('rollback:127.0.0.1:1972/MANDANT1')) 'local namespace failure preserves the old complete MSI set with transaction rollback'
+    [SoftwareDatabaseFixture.Database]::FailTarget = ''
+    $ntc.Sha256 = '0' * 64
+    $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
+    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets } 'local source checksum failure prevents all database connections'
+    Assert ([SoftwareDatabaseFixture.Database]::Events.Count -eq $eventsBefore) 'MSI content is verified before any namespace is opened'
+    $ntc.Sha256 = (Get-FileHash -LiteralPath $ntc.PayloadPath -Algorithm SHA256).Hash
+    ExpectFailure { PublishLocalIrisSoftwarePackages $selected @($targets[0],$targets[0]) } 'ambiguous duplicate instance ports are rejected'
+    [SoftwareDatabaseFixture.Database]::Events.Clear()
+    [SoftwareDatabaseFixture.Database]::FailOpenTarget = '127.0.0.1:51774/MANDANT2'
+    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets } 'an inaccessible later instance fails preflight without exposing credentials'
+    Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.StartsWith('begin:') }) -and
+        [SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'all namespace connections are checked before the first transaction or replacement'
+    [SoftwareDatabaseFixture.Database]::FailOpenTarget = ''
+
+    # Dispatch also enforces local-only execution before any remoting or service work.
     $source = [IO.File]::ReadAllText((Join-Path $TestScriptsRoot 'RemoteWorker.ps1'))
     $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$null, [ref]$null)
     $inventory = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ReadSoftwareInventory' }, $true)
@@ -149,13 +182,13 @@ try {
     $worker = [scriptblock]::Create($source); $script:services = @($ntcService)
     foreach ($local in @($true,$false)) {
         $queriesBefore = $script:serviceQueries; $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
-        $script:requestJson = @{ Action='publish-msi-packages'; LocalExecution=$local; MsiPackages=@($ntc,$pos); Host='fixture.invalid' } | ConvertTo-Json -Depth 8 -Compress
+        $script:requestJson = @{ Action='publish-msi-packages'; LocalExecution=$local; MsiPackages=@($ntc,$pos); DatabaseTargets=$targets; Host='fixture.invalid' } | ConvertTo-Json -Depth 8 -Compress
         $writer = [IO.StringWriter]::new(); $previous = [Console]::Out
         try { [Console]::SetOut($writer); & $worker } finally { [Console]::SetOut($previous) }
         $events = @($writer.ToString() -split '\r?\n' | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
         $result = @($events | Where-Object Event -eq 'result')
-        Assert ($result.Count -eq 1 -and -not $result[0].Success -and $result[0].Error.Contains('deaktiviert') -and
-            $script:serviceQueries -eq $queriesBefore -and [SoftwareDatabaseFixture.Database]::Events.Count -eq $eventsBefore) 'the application rejects disabled database uploads before service queries, database connections or remote connections'
+        Assert ($result.Count -eq 1 -and $result[0].Success -eq $local -and $script:serviceQueries -eq $queriesBefore) 'worker dispatch allows local publication and performs no service or uninstall queries'
+        if (-not $local) { Assert ($result[0].Error.Contains('ausschließlich lokal') -and [SoftwareDatabaseFixture.Database]::Events.Count -eq $eventsBefore) 'remote publication is rejected before database connections or WinRM' }
     }
     Write-Host 'PASS SoftwareDatabase tests completed without connecting to a database or running an installer'
 } finally {

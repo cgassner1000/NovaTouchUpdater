@@ -12,6 +12,7 @@ public sealed class WorkerRequest
     public bool LocalExecution { get; set; }
     public MsiPackageRequest? MsiPackage { get; set; }
     public MsiPackageRequest[] MsiPackages { get; set; } = [];
+    public IrisUploadTarget[] DatabaseTargets { get; set; } = [];
     public string Host { get; set; } = "";
     public string[] Hosts { get; set; } = [];
     public int Parallelism { get; set; } = 40;
@@ -39,6 +40,17 @@ public sealed class WorkerRequest
     public bool RestartPayment { get; set; }
     public bool RestartFiscal { get; set; }
     public bool StartServerSuite { get; set; }
+}
+
+public sealed class IrisUploadTarget
+{
+    public string Instance { get; set; } = "";
+    public string Directory { get; set; } = "";
+    public int Port { get; set; }
+    public string[] Namespaces { get; set; } = [];
+    public string User { get; set; } = "";
+    public string Password { get; set; } = "";
+    public bool Ssl { get; set; }
 }
 
 public sealed class TransferFileRequest
@@ -146,7 +158,7 @@ public sealed class WorkerRunner : IWorkerRunner
         string script = reader.ReadToEnd();
         if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
         {
-            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory", "MsiUpdates" })
+            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory", "MsiUpdates", "SoftwareDatabase" })
             {
                 using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream($"NovaTouchUpdater.{helper}.ps1")
                     ?? throw new InvalidOperationException($"Die eingebetteten Schritte {helper} fehlen.");
