@@ -15,6 +15,7 @@
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Dialogs/CommandDialog.cs" Link="CommandDialog.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Dialogs/UploadDirectoryDialog.cs" Link="UploadDirectoryDialog.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Remoting/WorkerRunner.cs" Link="WorkerRunner.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Remoting/BundledIrisProvider.cs" Link="BundledIrisProvider.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Layout/WindowLayout.cs" Link="WindowLayout.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Controls/WrappingFlowLayoutPanel.cs" Link="WrappingFlowLayoutPanel.cs" />
   </ItemGroup>

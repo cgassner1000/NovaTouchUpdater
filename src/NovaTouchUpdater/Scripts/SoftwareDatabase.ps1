@@ -197,11 +197,11 @@ function GetSoftwareDatabaseProviderError($Exception) {
     return ($text -replace '[\r\n]+', ' ').Trim()
 }
 
-function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
+function InitializeSoftwareDatabaseProvider([string[]]$Directories, [string[]]$Families = @('IRIS', 'Cache')) {
     # Use a provider shipped with the installation. Dynamic binding avoids
     # loading AP.Sys and its UI/configuration side effects or distributing its DLLs.
     $failures = [Collections.Generic.List[string]]::new()
-    foreach ($family in @('IRIS', 'Cache')) {
+    foreach ($family in $Families) {
         foreach ($directory in $Directories) {
             $file = Join-Path $directory "InterSystems.Data.${family}Client.dll"
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
@@ -453,9 +453,12 @@ function PublishSelectedSoftwarePackages([object[]]$Packages) {
 
 # Targets come from the same local registry/active-CPF inventory as Database
 # Check. Never use an application's SERVER setting as an upload destination.
-function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Targets) {
+function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Targets, [string]$ProviderDirectory) {
     if ($Packages.Count -eq 0) { throw 'Keine MSI-Pakete für zzzSoftware ausgewählt.' }
     if ($Targets.Count -eq 0) { throw 'Keine lokalen IRIS-Instanzen für zzzSoftware übergeben.' }
+    if ([string]::IsNullOrWhiteSpace($ProviderDirectory) -or -not [IO.Path]::IsPathRooted($ProviderDirectory)) {
+        throw 'Der mitgelieferte IRIS-Provider wurde nicht bereitgestellt. Updater erneut starten.'
+    }
     $seenInstances = @{}; $seenPorts = @{}
     foreach ($target in $Targets) {
         if (-not $target.Instance -or -not [IO.Path]::IsPathRooted([string]$target.Directory) -or
@@ -475,9 +478,10 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
         # inside an archive is resolved; ZIPs and companion cabinets are excluded.
         $resolved = @($Packages | ForEach-Object { ResolveSoftwareMsi $_ $workRoot })
         if (@($resolved.Application | Sort-Object -Unique).Count -ne $resolved.Count) { throw 'Ein MSI-Produkt wurde mehrfach ausgewählt.' }
+        # Load only the pinned NuGet payload extracted from our EXE. Never search
+        # installed IRIS/NTC/POS directories or switch to an installed driver.
+        $provider = InitializeSoftwareDatabaseProvider @($ProviderDirectory) @('IRIS')
         foreach ($target in $Targets) {
-            $directories = @(GetSoftwareDatabaseProviderDirectories ([string]$target.Directory))
-            $provider = InitializeSoftwareDatabaseProvider $directories
             $definition = [pscustomobject]@{ Server='127.0.0.1'; Port=[int]$target.Port; User=[string]$target.User; Password=[string]$target.Password; Ssl=[bool]$target.Ssl }
             $namespaces = @($target.Namespaces | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -and -not $_.StartsWith('%') } | Sort-Object -Unique)
             foreach ($namespace in $namespaces) {

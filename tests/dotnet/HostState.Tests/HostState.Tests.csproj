@@ -13,6 +13,7 @@
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/HostUpdateState.cs" Link="HostUpdateState.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/ConnectionState.cs" Link="ConnectionState.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Remoting/WorkerRunner.cs" Link="WorkerRunner.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Remoting/BundledIrisProvider.cs" Link="BundledIrisProvider.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Reporting/HtmlReport.cs" Link="HtmlReport.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Common/DisplayText.cs" Link="DisplayText.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/UpdatePackageNames.cs" Link="UpdatePackageNames.cs" />

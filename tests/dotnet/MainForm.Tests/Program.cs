@@ -23,6 +23,7 @@ internal static partial class Program
             if (args.Contains("--startup")) { StartupChecksTests(); return 0; }
             if (args.Contains("--winrm")) { WinRmPreparationTests(); return 0; }
             if (args.Contains("--database")) { DatabaseCheckTests(); return 0; }
+            if (args.Contains("--iris-provider")) { BundledIrisProviderTests(); return 0; }
             if (args.Contains("--database-live")) { DatabaseCheckLiveSmoke(); return 0; }
             if (args.Contains("--sections")) { ExpandableSectionTests(); return 0; }
             if (args.Contains("--hosts")) { HostManagementTests(); SelectionTests(); return 0; }
@@ -36,6 +37,7 @@ internal static partial class Program
                 StartupChecksTests();
                 WinRmPreparationTests();
                 DatabaseCheckTests();
+                BundledIrisProviderTests();
                 ScanTests();
                 ScanPipelineTests();
                 UpdateRetryTests();

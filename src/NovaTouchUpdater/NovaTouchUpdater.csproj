@@ -16,6 +16,16 @@
     <ApplicationIcon>Assets\NovaTouchUpdater.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <!-- The upload worker runs in Windows PowerShell/.NET Framework. Embed the
+         matching net462 assets, rather than referencing their net8.0 variants. -->
+    <PackageReference Include="InterSystems.Data.IRISClient" Version="2.7.0" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
+    <PackageReference Include="InterSystems.Data.Bindings" Version="2.6.3" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
+    <EmbeddedResource Include="$(PkgInterSystems_Data_IRISClient)\lib\net462\InterSystems.Data.IRISClient.dll" LogicalName="NovaTouchUpdater.IrisProvider.InterSystems.Data.IRISClient.dll" />
+    <EmbeddedResource Include="$(PkgInterSystems_Data_Bindings)\lib\net462\InterSystems.Data.Bindings.dll" LogicalName="NovaTouchUpdater.IrisProvider.InterSystems.Data.Bindings.dll" />
+    <EmbeddedResource Include="$(PkgInterSystems_Data_IRISClient)\LICENSE.txt" LogicalName="NovaTouchUpdater.IrisProvider.IRISClient.LICENSE.txt" />
+    <EmbeddedResource Include="$(PkgInterSystems_Data_Bindings)\LICENSE.txt" LogicalName="NovaTouchUpdater.IrisProvider.Bindings.LICENSE.txt" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="MainForm.Tests" />
     <EmbeddedResource Include="Assets\NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
     <EmbeddedResource Include="Assets\NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />

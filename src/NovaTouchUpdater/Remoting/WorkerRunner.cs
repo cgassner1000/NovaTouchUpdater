@@ -13,6 +13,7 @@ public sealed class WorkerRequest
     public MsiPackageRequest? MsiPackage { get; set; }
     public MsiPackageRequest[] MsiPackages { get; set; } = [];
     public IrisUploadTarget[] DatabaseTargets { get; set; } = [];
+    public string DatabaseProviderDirectory { get; set; } = "";
     public string Host { get; set; } = "";
     public string[] Hosts { get; set; } = [];
     public int Parallelism { get; set; } = 40;
@@ -146,6 +147,7 @@ public sealed class WorkerRunner : IWorkerRunner
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly string scriptFile;
+    private readonly BundledIrisProvider irisProvider = new();
 
     public WorkerRunner(string resourceName = "NovaTouchUpdater.RemoteWorker.ps1")
     {
@@ -231,6 +233,8 @@ public sealed class WorkerRunner : IWorkerRunner
 
         try
         {
+            if (request.LocalExecution && request.Action == "publish-msi-packages")
+                request.DatabaseProviderDirectory = irisProvider.EnsureExtracted();
             if (!process.Start()) throw new InvalidOperationException("Windows PowerShell konnte nicht gestartet werden.");
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
@@ -263,5 +267,6 @@ public sealed class WorkerRunner : IWorkerRunner
     public void Dispose()
     {
         try { if (File.Exists(scriptFile)) File.Delete(scriptFile); } catch { /* temporary file will remain */ }
+        irisProvider.Dispose();
     }
 }

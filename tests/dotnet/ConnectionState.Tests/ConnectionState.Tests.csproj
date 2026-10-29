@@ -10,6 +10,7 @@
     <Compile Include="$(RepositoryRoot)tests/Shared/TestWorkspace.cs" Link="TestWorkspace.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/ConnectionState.cs" Link="ConnectionState.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Remoting/WorkerRunner.cs" Link="WorkerRunner.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Remoting/BundledIrisProvider.cs" Link="BundledIrisProvider.cs" />
     <EmbeddedResource Include="MockConnectionWorker.ps1" LogicalName="ConnectionState.Tests.MockWorker.ps1" />
   </ItemGroup>
 </Project>

@@ -283,7 +283,8 @@ try {
     if ($req.Action -eq 'publish-msi-packages') {
         if (-not $localExecution) { throw 'Der zzzSoftware-Upload ist ausschließlich lokal erlaubt.' }
         if ($null -eq $req.PSObject.Properties['DatabaseTargets'] -or @($req.DatabaseTargets).Count -eq 0) { throw 'Lokale IRIS-Konfiguration für zzzSoftware fehlt.' }
-        PublishLocalIrisSoftwarePackages @($req.MsiPackages) @($req.DatabaseTargets)
+        if ($null -eq $req.PSObject.Properties['DatabaseProviderDirectory']) { throw 'Der mitgelieferte IRIS-Provider fehlt.' }
+        PublishLocalIrisSoftwarePackages @($req.MsiPackages) @($req.DatabaseTargets) ([string]$req.DatabaseProviderDirectory)
         exit 0
     }
     if (-not $localExecution -and $req.Action -in @('update','check-upload-directory','clean-upload-directory') -and

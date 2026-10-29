@@ -17,7 +17,8 @@ $env:TEMP = $fixture; $env:TMP = $fixture
 Add-Type -Path (Join-Path $PSScriptRoot '..\Shared\SoftwareDatabaseFake.cs') -ReferencedAssemblies System.Data, System.Core
 function Progress { param($Phase,$Message,$Percent) $script:progress.Add([string]$Message) }
 function Emit($Value) { $script:results.Add($Value) }
-function InitializeSoftwareDatabaseProvider([string[]]$Directories) {
+function InitializeSoftwareDatabaseProvider([string[]]$Directories, [string[]]$Families = @('IRIS', 'Cache')) {
+    $script:lastProviderDirectories = $Directories; $script:lastProviderFamilies = $Families
     [pscustomobject]@{ ConnectionType=[SoftwareDatabaseFixture.Connection]; BuilderType=[SoftwareDatabaseFixture.Builder]; ObjectType=[SoftwareDatabaseFixture.DynamicObject]; ClientType=[SoftwareDatabaseFixture.ClientType]; BinaryStreamType=[SoftwareDatabaseFixture.BinaryStream] }
 }
 function Get-CimInstance {
@@ -148,26 +149,29 @@ try {
     )
     $selected = @($ntc,$pos,$ntv,$oman); $script:results.Clear()
     $queriesBefore = $script:serviceQueries
-    PublishLocalIrisSoftwarePackages $selected $targets
+    PublishLocalIrisSoftwarePackages $selected $targets $fixture
+    Assert ($script:lastProviderDirectories.Count -eq 1 -and $script:lastProviderDirectories[0] -eq $fixture -and
+        $script:lastProviderFamilies.Count -eq 1 -and $script:lastProviderFamilies[0] -eq 'IRIS') 'local publication loads only the supplied bundled IRIS provider directory, independently of installed drivers'
     Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and $script:results[0].Success -and $script:serviceQueries -eq $queriesBefore) 'local CPF targets upload all selected MSIs into every eligible namespace on both instance ports without NTC/POS queries'
     Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.Contains('/%') }) -and
         [SoftwareDatabaseFixture.Database]::Events -contains 'commit:127.0.0.1:1972/USER') 'local upload never connects to percent-prefixed namespaces but includes USER, deduplicates names and uses only loopback'
     Assert ($script:progress.Exists([Predicate[string]]{ param($line) $line.Contains('/EMPTY') -and $line.Contains('übersprungen') })) 'a namespace without zzzSoftware is explicitly reported and skipped'
-    PublishLocalIrisSoftwarePackages $selected $targets
+    PublishLocalIrisSoftwarePackages $selected $targets $fixture
     Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'local repeat replaces existing setups without duplicates'
     [SoftwareDatabaseFixture.Database]::FailTarget = '127.0.0.1:1972/MANDANT1'
-    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets } 'local write failure stops before installation and sanitizes provider secrets'
+    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets $fixture } 'local write failure stops before installation and sanitizes provider secrets'
     Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and [SoftwareDatabaseFixture.Database]::Events.Contains('rollback:127.0.0.1:1972/MANDANT1')) 'local namespace failure preserves the old complete MSI set with transaction rollback'
     [SoftwareDatabaseFixture.Database]::FailTarget = ''
     $ntc.Sha256 = '0' * 64
     $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
-    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets } 'local source checksum failure prevents all database connections'
+    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets $fixture } 'local source checksum failure prevents all database connections'
     Assert ([SoftwareDatabaseFixture.Database]::Events.Count -eq $eventsBefore) 'MSI content is verified before any namespace is opened'
     $ntc.Sha256 = (Get-FileHash -LiteralPath $ntc.PayloadPath -Algorithm SHA256).Hash
-    ExpectFailure { PublishLocalIrisSoftwarePackages $selected @($targets[0],$targets[0]) } 'ambiguous duplicate instance ports are rejected'
+    ExpectFailure { PublishLocalIrisSoftwarePackages $selected @($targets[0],$targets[0]) $fixture } 'ambiguous duplicate instance ports are rejected'
+    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets '' } 'missing bundled provider paths are rejected without searching installed drivers'
     [SoftwareDatabaseFixture.Database]::Events.Clear()
     [SoftwareDatabaseFixture.Database]::FailOpenTarget = '127.0.0.1:51774/MANDANT2'
-    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets } 'an inaccessible later instance fails preflight without exposing credentials'
+    ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets $fixture } 'an inaccessible later instance fails preflight without exposing credentials'
     Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.StartsWith('begin:') }) -and
         [SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'all namespace connections are checked before the first transaction or replacement'
     [SoftwareDatabaseFixture.Database]::FailOpenTarget = ''
@@ -182,7 +186,7 @@ try {
     $worker = [scriptblock]::Create($source); $script:services = @($ntcService)
     foreach ($local in @($true,$false)) {
         $queriesBefore = $script:serviceQueries; $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
-        $script:requestJson = @{ Action='publish-msi-packages'; LocalExecution=$local; MsiPackages=@($ntc,$pos); DatabaseTargets=$targets; Host='fixture.invalid' } | ConvertTo-Json -Depth 8 -Compress
+        $script:requestJson = @{ Action='publish-msi-packages'; LocalExecution=$local; MsiPackages=@($ntc,$pos); DatabaseTargets=$targets; DatabaseProviderDirectory=$fixture; Host='fixture.invalid' } | ConvertTo-Json -Depth 8 -Compress
         $writer = [IO.StringWriter]::new(); $previous = [Console]::Out
         try { [Console]::SetOut($writer); & $worker } finally { [Console]::SetOut($previous) }
         $events = @($writer.ToString() -split '\r?\n' | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
