@@ -85,7 +85,7 @@ public sealed partial class MainForm
         try
         {
             ct.ThrowIfCancellationRequested();
-            Mark(host, h => { h.Result = "Läuft"; h.Phase = "Lokale Update-Pakete werden vorbereitet"; });
+            Mark(host, h => { h.Result = "Läuft"; h.Error = ""; h.Phase = "Lokale Update-Pakete werden vorbereitet"; });
             TransferFileRequest[] files = await PackageFilesAsync(host.Updates?.Pending ?? SelectedUpdateComponents(), ct);
             if (files.Length == 0) return true;
             WorkerRequest request = Request("stage-packages", host, UpdateComponents.None);
@@ -110,7 +110,7 @@ public sealed partial class MainForm
             Mark(host, h =>
             {
                 h.Result = "Fehler"; h.UpdateFailed = true; h.Phase = "Lokale Paketbereitstellung fehlgeschlagen";
-                h.Error = string.IsNullOrWhiteSpace(h.Error) ? ex.Message : h.Error + " | " + ex.Message;
+                h.Error = ex.Message;
             });
             Log(host.Host, "LOKALE PAKETBEREITSTELLUNG => FEHLER " + ex.Message);
             return false;

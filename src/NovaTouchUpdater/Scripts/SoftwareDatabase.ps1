@@ -322,8 +322,9 @@ function InvokeSoftwareDatabaseSql($Connection, [string]$Sql, [string[]]$Values,
     } finally { $command.Dispose() }
 }
 
-function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transaction) {
+function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transaction, [string]$Destination = '') {
     $package = $Resolved.Package
+    $progressLabel = $(if ($Destination) { $Destination + ' · ' }) + $package.ProductName + ' ' + $package.ProductVersion
     $temporaryApplication = $Resolved.Application + '-Updater-' + [guid]::NewGuid().ToString('N')
     $obj = $null
     $stream = $null; $file = $null; $hasher = $null
@@ -354,7 +355,7 @@ function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transactio
             $stream.Write($buffer, 0, $read)
             [void]$hasher.TransformBlock($buffer, 0, $read, $null, 0); $done += $read
             if ($clock.ElapsedMilliseconds -gt 250) {
-                Progress 'zzzSoftware' ($package.ProductName + " · $done / " + $file.Length + ' Bytes') ([int][Math]::Min(99, 100.0 * $done / [Math]::Max(1, $file.Length)))
+                Progress 'zzzSoftware' ($progressLabel + " · $done / " + $file.Length + ' Bytes') ([int][Math]::Min(99, 100.0 * $done / [Math]::Max(1, $file.Length)))
                 $clock.Restart()
             }
         }
@@ -471,7 +472,7 @@ function PublishSelectedSoftwarePackages([object[]]$Packages) {
                     $transaction = $connection.BeginTransaction()
                     foreach ($msi in $resolved) {
                         Progress 'zzzSoftware' ($key + ' · ' + $msi.Package.ProductName + ' ' + $msi.Package.ProductVersion) 0
-                        WriteSoftwareDatabaseMsi $provider $connection $msi $transaction
+                        WriteSoftwareDatabaseMsi $provider $connection $msi $transaction $key
                     }
                     $transaction.Commit(); $published[$key] = $true; $targets++; $count++
                     Progress 'zzzSoftware' ($key + ' · alle ausgewählten MSIs gespeichert') 100
@@ -549,7 +550,7 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
                 $transaction = $destination.Connection.BeginTransaction()
                 foreach ($msi in $resolved) {
                     Progress 'zzzSoftware' ($destination.Key + ' · ' + $msi.Package.ProductName + ' ' + $msi.Package.ProductVersion) 0
-                    WriteSoftwareDatabaseMsi $destination.Provider $destination.Connection $msi $transaction
+                    WriteSoftwareDatabaseMsi $destination.Provider $destination.Connection $msi $transaction $destination.Key
                 }
                 $transaction.Commit(); $count++
                 Progress 'zzzSoftware' ($destination.Key + ' · alle ausgewählten MSIs gespeichert') 100

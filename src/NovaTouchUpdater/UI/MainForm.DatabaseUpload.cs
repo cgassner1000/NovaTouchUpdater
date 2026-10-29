@@ -33,7 +33,7 @@ public sealed partial class MainForm
         if (!host.IsLocal || msiPackages.Count == 0 || host.Updates?.DatabaseUploadCompleted == true) return true;
         try
         {
-            Mark(host, h => { h.Result = "Läuft"; h.Phase = "Lokale IRIS-Instanzen für zzzSoftware ermitteln"; });
+            Mark(host, h => { h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "Lokale IRIS-Instanzen für zzzSoftware ermitteln"; });
             IrisUploadTarget[] targets = await prepareDatabaseTargets(ct);
             if (targets.Length == 0)
             {
@@ -58,6 +58,7 @@ public sealed partial class MainForm
             }, ct);
             if (!result.Success) throw new IOException(FriendlyError(result));
             if (host.Updates is { } state) state.DatabaseUploadCompleted = true;
+            Mark(host, h => { h.Error = ""; h.Phase = "zzzSoftware-Upload abgeschlossen"; h.SetProgress(100); });
             Log(host.Host, "zzzSoftware => OK " + result.Message);
             return true;
         }
@@ -68,7 +69,7 @@ public sealed partial class MainForm
         }
         catch (Exception ex)
         {
-            Mark(host, h => { h.Result = "Fehler"; h.UpdateFailed = true; h.Phase = "zzzSoftware-Upload fehlgeschlagen"; h.Error = ex.Message; });
+            Mark(host, h => { h.Result = "Fehler"; h.UpdateFailed = true; h.Phase = "zzzSoftware-Upload fehlgeschlagen"; h.Error = DisplayText.DatabaseUploadError(ex.Message); });
             Log(host.Host, "zzzSoftware => FEHLER " + ex.Message);
             return false;
         }

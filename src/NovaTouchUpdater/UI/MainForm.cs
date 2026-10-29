@@ -1383,7 +1383,7 @@ public sealed partial class MainForm : Form
         await InBatchAsync(selected, async ct =>
         {
             foreach (HostState host in selected)
-                Mark(host, h => { h.Result = "Läuft"; h.Phase = "Paketdateien werden geprüft"; });
+                Mark(host, h => { h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "Paketdateien werden geprüft"; });
             UpdateComponents hashComponents = needed;
             if (selected.Any(host => host.IsLocal && host.Updates?.DatabaseUploadCompleted != true))
                 hashComponents |= SelectedUpdateComponents() & UpdateComponents.Msi;
@@ -1431,7 +1431,7 @@ public sealed partial class MainForm : Form
             for (int attempt = 1; attempt <= 3 && state.Pending != UpdateComponents.None; attempt++)
             {
                 token.ThrowIfCancellationRequested();
-                Mark(host, h => { h.Attempt = attempt; h.Phase = "Update: " + HostUpdateState.Label(state.Pending); h.Error = state.ErrorText; h.Result = "Läuft"; });
+                Mark(host, h => { h.Attempt = attempt; h.Phase = "Update: " + HostUpdateState.Label(state.Pending); h.Error = ""; h.Result = "Läuft"; });
                 if (!host.Scanned)
                 {
                     Mark(host, h => { h.DotNet48Installed = null; h.PosVersion = "–"; });
@@ -1460,7 +1460,7 @@ public sealed partial class MainForm : Form
                 {
                     token.ThrowIfCancellationRequested();
                     bool retry = state.WasAttempted(component);
-                    Mark(host, h => { h.Phase = "Update: " + HostUpdateState.Label(component); state.BeginComponent(component); });
+                    Mark(host, h => { h.Phase = "Update: " + HostUpdateState.Label(component); h.Error = ""; state.BeginComponent(component); });
                     WorkerResult result;
                     try { result = await DoWorkerAsync(host, "update", token, component, retry); }
                     catch (OperationCanceledException) { throw; }
@@ -1480,7 +1480,7 @@ public sealed partial class MainForm : Form
                             state.Fail(component, FriendlyError(result));
                             h.Phase = HostUpdateState.Label(component) + ": Update fehlgeschlagen";
                         }
-                        h.Error = state.ErrorText;
+                        h.Error = result.Success ? "" : FriendlyError(result);
                     });
                 }
                 if (state.Pending != UpdateComponents.None && attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
@@ -1490,6 +1490,7 @@ public sealed partial class MainForm : Form
                 h.UpdateFailed = state.Pending != UpdateComponents.None;
                 if (h.UpdateFailed)
                 {
+                    if (!string.IsNullOrWhiteSpace(state.ErrorText)) h.Error = state.ErrorText;
                     h.Result = "Fehler";
                     h.Phase = "Maximal 3 Versuche: " + HostUpdateState.Label(state.Pending);
                 }
@@ -1504,7 +1505,12 @@ public sealed partial class MainForm : Form
         }
         catch (OperationCanceledException)
         {
-            Mark(host, h => { h.UpdateFailed = state.Pending != UpdateComponents.None; h.Result = "Abgebrochen"; h.Phase = "Update abgebrochen"; });
+            Mark(host, h =>
+            {
+                h.UpdateFailed = state.Pending != UpdateComponents.None;
+                if (!string.IsNullOrWhiteSpace(state.ErrorText)) h.Error = state.ErrorText;
+                h.Result = "Abgebrochen"; h.Phase = "Update abgebrochen";
+            });
             throw;
         }
     }
@@ -1790,7 +1796,7 @@ public sealed partial class MainForm : Form
         cells["payment"].ToolTipText = h.Payment;
         cells["fiscal"].ToolTipText = h.Fiscal;
         cells["pos"].ToolTipText = h.PosVersion;
-        // Aktuellen Schritt und bisherige Fehler-/Informationstexte gemeinsam anzeigen.
+        // Laufender Status oder abschließende Fehler des Hosts.
         if (rowProgress is int percent) info = $"{percent} % · {info}";
         info = DisplayText.WithAttempt(info, attempt);
         cells["information"].Tag = rowProgress;

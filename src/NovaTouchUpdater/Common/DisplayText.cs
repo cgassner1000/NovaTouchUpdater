@@ -25,6 +25,12 @@ internal static class DisplayText
         @"\d+(?:\.\d+){1,3}", RegexOptions.Compiled);
     private static readonly Regex HashName = new(
         @"\bSHA[\s-]?256\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex ObjectScriptFailure = new(
+        @"\bERROR\s*#5002\b[^<>]*?(?<code><[^<>\r\n]+>)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex UploadDestination = new(
+        @"zzzSoftware-(?:Upload nach|Vorprüfung für)\s+(?<target>.+?)\s+fehlgeschlagen\.", RegexOptions.Compiled);
+    private static readonly Regex UploadPackage = new(
+        @"\bMSI\s+'(?<package>[^']+)':", RegexOptions.Compiled);
 
     public static string Clean(string? message)
     {
@@ -35,7 +41,7 @@ internal static class DisplayText
         return HashName.Replace(text, "Prüfsumme");
     }
 
-    /// <summary>Behält die ursprüngliche Fehler-/Information erhalten und zeigt zusätzlich den aktuellen Schritt an.</summary>
+    /// <summary>Formatiert den aktuellen Schritt und dessen Fehler bzw. die abschließenden Fehler.</summary>
     public static string Information(string? phase, string? error)
     {
         string currentStep = Clean(phase).Trim();
@@ -43,6 +49,20 @@ internal static class DisplayText
         if (currentStep.Length == 0) return detail;
         if (detail.Length == 0 || currentStep.Equals(detail, StringComparison.OrdinalIgnoreCase)) return currentStep;
         return currentStep + "  |  " + detail;
+    }
+
+    public static string DatabaseUploadError(string? message)
+    {
+        string text = Clean(message).Trim();
+        int position = text.IndexOf(" | Position:", StringComparison.Ordinal);
+        if (position >= 0) text = text[..position].TrimEnd();
+        Match failure = ObjectScriptFailure.Match(text);
+        if (!failure.Success) return text;
+        string context = string.Join(" · ", new[] {
+            UploadDestination.Match(text).Groups["target"].Value,
+            UploadPackage.Match(text).Groups["package"].Value
+        }.Where(value => value.Length > 0));
+        return (context.Length > 0 ? context + ": " : "") + failure.Groups["code"].Value;
     }
 
     public static string WithAttempt(string information, int attempt) =>

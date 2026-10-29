@@ -35,6 +35,7 @@ internal sealed class HostState
     public void SetProgress(int? percent) => ProgressPercent = percent is int value ? Math.Clamp(value, 0, 100) : null;
     public void ApplyProgress(WorkerEvent progress)
     {
+        Error = "";
         Phase = progress.Phase + " – " + progress.Message;
         SetProgress(progress.ProgressPercent);
     }
