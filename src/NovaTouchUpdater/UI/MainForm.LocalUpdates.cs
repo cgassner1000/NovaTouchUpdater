@@ -276,7 +276,7 @@ public sealed partial class MainForm
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen. Inhalt von portable_python vor dem Kopieren löschen; vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. EventLog bleibt während der Installation gestoppt. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
         if (selected.Any(h => h.IsLocal) && msiPackages.Count > 0)
-            text.AppendLine("LOKAL vor der Installation: alle ausgewählten MSI-Pakete in zzzSoftware aller lokalen IRIS-Namespaces außer %SYS hochladen. Namespaces ohne zzzSoftware werden gemeldet und übersprungen. Alte Setups und Servicepacks der ausgewählten Produkte werden ersetzt. Bei Uploadfehlern wird die lokale Installation angehalten.");
+            text.AppendLine("LOKAL vor der Installation: alle ausgewählten MSI-Pakete in zzzSoftware aller lokalen IRIS-Namespaces ohne Präfix % hochladen. Namespaces ohne zzzSoftware werden gemeldet und übersprungen. Alte Setups und Servicepacks der ausgewählten Produkte werden ersetzt. Bei Uploadfehlern wird die lokale Installation angehalten.");
         if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
             ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
             : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +

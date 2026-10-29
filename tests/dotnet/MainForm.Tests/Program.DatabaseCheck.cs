@@ -17,7 +17,7 @@ internal static partial class Program
             File.WriteAllText(active, "[namespaces]\n%sys=IRISSYS\nSECOND=SECOND\n");
             File.WriteAllText(Path.Combine(second, "iris.cpf"), "[Namespaces]\nSTALE=STALE\n");
             File.WriteAllText(Path.Combine(invalid, "iris.cpf"), "[Databases]\nUSER=USER\n");
-            File.WriteAllText(Path.Combine(sysOnly, "iris.cpf"), "[Namespaces]\n%SYS=IRISSYS\n");
+            File.WriteAllText(Path.Combine(sysOnly, "iris.cpf"), "[Namespaces]\n%SYS=IRISSYS\n%OTHER=OTHER\n%custom=CUSTOM\n");
             string original = File.ReadAllText(cpf);
             var views = new List<RegistryView>();
             var inventory = new IrisDatabaseInventory((view, ct) =>
@@ -33,8 +33,8 @@ internal static partial class Program
             IrisInventoryResult result = task.Result;
             Assert(views.Contains(RegistryView.Registry32) && (!Environment.Is64BitOperatingSystem || views.Contains(RegistryView.Registry64)) && result.Instances.Length == 6,
                 "local discovery reads both registry views, deduplicates instance names and retains instances with read errors");
-            Assert(result.Instances.Single(instance => instance.Name == "FIRST").Namespaces.SequenceEqual(new[] { "%OTHER", "APP-A", "USER" }),
-                "namespace parsing excludes only %SYS, retains USER and other percent namespaces, and removes case-insensitive duplicates");
+            Assert(result.Instances.Single(instance => instance.Name == "FIRST").Namespaces.SequenceEqual(new[] { "APP-A", "USER" }),
+                "namespace parsing excludes every percent-prefixed name, retains USER and removes case-insensitive duplicates");
             Assert(result.Instances.Single(instance => instance.Name == "SECOND").Namespaces.SequenceEqual(new[] { "SECOND" }),
                 "an explicitly registered active CPF takes precedence over the default iris.cpf");
             Assert(result.Instances.Count(instance => instance.Error.Length > 0) == 3 && result.Instances.Single(instance => instance.Name == "SYSTEM-ONLY") is { Error: "", Namespaces.Length: 0 },
@@ -71,8 +71,9 @@ internal static partial class Program
     private static void DatabaseUploadSettingsTests()
     {
         var inventory = new IrisInventoryResult([
-            new("FIRST", @"C:\IRIS\First", @"C:\IRIS\First\iris.cpf", "2026.1", ["%SYS", "APP", "USER"], SuperServerPort: 1972),
-            new("SECOND", @"D:\IRIS\Second", @"D:\IRIS\Second\iris.cpf", "2025.1", ["TENANT"], SuperServerPort: 51774)], []);
+            new("FIRST", @"C:\IRIS\First", @"C:\IRIS\First\iris.cpf", "2026.1", ["%SYS", "%OTHER", "%custom", "APP", "USER"], SuperServerPort: 1972),
+            new("SECOND", @"D:\IRIS\Second", @"D:\IRIS\Second\iris.cpf", "2025.1", ["TENANT"], SuperServerPort: 51774),
+            new("SYSTEM-ONLY", @"C:\IRIS\System", @"C:\IRIS\System\iris.cpf", "2026.1", ["%SYS", "%OTHER"])], []);
         using var check = new DatabaseCheckForm(_ => Task.FromResult(inventory));
         foreach (Control control in All(check)) _ = control.Handle;
         Complete(check.RefreshAsync());
@@ -97,6 +98,8 @@ internal static partial class Program
                 Assert(prepared.Result && targets.Length == 2 && targets[0].Port == 1972 && targets[1].Port == 51774 &&
                     targets[0].Namespaces.SequenceEqual(["APP", "USER"]) && targets.All(target => target.User == "_SYSTEM" && target.Password == "SYS" && target.Ssl == enabled),
                     "local preparation automatically applies the fixed login and independent IRIS TLS setting to every instance");
+                Assert(targets.All(target => target.Namespaces.All(name => !name.StartsWith('%'))),
+                    "upload planning excludes all percent-prefixed names and instances containing only those namespaces");
                 AppConfigStore.Save(path, (UpdaterConfig)Call(form, "CaptureConfig")!, "");
                 using var restored = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
                 Call(restored, "ApplyLoadedConfig", AppConfigStore.Load(path));
@@ -125,8 +128,8 @@ internal static partial class Program
         TreeView tree = All(form).OfType<TreeView>().Single();
         TextBox details = All(form).OfType<TextBox>().Single(control => control.Name == "databaseDetails");
         Assert(form.Text == "Database Check – LOKAL" && tree.Nodes.Count == 3 &&
-            tree.Nodes[0].Nodes.Cast<TreeNode>().Select(node => node.Text).SequenceEqual(new[] { "%CUSTOM", "APP", "USER" }),
-            "the separate local form groups namespaces by instance and never lists %SYS");
+            tree.Nodes[0].Nodes.Cast<TreeNode>().Select(node => node.Text).SequenceEqual(new[] { "APP", "USER" }),
+            "the separate local form groups namespaces by instance and never lists percent-prefixed names");
         tree.SelectedNode = tree.Nodes[1];
         Assert(details.Text.Contains(@"D:\IRIS\Test\iris.cpf") && details.Text.Contains("CPF cannot be read"),
             "selecting an instance shows its version, paths and individual read error");
@@ -211,7 +214,7 @@ internal static partial class Program
         Assert(result.Instances.Length > 0 && result.Instances.All(instance => instance.Error.Length == 0), "read-only smoke discovers installed IRIS registrations and their CPF files");
         foreach (IrisInstanceInfo instance in result.Instances)
         {
-            Assert(instance.Namespaces.All(name => !name.Equals("%SYS", StringComparison.OrdinalIgnoreCase)), "the real namespace list excludes %SYS");
+            Assert(instance.Namespaces.All(name => !name.StartsWith('%')), "the real namespace list excludes every percent-prefixed name");
             Assert(instance.SuperServerPort is > 0 and <= 65535, "the active local CPF supplies a valid SuperServer port");
             Console.WriteLine(instance.Name + ": " + string.Join(", ", instance.Namespaces));
         }

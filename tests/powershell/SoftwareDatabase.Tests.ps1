@@ -140,18 +140,18 @@ try {
     Assert (@(Get-ChildItem -LiteralPath (Join-Path $fixture 'NovaTouchUpdater') -Directory).Count -eq 0) 'temporary MSI extraction is also cleaned on errors'
 
     # CPF targets determine local destinations, independently of NTC/POS or the
-    # provider's namespace enumeration. Only %SYS is excluded, including USER.
+    # provider's namespace enumeration. All %-prefixed names are excluded; USER stays.
     [SoftwareDatabaseFixture.Database]::Entries.Clear(); [SoftwareDatabaseFixture.Database]::Events.Clear()
     $targets = @(
-        [pscustomobject]@{ Instance='FIRST'; Directory=$fixture; Port=1972; Namespaces=@('%SYS','USER','MANDANT1','EMPTY','user'); User='test'; Password='synthetic-secret'; Ssl=$false },
+        [pscustomobject]@{ Instance='FIRST'; Directory=$fixture; Port=1972; Namespaces=@('%SYS','%OTHER','%custom',' %PADDED','USER','MANDANT1','EMPTY','user'); User='test'; Password='synthetic-secret'; Ssl=$false },
         [pscustomobject]@{ Instance='SECOND'; Directory=$fixture; Port=51774; Namespaces=@('MANDANT2'); User='test'; Password='synthetic-secret'; Ssl=$false }
     )
     $selected = @($ntc,$pos,$ntv,$oman); $script:results.Clear()
     $queriesBefore = $script:serviceQueries
     PublishLocalIrisSoftwarePackages $selected $targets
     Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and $script:results[0].Success -and $script:serviceQueries -eq $queriesBefore) 'local CPF targets upload all selected MSIs into every eligible namespace on both instance ports without NTC/POS queries'
-    Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.Contains('/%SYS') }) -and
-        [SoftwareDatabaseFixture.Database]::Events -contains 'commit:127.0.0.1:1972/USER') 'local upload never connects to %SYS but includes USER, deduplicates names and uses only loopback'
+    Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.Contains('/%') }) -and
+        [SoftwareDatabaseFixture.Database]::Events -contains 'commit:127.0.0.1:1972/USER') 'local upload never connects to percent-prefixed namespaces but includes USER, deduplicates names and uses only loopback'
     Assert ($script:progress.Exists([Predicate[string]]{ param($line) $line.Contains('/EMPTY') -and $line.Contains('übersprungen') })) 'a namespace without zzzSoftware is explicitly reported and skipped'
     PublishLocalIrisSoftwarePackages $selected $targets
     Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'local repeat replaces existing setups without duplicates'

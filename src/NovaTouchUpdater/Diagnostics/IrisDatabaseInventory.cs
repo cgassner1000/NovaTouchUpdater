@@ -108,12 +108,14 @@ internal sealed class IrisDatabaseInventory
             int equals = line.IndexOf('=');
             if (!inNamespaces || equals <= 0) continue;
             string name = line[..equals].Trim();
-            if (name.Length > 0 && !name.Equals("%SYS", StringComparison.OrdinalIgnoreCase)) names.Add(name);
+            if (IsApplicationNamespace(name)) names.Add(name);
         }
         ct.ThrowIfCancellationRequested();
         if (!foundSection) throw new InvalidDataException("Der Abschnitt [Namespaces] fehlt in der IRIS-Konfigurationsdatei.");
         return names.Order(StringComparer.OrdinalIgnoreCase).ToArray();
     }
+
+    internal static bool IsApplicationNamespace(string name) => name.Length > 0 && !name.StartsWith('%');
 
     internal static int ReadSuperServerPort(TextReader reader, CancellationToken ct)
     {

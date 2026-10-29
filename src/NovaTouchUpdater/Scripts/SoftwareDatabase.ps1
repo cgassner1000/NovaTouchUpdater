@@ -440,7 +440,7 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
             $directories = @('dev\dotnet\bin\v4.5', 'dev\dotnet\bin\v4.0.30319') | ForEach-Object { Join-Path ([string]$target.Directory) $_ }
             $provider = InitializeSoftwareDatabaseProvider $directories
             $definition = [pscustomobject]@{ Server='127.0.0.1'; Port=[int]$target.Port; User=[string]$target.User; Password=[string]$target.Password; Ssl=[bool]$target.Ssl }
-            $namespaces = @($target.Namespaces | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) -and $_ -ine '%SYS' } | Sort-Object -Unique)
+            $namespaces = @($target.Namespaces | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -and -not $_.StartsWith('%') } | Sort-Object -Unique)
             foreach ($namespace in $namespaces) {
                 $key = [string]$target.Instance + ':' + $target.Port + '/' + $namespace
                 $connection = $null

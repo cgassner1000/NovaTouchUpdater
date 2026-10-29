@@ -28,7 +28,7 @@ internal sealed class DatabaseCheckForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 70));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 30));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(new Label { Text = "Installierte InterSystems-IRIS-Instanzen auf diesem Rechner und ihre konfigurierten Namespaces. %SYS wird ausgeblendet.", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 0, 3, 10) }, 0, 0);
+        layout.Controls.Add(new Label { Text = "Installierte InterSystems-IRIS-Instanzen auf diesem Rechner und ihre konfigurierten Namespaces. Namespaces mit Präfix % werden ausgeblendet.", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 0, 3, 10) }, 0, 0);
         layout.Controls.Add(status, 0, 1);
         layout.Controls.Add(instances, 0, 2);
         layout.Controls.Add(details, 0, 3);
@@ -73,11 +73,11 @@ internal sealed class DatabaseCheckForm : Form
                 {
                     var root = new TreeNode(instance.Name + (instance.Version.Length > 0 ? " · " + instance.Version : "")) { Tag = instance };
                     instances.Nodes.Add(root);
-                    string[] names = instance.Namespaces.Where(name => !name.Equals("%SYS", StringComparison.OrdinalIgnoreCase)).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+                    string[] names = instance.Namespaces.Where(IrisDatabaseInventory.IsApplicationNamespace).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
                     foreach (string name in names) root.Nodes.Add(new TreeNode(name) { Tag = instance });
                     namespaceCount += names.Length;
                     if (instance.Error.Length > 0) root.Nodes.Add(new TreeNode("Namespaces konnten nicht gelesen werden") { ForeColor = UiTheme.Danger, Tag = instance });
-                    else if (names.Length == 0) root.Nodes.Add(new TreeNode("Keine Namespaces außer %SYS konfiguriert") { ForeColor = UiTheme.Muted, Tag = instance });
+                    else if (names.Length == 0) root.Nodes.Add(new TreeNode("Keine berücksichtigten Namespaces konfiguriert") { ForeColor = UiTheme.Muted, Tag = instance });
                     root.Expand();
                 }
                 if (result.Warnings.Length > 0)
@@ -90,7 +90,7 @@ internal sealed class DatabaseCheckForm : Form
             finally { instances.EndUpdate(); }
             int errors = result.Instances.Count(instance => instance.Error.Length > 0) + result.Warnings.Length;
             status.Text = result.Instances.Length == 0 ? errors > 0 ? "IRIS-Erkennung fehlgeschlagen – siehe Hinweise." : "Keine lokal installierten InterSystems-IRIS-Instanzen gefunden."
-                : $"{result.Instances.Length} Instanz(en), {namespaceCount} Namespace(s) ohne %SYS." + (errors > 0 ? $" {errors} Fehler/Hinweis(e)." : "");
+                : $"{result.Instances.Length} Instanz(en), {namespaceCount} Namespace(s) ohne Präfix %." + (errors > 0 ? $" {errors} Fehler/Hinweis(e)." : "");
             status.ForeColor = errors > 0 ? UiTheme.Warning : UiTheme.Text;
             if (instances.Nodes.Count > 0) instances.SelectedNode = instances.Nodes[0];
         }
