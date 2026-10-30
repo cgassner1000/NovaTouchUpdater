@@ -72,8 +72,8 @@ internal static partial class Program
             var remote = new WorkerRequest { Action = "publish-msi-packages", LocalExecution = false, Host = "fixture.invalid" };
             Task<WorkerResult> remoteResult = runner.RunAsync(remote, _ => { }, CancellationToken.None);
             Complete(remoteResult);
-            Assert(!remoteResult.Result.Success && remoteResult.Result.Error.Contains("ausschließlich lokal") && remote.DatabaseProviderDirectory.Length == 0,
-                "remote publication is rejected without extracting or forwarding a provider path");
+            Assert(!remoteResult.Result.Success && remoteResult.Result.Error.Contains("Keine MSI-Pakete") && File.Exists(Path.Combine(remote.DatabaseProviderDirectory, "InterSystems.Data.IRISClient.dll")),
+                "remote publication receives the bundled provider and rejects an empty package request before connecting");
             runner.Dispose();
             Assert(!Directory.Exists(request.DatabaseProviderDirectory), "worker disposal cleans up the bundled provider payload");
         }

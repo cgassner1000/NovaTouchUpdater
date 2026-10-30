@@ -322,6 +322,28 @@ function InvokeSoftwareDatabaseSql($Connection, [string]$Sql, [string[]]$Values,
     } finally { $command.Dispose() }
 }
 
+function GetSoftwareDatabaseUploadDecision($Connection, $Resolved, $Transaction = $null) {
+    $wanted = $null
+    if (-not [version]::TryParse([string]$Resolved.Package.ProductVersion, [ref]$wanted)) { throw 'Ungültige MSI-Paketversion.' }
+    $command = $Connection.CreateCommand(); $reader = $null; $highest = $null
+    try {
+        $command.CommandText = "SELECT Version FROM zzzSoftware WHERE Application=? AND Ordner='Setup' AND Pfad='0' AND Dateiname='MSI'"
+        $command.CommandTimeout = 180
+        if ($null -ne $Transaction) { $command.Transaction = $Transaction }
+        $parameter = $command.CreateParameter(); $parameter.Value = $Resolved.Application; [void]$command.Parameters.Add($parameter)
+        $reader = $command.ExecuteReader()
+        while ($reader.Read()) {
+            $existing = $null; $text = [string]$reader.GetValue(0)
+            if (-not [version]::TryParse($text.Trim(), [ref]$existing)) { throw "Vorhandene zzzSoftware-Version '$text' ist nicht vergleichbar; kein Upload." }
+            # Compare missing revision components as zero, e.g. 1.2.3 == 1.2.3.0.
+            $existing = [version]::new($existing.Major, $existing.Minor, [Math]::Max(0,$existing.Build), [Math]::Max(0,$existing.Revision))
+            if ($null -eq $highest -or $existing -gt $highest) { $highest = $existing }
+        }
+        $wanted = [version]::new($wanted.Major, $wanted.Minor, [Math]::Max(0,$wanted.Build), [Math]::Max(0,$wanted.Revision))
+        return [pscustomobject]@{ Upload=($null -eq $highest -or $highest -lt $wanted); ExistingVersion=[string]$highest }
+    } finally { if ($null -ne $reader) { $reader.Dispose() }; $command.Dispose() }
+}
+
 function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transaction, [string]$Destination = '') {
     $package = $Resolved.Package
     $progressLabel = $(if ($Destination) { $Destination + ' · ' }) + $package.ProductName + ' ' + $package.ProductVersion
@@ -347,7 +369,8 @@ function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transactio
         $operation = 'MSI-Binärstream leeren'
         AssertSoftwareDatabaseStatus ($stream.Clear()) $operation
         $operation = 'MSI-Binärdaten übertragen'
-        $file = [IO.File]::Open($Resolved.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $file = if ($null -ne $Resolved.StreamSource) { $Resolved.StreamSource.Open($Destination) }
+            else { [IO.File]::Open($Resolved.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read) }
         $hasher = [Security.Cryptography.SHA256]::Create()
         $buffer = New-Object byte[] 30720
         $done = 0L; $clock = [Diagnostics.Stopwatch]::StartNew()
@@ -429,7 +452,7 @@ function ResolveSoftwareMsi($Package, [string]$WorkRoot) {
         } elseif ([IO.Path]::GetExtension($path) -ine '.msi') { throw 'In zzzSoftware dürfen ausschließlich MSI-Dateien hochgeladen werden.' }
         TestSoftwareMsiMetadata $path $Package
         $msiHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
-        [pscustomobject]@{ Path=$path; Sha256=$msiHash; Package=$Package; Application=$applications[[string]$Package.Kind] }
+        [pscustomobject]@{ Path=$path; Sha256=$msiHash; Package=$Package; Application=$applications[[string]$Package.Kind]; StreamSource=$null; OnlyDestinations=$null }
     } finally { $hash.Dispose(); $source.Dispose() }
 }
 
@@ -494,18 +517,26 @@ function PublishSelectedSoftwarePackages([object[]]$Packages) {
 }
 
 function InvokeSoftwareDatabaseNamespaceUpload($Provider, $Destination, [object[]]$Resolved) {
-    $connection = $null; $transaction = $null
+    $connection = $null; $transaction = $null; $uploaded = 0; $skipped = 0
     try {
         # Connections belong to this namespace's runspace and are never shared.
         $connection = OpenSoftwareDatabase $Provider $Destination.Definition $Destination.Namespace
         $transaction = $connection.BeginTransaction()
         foreach ($msi in $Resolved) {
+            if ($null -ne $msi.OnlyDestinations -and $msi.OnlyDestinations -notcontains $Destination.Key) { continue }
+            $decision = GetSoftwareDatabaseUploadDecision $connection $msi $transaction
+            if (-not $decision.Upload) {
+                if ($null -ne $msi.StreamSource) { $msi.StreamSource.Skip($Destination.Key) }
+                Progress 'zzzSoftware' ($Destination.Key + ' · ' + $msi.Package.ProductName + ' · vorhanden: ' + $decision.ExistingVersion + ' · gleich oder neuer, übersprungen') 100
+                $skipped++; continue
+            }
             Progress 'zzzSoftware' ($Destination.Key + ' · ' + $msi.Package.ProductName + ' ' + $msi.Package.ProductVersion) 0
             WriteSoftwareDatabaseMsi $Provider $connection $msi $transaction $Destination.Key
+            $uploaded++
         }
         $transaction.Commit()
         Progress 'zzzSoftware' ($Destination.Key + ' · alle ausgewählten MSIs gespeichert') 100
-        return [pscustomobject]@{ Key=$Destination.Key; Success=$true; Error='' }
+        return [pscustomobject]@{ Key=$Destination.Key; Success=$true; Changed=($uploaded -gt 0); Uploaded=$uploaded; Skipped=$skipped; Error='' }
     } catch {
         $secrets = @($Destination.Definition.User, $Destination.Definition.Password)
         $detail = GetSoftwareDatabaseError $_ $secrets
@@ -516,6 +547,7 @@ function InvokeSoftwareDatabaseNamespaceUpload($Provider, $Destination, [object[
         }
         return [pscustomobject]@{ Key=$Destination.Key; Success=$false; Error="zzzSoftware-Upload nach $($Destination.Key) fehlgeschlagen. $rollback Ursache: $detail" }
     } finally {
+        foreach ($msi in $Resolved) { if ($null -ne $msi.StreamSource) { $msi.StreamSource.Skip($Destination.Key) } }
         if ($null -ne $transaction) { $transaction.Dispose() }
         if ($null -ne $connection) { $connection.Dispose() }
     }
@@ -530,7 +562,7 @@ function InvokeSoftwareDatabaseNamespaceUploads($Provider, [object[]]$Destinatio
     $queue = [Collections.Concurrent.ConcurrentQueue[object]]::new()
     $state = [Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
     foreach ($name in @('OpenSoftwareDatabase','GetSoftwareDatabaseError','AssertSoftwareDatabaseStatus','InvokeSoftwareObjectMethod',
-            'NewSoftwareDatabaseObject','SetSoftwareDatabaseProperty','InvokeSoftwareDatabaseSql','WriteSoftwareDatabaseMsi','InvokeSoftwareDatabaseNamespaceUpload')) {
+            'NewSoftwareDatabaseObject','SetSoftwareDatabaseProperty','InvokeSoftwareDatabaseSql','GetSoftwareDatabaseUploadDecision','WriteSoftwareDatabaseMsi','InvokeSoftwareDatabaseNamespaceUpload')) {
         $definition = (Get-Command $name -CommandType Function).Definition
         $state.Commands.Add([Management.Automation.Runspaces.SessionStateFunctionEntry]::new($name, $definition))
     }
@@ -640,7 +672,8 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
         if ($failed.Count -gt 0) {
             throw ("$count Namespace(s) erfolgreich, $($failed.Count) fehlgeschlagen. Keine lokale Installation gestartet. " + (($failed | ForEach-Object Error) -join ' || '))
         }
-        Emit @{ Event='result'; Success=$true; Changed=($count -gt 0); Message=($resolved.Count.ToString() + " MSI-Paket(e) in $count lokalen Namespace(s) gespeichert; $skipped ohne zzzSoftware übersprungen."); Services=@() }
+        $changed = @($outcomes | Where-Object Changed).Count -gt 0
+        Emit @{ Event='result'; Success=$true; Changed=$changed; Skipped=(-not $changed); Message=("$count Namespace(s) geprüft; " + ($outcomes | Measure-Object Uploaded -Sum).Sum + ' MSI-Upload(s), ' + ($outcomes | Measure-Object Skipped -Sum).Sum + " gleich/neuer; $skipped ohne zzzSoftware übersprungen."); Services=@() }
     } finally {
         if ($workRoot.StartsWith($tempBase + '\', [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($workRoot) -match '^database-msi-[0-9a-f]{32}$') {
             Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue

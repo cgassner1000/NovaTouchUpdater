@@ -1,7 +1,7 @@
 namespace NovaTouchUpdater;
 
 // The Framework DLLs are restored by NuGet at build time and embedded in the
-// single-file application. Only the local database worker needs them on disk.
+// single-file application and provided to database workers on local/remote hosts.
 internal sealed class BundledIrisProvider : IDisposable
 {
     private readonly string root;

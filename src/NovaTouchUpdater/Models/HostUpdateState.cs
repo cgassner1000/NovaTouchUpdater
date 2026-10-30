@@ -16,6 +16,12 @@ internal sealed class HostUpdateState(UpdateComponents components)
     internal bool Changed { get; private set; }
     internal bool AllSkipped { get; private set; } = true;
     internal bool DatabaseUploadCompleted { get; set; }
+    internal void CompleteDatabaseUpload(bool changed)
+    {
+        DatabaseUploadCompleted = true;
+        Changed |= changed;
+        AllSkipped &= !changed;
+    }
     private readonly Dictionary<UpdateComponents, string> errors = [];
 
     internal static IEnumerable<UpdateComponents> Each(UpdateComponents components) =>

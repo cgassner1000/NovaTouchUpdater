@@ -12,7 +12,7 @@ internal static partial class Program
         var remoteOption = Field<CheckBox>(form, "chkSkipZipTransfer");
         var destination = Field<TextBox>(form, "txtRemotePath");
         var settings = (TableLayoutPanel)localOption.Parent!;
-        Assert(localOption.Text == "LOKAL - Keine Kopie in Update-Datein Zielpfad" &&
+        Assert(localOption.Text == "LOKAL / zzzSoftware - Keine Paketkopie in Zielpfad" &&
             remoteOption.Text == "REMOTE - Lokale Datei am Client verwenden ohne upload" &&
             settings.GetRow(localOption) < settings.GetRow(remoteOption), "local and remote copy switches have their requested captions and order");
         destination.Text = "";

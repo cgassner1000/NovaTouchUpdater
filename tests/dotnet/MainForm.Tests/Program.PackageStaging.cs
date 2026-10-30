@@ -65,9 +65,18 @@ internal static partial class Program
             remote[0].Updates = new(components);
             worker.Requests.Clear();
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", remote[0], CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.Count == 1 && worker.Requests.All(r => r.Action == "update" && !r.LocalExecution && r.SkipZipTransfer && r.ForceUpdate &&
-                r.PaymentZip == payment && r.MsiPackage is null && r.MsiPackages.Length == 0),
-                "remote updates perform only the selected payment update, exclude every MSI and retain Do not transfer and Force");
+            Assert(worker.Requests.Count == 2 && worker.Requests.First() is { Action:"publish-msi-packages", LocalExecution:false, MsiPackages.Length:3, SkipZipTransfer:true } &&
+                worker.Requests.Last() is { Action:"update", LocalExecution:false, SkipZipTransfer:true, ForceUpdate:true, MsiPackage:null, MsiPackages.Length:0 } && worker.Requests.Last().PaymentZip == payment,
+                "remote updates upload all selected MSIs to zzzSoftware first and install only the permitted payment component");
+            Field<CheckBox>(form, "chkSkipLocalPackageCopy").Checked = true;
+            Field<CheckBox>(form, "chkIrisTls").Checked = true;
+            Call(form, "CaptureCredentials");
+            remote[0].Updates = new(UpdateComponents.None);
+            worker.Requests.Clear();
+            Complete((Task)Call(form, "ExecuteHostUpdateAsync", remote[0], CancellationToken.None, NoRetryDelay)!);
+            Assert(worker.Requests.Single() is { Action:"publish-msi-packages", SkipLocalPackageCopy:true, IrisUseTls:true } && remote[0].Updates!.DatabaseUploadCompleted,
+                "remote MSI-only updates can stream without target copies and carry the independent IRIS TLS option");
+            Field<CheckBox>(form, "chkIrisTls").Checked = false;
 
             Field<CheckBox>(form, "chkSkipLocalPackageCopy").Checked = true;
             Call(form, "CaptureCredentials");
@@ -172,7 +181,6 @@ internal static partial class Program
         {
             Requests.Enqueue(request);
             if (request.Action is not ("probe" or "scan" or "stage-packages" or "publish-msi-packages" or "update")) throw new InvalidOperationException("Unexpected request in update fixture");
-            if (request.Action == "publish-msi-packages" && !request.LocalExecution) throw new InvalidOperationException("Database upload must remain local");
             if (request.Action == "publish-msi-packages")
             {
                 onProgress(new WorkerEvent { Phase="zzzSoftware", Message="TEST:51774/APP · NovaTouch POS · 400 / 1000 Bytes", ProgressPercent=40 });

@@ -13,6 +13,11 @@ public sealed partial class MainForm
         Name = "selectedPackagesList", AutoSize = true, Dock = DockStyle.Fill,
         Text = "Keine Pakete ausgewählt.", Margin = Padding.Empty
     };
+    private readonly TableLayoutPanel selectedPackagesTable = new()
+    {
+        Name = "selectedPackagesTable", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        Dock = DockStyle.Top, ColumnCount = 2, Margin = Padding.Empty, Visible = false
+    };
     private SoftwarePackage[] folderPackages = [];
     private bool individualPackageSelection;
     private readonly SoftwarePackageCatalog packageCatalog = new();
@@ -213,6 +218,30 @@ public sealed partial class MainForm
             string.Join(Environment.NewLine, packages.OrderBy(package => package.Component).Select(package =>
                 $"{HostUpdateState.Label(package.Component)} · {package.Version} · {Path.GetFileName(package.Path)}"));
         selectedPackagesList.AccessibleDescription = individualPackageSelection ? "Einzeln ausgewählte Pakete" : "Pakete aus dem Softwareordner";
+        selectedPackagesTable.SuspendLayout();
+        try
+        {
+            foreach (Control control in selectedPackagesTable.Controls.Cast<Control>().ToArray()) control.Dispose();
+            selectedPackagesTable.ColumnStyles.Clear(); selectedPackagesTable.RowStyles.Clear();
+            selectedPackagesTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            selectedPackagesTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            selectedPackagesTable.RowCount = 0;
+            foreach (SoftwarePackage package in packages.OrderBy(package => package.Component))
+            {
+                string name = package.Component switch
+                {
+                    UpdateComponents.Payment => "Nt.Payment", UpdateComponents.Fiscal => "Nt.Fiskal",
+                    _ => HostUpdateState.Label(package.Component)
+                };
+                int row = selectedPackagesTable.RowCount++;
+                selectedPackagesTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                selectedPackagesTable.Controls.Add(new Label { Text=name + ":", AutoSize=true, Anchor=AnchorStyles.Left, Margin=new Padding(0, 2, 14, 2) }, 0, row);
+                selectedPackagesTable.Controls.Add(new Label { Text=package.Version, AutoSize=true, Anchor=AnchorStyles.Left, Margin=new Padding(0, 2, 0, 2), AccessibleDescription=package.Path }, 1, row);
+            }
+            selectedPackagesList.Visible = packages.Count == 0;
+            selectedPackagesTable.Visible = packages.Count > 0;
+        }
+        finally { selectedPackagesTable.ResumeLayout(true); }
     }
 
     private async Task LoadSoftwarePackagesAsync()
@@ -275,8 +304,13 @@ public sealed partial class MainForm
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Payment/Fiscal: zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen. Inhalt von portable_python vor dem Kopieren löschen; vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. EventLog bleibt während der Installation gestoppt. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
-        if (selected.Any(h => h.IsLocal) && msiPackages.Count > 0)
-            text.AppendLine("LOKAL vor der Installation: alle ausgewählten MSI-Pakete in zzzSoftware aller lokalen IRIS-Namespaces ohne Präfix % hochladen. Namespaces ohne zzzSoftware werden gemeldet und übersprungen. Alte Setups und Servicepacks der ausgewählten Produkte werden ersetzt. Bei Uploadfehlern wird die lokale Installation angehalten.");
+        if (msiPackages.Count > 0)
+        {
+            text.AppendLine("zzzSoftware auf allen ausgewählten Hosts: MSI-Pakete in alle IRIS-Namespaces ohne Präfix % hochladen. Gleiche oder neuere Datenbankversionen überspringen; nur ältere Pakete ersetzen. Bei Uploadfehlern werden keine Installationen auf dem betroffenen Host gestartet.");
+            foreach (var package in msiPackages.Values) text.AppendLine("Datenbank: " + package.ProductName + " " + package.ProductVersion);
+            if (remoteCount > 0) text.AppendLine(chkSkipLocalPackageCopy.Checked ? "Remote-Datenbank: MSI-Daten über WinRM streamen, keine Paketkopie auf dem Server." :
+                chkSkipZipTransfer.Checked ? "Remote-Datenbank: bereits vorhandene Paketdateien im Zielpfad verwenden." : "Remote-Datenbank: benötigte MSI-Pakete zuerst in den Zielpfad kopieren.");
+        }
         if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
             ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
             : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +

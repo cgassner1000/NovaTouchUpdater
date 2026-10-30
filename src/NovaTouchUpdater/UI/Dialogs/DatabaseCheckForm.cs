@@ -4,7 +4,7 @@ internal sealed class DatabaseCheckForm : Form
 {
     private readonly Func<CancellationToken, Task<IrisInventoryResult>> readInventory;
     private readonly TreeView instances = new() { Name = "irisInstances", Dock = DockStyle.Fill, HideSelection = false, BorderStyle = BorderStyle.FixedSingle, MinimumSize = new Size(0, 180) };
-    private readonly Label status = new() { Name = "databaseStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Lokale IRIS-Instanzen werden eingelesen …" };
+    private readonly Label status = new() { Name = "databaseStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "IRIS-Instanzen werden eingelesen …" };
     private readonly TextBox details = new() { Name = "databaseDetails", Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, MinimumSize = new Size(0, 95) };
     private readonly Button refresh = new ModernButton { Name = "refreshDatabase", Text = "Aktualisieren", AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
     private IrisInventoryResult? lastInventory;
@@ -14,7 +14,7 @@ internal sealed class DatabaseCheckForm : Form
     {
         this.readInventory = readInventory ?? new IrisDatabaseInventory().ReadAsync;
         SuspendLayout();
-        Text = "Database Check – LOKAL";
+        Text = "Database Check";
         Font = UiTheme.BodyFont();
         ClientSize = new Size(900, 650);
         MinimumSize = new Size(620, 440);
@@ -28,7 +28,7 @@ internal sealed class DatabaseCheckForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 70));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 30));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(new Label { Text = "Installierte InterSystems-IRIS-Instanzen auf diesem Rechner und ihre konfigurierten Namespaces. Namespaces mit Präfix % werden ausgeblendet.", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 0, 3, 10) }, 0, 0);
+        layout.Controls.Add(new Label { Text = "InterSystems-IRIS-Instanzen der ausgewählten Hosts und ihre konfigurierten Namespaces. Namespaces mit Präfix % werden ausgeblendet.", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 0, 3, 10) }, 0, 0);
         layout.Controls.Add(status, 0, 1);
         layout.Controls.Add(instances, 0, 2);
         layout.Controls.Add(details, 0, 3);
@@ -58,7 +58,7 @@ internal sealed class DatabaseCheckForm : Form
         instances.Nodes.Clear();
         details.Clear();
         ShowDetails();
-        status.Text = "Lokale IRIS-Instanzen werden eingelesen …";
+        status.Text = "IRIS-Instanzen werden eingelesen …";
         status.ForeColor = UiTheme.Muted;
         try
         {
@@ -89,7 +89,7 @@ internal sealed class DatabaseCheckForm : Form
             }
             finally { instances.EndUpdate(); }
             int errors = result.Instances.Count(instance => instance.Error.Length > 0) + result.Warnings.Length;
-            status.Text = result.Instances.Length == 0 ? errors > 0 ? "IRIS-Erkennung fehlgeschlagen – siehe Hinweise." : "Keine lokal installierten InterSystems-IRIS-Instanzen gefunden."
+            status.Text = result.Instances.Length == 0 ? errors > 0 ? "IRIS-Erkennung fehlgeschlagen – siehe Hinweise." : "Keine InterSystems-IRIS-Instanzen auf den ausgewählten Hosts gefunden."
                 : $"{result.Instances.Length} Instanz(en), {namespaceCount} Namespace(s) ohne Präfix %." + (errors > 0 ? $" {errors} Fehler/Hinweis(e)." : "");
             status.ForeColor = errors > 0 ? UiTheme.Warning : UiTheme.Text;
             if (instances.Nodes.Count > 0) instances.SelectedNode = instances.Nodes[0];

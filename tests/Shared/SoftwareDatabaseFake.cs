@@ -111,6 +111,14 @@ namespace SoftwareDatabaseFixture
         public void Dispose() { if (!finished) Rollback(); }
     }
     public sealed class Parameter { public object Value { get; set; } }
+    public sealed class Reader : IDisposable
+    {
+        private readonly string[] values; private int index=-1;
+        public Reader(string[] items) { values=items; }
+        public bool Read() { return ++index < values.Length; }
+        public object GetValue(int ordinal) { return values[index]; }
+        public void Dispose() { }
+    }
     public sealed class Command : IDisposable
     {
         private readonly Connection connection;
@@ -120,6 +128,11 @@ namespace SoftwareDatabaseFixture
         public List<Parameter> Parameters = new List<Parameter>();
         public Command(Connection value) { connection = value; }
         public Parameter CreateParameter() { return new Parameter(); }
+        public Reader ExecuteReader()
+        {
+            lock (Database.Gate)
+                return new Reader(Database.Entries.Where(e => e.Target == connection.Target && e.Application == (string)Parameters[0].Value && e.Ordner == "Setup" && e.Pfad == "0" && e.Dateiname == "MSI").Select(e => e.Version).ToArray());
+        }
         public int ExecuteNonQuery()
         {
             lock (Database.Gate) return ExecuteLocked();

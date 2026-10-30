@@ -7,6 +7,41 @@ public sealed partial class MainForm
     private IrisUploadTarget[]? activeDatabaseTargets;
     private bool preparingDatabaseUpload;
     private int activeDatabaseUploadParallelism = 8;
+    private bool activeIrisUseTls;
+    private bool activeStreamDatabasePackages;
+
+    private async Task<IrisInventoryResult> ReadSelectedIrisInventoryAsync(HostState[] selected, CancellationToken ct)
+    {
+        var instances = new List<IrisInstanceInfo>();
+        var warnings = new List<string>();
+        foreach (HostState host in selected)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                if (host.IsLocal)
+                {
+                    IrisInventoryResult local = await readIrisInventory(ct);
+                    instances.AddRange(local.Instances.Select(instance => instance with { Name=host.DisplayName + " / " + instance.Name }));
+                    warnings.AddRange(local.Warnings.Select(warning => host.DisplayName + ": " + warning));
+                }
+                else
+                {
+                    var request = new WorkerRequest { Action="database-inventory", Host=host.Host, Username=txtUser.Text.Trim(), Password=txtPassword.Text,
+                        UseSsl=chkSsl.Checked, HttpsPort=(int)nHttpsPort.Value };
+                    WorkerResult result = await runner.RunAsync(request, _ => { }, ct);
+                    if (!result.Success) { warnings.Add(host.DisplayName + ": " + FriendlyError(result)); continue; }
+                    instances.AddRange(result.IrisInstances.Select(instance => new IrisInstanceInfo(host.DisplayName + " / " + instance.Name,
+                        instance.Directory, instance.ConfigurationFile, instance.Version, instance.Namespaces.Where(IrisDatabaseInventory.IsApplicationNamespace).ToArray(),
+                        instance.Error, instance.SuperServerPort, instance.ConnectionError)));
+                    if (result.IrisInstances.Length == 0) warnings.Add(host.DisplayName + ": keine IRIS-Instanzen gefunden.");
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { warnings.Add(host.DisplayName + ": " + ex.Message); }
+        }
+        return new(instances.ToArray(), warnings.ToArray());
+    }
 
     private async Task<bool> PrepareLocalDatabaseUploadAsync(CancellationToken ct)
     {
@@ -31,12 +66,12 @@ public sealed partial class MainForm
 
     private async Task<bool> PublishLocalSoftwarePackagesAsync(HostState host, CancellationToken ct)
     {
-        if (!host.IsLocal || msiPackages.Count == 0 || host.Updates?.DatabaseUploadCompleted == true) return true;
+        if (msiPackages.Count == 0 || host.Updates?.DatabaseUploadCompleted == true) return true;
         try
         {
-            Mark(host, h => { h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "Lokale IRIS-Instanzen für zzzSoftware ermitteln"; });
-            IrisUploadTarget[] targets = await prepareDatabaseTargets(ct);
-            if (targets.Length == 0)
+            Mark(host, h => { h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "IRIS-Instanzen auf " + host.DisplayName + " für zzzSoftware ermitteln"; });
+            IrisUploadTarget[] targets = host.IsLocal ? await prepareDatabaseTargets(ct) : [];
+            if (host.IsLocal && targets.Length == 0)
             {
                 Log(host.Host, "zzzSoftware: keine lokalen IRIS-Namespaces gefunden; kein Datenbank-Upload erforderlich.");
                 if (host.Updates is { } noDatabase) noDatabase.DatabaseUploadCompleted = true;
@@ -50,15 +85,18 @@ public sealed partial class MainForm
                 package.Sha256 = preparedPackageHashes is not null && preparedPackageHashes.TryGetValue(path, out string? hash)
                     ? hash : await WorkerRunner.Sha256Async(path, ct);
             }
-            var request = new WorkerRequest { Action = "publish-msi-packages", Host = host.Host, LocalExecution = true,
-                MsiPackages = packages, DatabaseTargets = targets, DatabaseUploadParallelism = activeDatabaseUploadParallelism };
+            var request = new WorkerRequest { Action = "publish-msi-packages", Host = host.Host, LocalExecution = host.IsLocal,
+                Username=host.IsLocal ? "" : activeUser, Password=host.IsLocal ? "" : activePassword,
+                UseSsl=!host.IsLocal && activeSsl, HttpsPort=activeHttpsPort, RemoteInstallPath=activeRemoteInstallPath,
+                SkipZipTransfer=!host.IsLocal && activeSkipZipTransfer, SkipLocalPackageCopy=!host.IsLocal && activeStreamDatabasePackages,
+                IrisUseTls=activeIrisUseTls, MsiPackages = packages, DatabaseTargets = targets, DatabaseUploadParallelism = activeDatabaseUploadParallelism };
             WorkerResult result = await runner.RunAsync(request, ev =>
             {
                 Log(host.Host, ev.Phase + ": " + ev.Message);
                 Mark(host, h => h.ApplyProgress(ev));
             }, ct);
             if (!result.Success) throw new IOException(FriendlyError(result));
-            if (host.Updates is { } state) state.DatabaseUploadCompleted = true;
+            if (host.Updates is { } state) state.CompleteDatabaseUpload(result.Changed);
             Mark(host, h => { h.Error = ""; h.Phase = "zzzSoftware-Upload abgeschlossen"; h.SetProgress(100); });
             Log(host.Host, "zzzSoftware => OK " + result.Message);
             return true;

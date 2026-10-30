@@ -431,7 +431,7 @@ public sealed partial class MainForm : Form
         chkForceUpdate.Anchor = AnchorStyles.Left;
         chkForceUpdate.Margin = new Padding(3);
         chkForceUpdate.Checked = false;
-        chkSkipLocalPackageCopy.Text = "LOKAL - Keine Kopie in Update-Datein Zielpfad";
+        chkSkipLocalPackageCopy.Text = "LOKAL / zzzSoftware - Keine Paketkopie in Zielpfad";
         chkSkipLocalPackageCopy.AutoSize = true;
         chkSkipLocalPackageCopy.Anchor = AnchorStyles.Left;
         chkSkipZipTransfer.Text = "REMOTE - Lokale Datei am Client verwenden ohne upload";
@@ -451,9 +451,9 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Ablage für Update-Pakete. Leer: LOKAL verwendet die gewählten Quellen direkt; Remote-Hosts verwenden C:\\install\\Novacom. Mit dem lokalen Kopierschalter wird dieser Pfad für lokale Updates nicht verwendet.");
-        tips.SetToolTip(chkSkipLocalPackageCopy, "LOKAL verwendet ZIPs, MSIs und CAB-Dateien direkt aus der Auswahl, ohne zusätzliche Paketkopie in den Zielpfad. ZIPs werden für die Installation temporär entpackt. Ein leerer lokaler Zielpfad verwendet ebenfalls direkt die Quellen.");
+        tips.SetToolTip(chkSkipLocalPackageCopy, "LOKAL verwendet die ausgewählten Pakete ohne zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt. Für zzzSoftware auf Remote-Hosts werden MSI-Daten direkt über WinRM gestreamt. Sonst werden sie zuerst im Zielpfad bereitgestellt. Ein leerer lokaler Zielpfad verwendet ebenfalls direkt die Quellen.");
         tips.SetToolTip(chkSkipZipTransfer, "REMOTE: ZIP- und MSI-Pakete müssen bereits im Zielpfad des Clients liegen. Dateiname und SHA256 müssen zur gewählten Quelle passen. Die Einstellung betrifft keine lokalen Updates.");
-        tips.SetToolTip(chkIrisTls, "TLS für den lokalen MSI-Upload zu allen erkannten IRIS-Instanzen verwenden. Mit 'Konfiguration speichern' für den nächsten Start merken.");
+        tips.SetToolTip(chkIrisTls, "TLS für den MSI-Upload zu erkannten IRIS-Instanzen auf lokalen und entfernten Hosts verwenden. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
         executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
@@ -463,7 +463,7 @@ public sealed partial class MainForm : Form
         var settings = new ExpandableSection("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(0, 0, 0, 12);
-        var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList));
+        var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList, selectedPackagesTable));
         selectedPackagesCard.Name = "selectedPackagesCard";
         selectedPackagesCard.Margin = new Padding(0, 12, 0, 0);
         var menuColumn = Stack(settings, hostCard, selectedPackagesCard);
@@ -685,8 +685,10 @@ public sealed partial class MainForm : Form
         btnDatabaseCheck.Name = "databaseCheck";
         btnDatabaseCheck.Click += (_, _) =>
         {
-            if (busy || selfUpdating || loadingPackages || !SelectedHosts().Any(host => host.IsLocal)) return;
-            using var dialog = new DatabaseCheckForm(readIrisInventory);
+            if (busy || selfUpdating || loadingPackages || SelectedHosts().Length == 0) return;
+            HostState[] selected = SelectedHosts();
+            if (selected.Any(host => !host.IsLocal) && !ValidateCredentials()) return;
+            using var dialog = new DatabaseCheckForm(ct => ReadSelectedIrisInventoryAsync(selected, ct));
             dialog.ShowDialog(this);
         };
         btnUpdate.Click += async (_, _) => await RunUpdatesAsync(false);
@@ -1221,6 +1223,8 @@ public sealed partial class MainForm : Form
         activeSkipZipTransfer = chkSkipZipTransfer.Checked;
         activeSkipLocalPackageCopy = UseLocalPackageSources;
         activeDatabaseUploadParallelism = (int)nUpdate.Value;
+        activeIrisUseTls = chkIrisTls.Checked;
+        activeStreamDatabasePackages = chkSkipLocalPackageCopy.Checked;
     }
 
     private WorkerRequest Request(string action, HostState host, UpdateComponents components = UpdateComponents.All)
@@ -1340,7 +1344,8 @@ public sealed partial class MainForm : Form
         var selected = UpdateTargets(onlyFailed);
         if (selected.Length > 0)
         {
-            selected = selected.Where(host => ComponentsForUpdate(host, onlyFailed) != UpdateComponents.None).ToArray();
+            selected = selected.Where(host => ComponentsForUpdate(host, onlyFailed) != UpdateComponents.None ||
+                (msiPackages.Count > 0 && (!onlyFailed || host.Updates?.DatabaseUploadCompleted != true))).ToArray();
             if (selected.Length == 0)
             {
                 MessageBox.Show(this, "Remote sind ausschließlich Payment, Fiscal und Server Suite erlaubt. POS, NTC, SOL und NTV können nur lokal aktualisiert werden.",
@@ -1386,7 +1391,7 @@ public sealed partial class MainForm : Form
             foreach (HostState host in selected)
                 Mark(host, h => { h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "Paketdateien werden geprüft"; });
             UpdateComponents hashComponents = needed;
-            if (selected.Any(host => host.IsLocal && host.Updates?.DatabaseUploadCompleted != true))
+            if (selected.Any(host => host.Updates?.DatabaseUploadCompleted != true))
                 hashComponents |= SelectedUpdateComponents() & UpdateComponents.Msi;
             try { await PrepareUpdatePackageHashesAsync(hashComponents, ct); }
             catch (Exception ex)
@@ -1499,7 +1504,9 @@ public sealed partial class MainForm : Form
                 {
                     h.Error = "";
                     h.Result = state.AllSkipped ? "Übersprungen" : state.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
-                    h.Phase = state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
+                    h.Phase = state.Attempted == UpdateComponents.None && state.DatabaseUploadCompleted
+                        ? (state.Changed ? "zzzSoftware-Upload abgeschlossen" : "zzzSoftware geprüft – kein Upload erforderlich")
+                        : state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
                     if (state.Changed) h.SetProgress(100);
                 }
             });
@@ -1914,8 +1921,8 @@ public sealed partial class MainForm : Form
             local.Row!.Cells["include"].ReadOnly = !idle || LocalFallback;
         btnWinRm.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnScan.Enabled = idle && selected.Length > 0;
-        btnDatabaseCheck.Visible = selected.Any(host => host.IsLocal);
-        btnDatabaseCheck.Enabled = idle && selected.Any(host => host.IsLocal);
+        btnDatabaseCheck.Visible = selected.Length > 0;
+        btnDatabaseCheck.Enabled = idle && selected.Length > 0;
         btnUpdate.Enabled = idle && selected.Any(h => h.Scanned);
         btnTransfer.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnSendCommand.Enabled = idle && selected.Any(h => !h.IsLocal);
@@ -1926,8 +1933,8 @@ public sealed partial class MainForm : Form
         chkScanOnStartup.Enabled = idle;
         nHttpsPort.Enabled = idle && remote && chkSsl.Checked;
         txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle && remote;
-        chkSkipLocalPackageCopy.Enabled = idle && selected.Any(h => h.IsLocal);
-        chkIrisTls.Enabled = idle && selected.Any(h => h.IsLocal);
+        chkSkipLocalPackageCopy.Enabled = idle && selected.Length > 0;
+        chkIrisTls.Enabled = idle && selected.Length > 0;
         txtUser.Enabled = txtPassword.Enabled = idle && remote; statusFilter.Enabled = idle;
         executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = readPackages.Enabled = idle;
         useFolderPackages.Enabled = idle && individualPackageSelection && folderPackages.Length > 0;

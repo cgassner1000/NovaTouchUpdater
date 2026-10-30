@@ -156,8 +156,20 @@ try {
     Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.Contains('/%') }) -and
         [SoftwareDatabaseFixture.Database]::Events -contains 'commit:127.0.0.1:1972/USER') 'local upload never connects to percent-prefixed namespaces but includes USER, deduplicates names and uses only loopback'
     Assert ($script:progress.Exists([Predicate[string]]{ param($line) $line.Contains('/EMPTY') -and $line.Contains('übersprungen') })) 'a namespace without zzzSoftware is explicitly reported and skipped'
+    $before = @([SoftwareDatabaseFixture.Database]::Entries | ForEach-Object { $_.Bytes })
+    $script:results.Clear()
     PublishLocalIrisSoftwarePackages $selected $targets $fixture
-    Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'local repeat replaces existing setups without duplicates'
+    Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and $script:results[0].Skipped -and -not $script:results[0].Changed) 'equal versions skip every MSI without replacing existing setups'
+    foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) { $entry.Version = '9999.0.0' }
+    $script:results.Clear()
+    PublishLocalIrisSoftwarePackages $selected $targets $fixture
+    Assert ($script:results[0].Skipped -and @([SoftwareDatabaseFixture.Database]::Entries | Where-Object Version -ne '9999.0.0').Count -eq 0) 'newer stored versions are preserved in every namespace'
+    function DowngradeEntries { foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) { $entry.Version = '0.0.0' } }
+    DowngradeEntries
+    $script:results.Clear()
+    PublishLocalIrisSoftwarePackages $selected $targets $fixture
+    Assert ($script:results[0].Changed -and @([SoftwareDatabaseFixture.Database]::Entries | Where-Object Version -eq '0.0.0').Count -eq 0) 'older stored versions are replaced by the selected MSIs'
+    DowngradeEntries
     [SoftwareDatabaseFixture.Database]::FailTarget = '127.0.0.1:1972/MANDANT1'
     ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets $fixture } 'local write failure stops before installation and sanitizes provider secrets'
     Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and [SoftwareDatabaseFixture.Database]::Events.Contains('rollback:127.0.0.1:1972/MANDANT1')) 'local namespace failure preserves the old complete MSI set with transaction rollback'
@@ -166,6 +178,7 @@ try {
     Assert ($detail.Contains('alte Setups und Servicepacks ersetzen') -and $detail.Contains('simulated provider failure') -and -not $detail.Contains('synthetic-secret')) 'upload errors identify the failed operation and original provider cause without credentials'
     [SoftwareDatabaseFixture.Database]::FailTarget = ''
     foreach ($operation in @('Clear','Save','ObjectSave')) {
+        DowngradeEntries
         [SoftwareDatabaseFixture.Database]::FailStreamOperation = $operation
         [SoftwareDatabaseFixture.Database]::FailObjectSave = $operation -eq 'ObjectSave'
         $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
@@ -178,6 +191,7 @@ try {
     }
     [SoftwareDatabaseFixture.Database]::FailStreamOperation = ''; [SoftwareDatabaseFixture.Database]::FailObjectSave = $false
     $script:progress.Clear(); [SoftwareDatabaseFixture.Database]::PeakTransactions = 0
+    DowngradeEntries
     [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds = 300
     try { PublishLocalIrisSoftwarePackages @($ntc) $targets $fixture 2 }
     finally { [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds = 0 }
@@ -185,11 +199,13 @@ try {
     $byteProgress = @($script:progress | Where-Object { $_ -like '* Bytes' })
     Assert ($byteProgress.Count -ge 3 -and @($byteProgress | Where-Object { $_ -notmatch '(FIRST:1972/(MANDANT1|USER)|SECOND:51774/MANDANT2) · NovaTouch Control' }).Count -eq 0) 'every byte-progress event identifies the active namespace, instance port and MSI'
     $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
+    DowngradeEntries
     [SoftwareDatabaseFixture.Database]::FailTarget = '127.0.0.1:1972/MANDANT1'
     ExpectFailure { PublishLocalIrisSoftwarePackages @($ntc) $targets $fixture 2 } 'an individual namespace error fails the complete upload after independent namespaces finish'
     $newEvents = @([SoftwareDatabaseFixture.Database]::Events | Select-Object -Skip $eventsBefore)
     Assert (@($newEvents | Where-Object { $_ -like 'commit:*' }).Count -eq 2 -and @($newEvents | Where-Object { $_ -like 'rollback:*' }).Count -eq 1) 'a namespace rollback does not cancel or undo the other namespace uploads'
     [SoftwareDatabaseFixture.Database]::FailTarget = ''; [SoftwareDatabaseFixture.Database]::PeakTransactions = 0
+    DowngradeEntries
     PublishLocalIrisSoftwarePackages @($ntc) $targets $fixture 1
     Assert ([SoftwareDatabaseFixture.Database]::PeakTransactions -eq 1) 'parallelism one retains the same independent results with serial namespace uploads'
     $limitTarget = [pscustomobject]@{ Instance='LIMIT'; Directory=$fixture; Port=1972; Namespaces=@('LIMIT1','LIMIT2','LIMIT3','LIMIT4','LIMIT5','LIMIT6'); User='test'; Password='synthetic-secret'; Ssl=$false }
@@ -211,6 +227,7 @@ try {
     ExpectFailure { PublishLocalIrisSoftwarePackages $selected @($targets[0],$targets[0]) $fixture } 'ambiguous duplicate instance ports are rejected'
     ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets '' } 'missing bundled provider paths are rejected without searching installed drivers'
     [SoftwareDatabaseFixture.Database]::Events.Clear()
+    DowngradeEntries
     [SoftwareDatabaseFixture.Database]::FailOpenTarget = '127.0.0.1:51774/MANDANT2'
     ExpectFailure { PublishLocalIrisSoftwarePackages $selected $targets $fixture } 'an inaccessible later instance fails preflight without exposing credentials'
     $detail = ''
@@ -222,7 +239,7 @@ try {
         [SoftwareDatabaseFixture.Database]::Entries.Count -eq 12) 'all namespaces are preflighted before upload; an inaccessible namespace does not prevent the accessible namespaces from finishing'
     [SoftwareDatabaseFixture.Database]::FailOpenTarget = ''
 
-    # Dispatch also enforces local-only execution before any remoting or service work.
+    # Local dispatch performs no remoting, service or installation work.
     $source = [IO.File]::ReadAllText((Join-Path $TestScriptsRoot 'RemoteWorker.ps1'))
     $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$null, [ref]$null)
     $inventory = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ReadSoftwareInventory' }, $true)
@@ -230,7 +247,7 @@ try {
         'function ReadSoftwareInventory { throw "Database publication must not read uninstall inventory" }')
     $source = $source.Replace('$requestLine = [Console]::In.ReadLine()', '$requestLine = $script:requestJson').Replace('exit 0','return').Replace('exit 1','return')
     $worker = [scriptblock]::Create($source); $script:services = @($ntcService)
-    foreach ($local in @($true,$false)) {
+    foreach ($local in @($true)) {
         $queriesBefore = $script:serviceQueries; $eventsBefore = [SoftwareDatabaseFixture.Database]::Events.Count
         $script:requestJson = @{ Action='publish-msi-packages'; LocalExecution=$local; MsiPackages=@($ntc,$pos); DatabaseTargets=$targets; DatabaseProviderDirectory=$fixture; Host='fixture.invalid' } | ConvertTo-Json -Depth 8 -Compress
         $writer = [IO.StringWriter]::new(); $previous = [Console]::Out

@@ -15,6 +15,7 @@ public sealed class WorkerRequest
     public IrisUploadTarget[] DatabaseTargets { get; set; } = [];
     public string DatabaseProviderDirectory { get; set; } = "";
     public int DatabaseUploadParallelism { get; set; } = 8;
+    public bool IrisUseTls { get; set; }
     public string Host { get; set; } = "";
     public string[] Hosts { get; set; } = [];
     public int Parallelism { get; set; } = 40;
@@ -127,6 +128,19 @@ public sealed class WorkerResult
     public ServiceInfo[] Services { get; set; } = [];
     public bool UploadRequired { get; set; } = true;
     public UploadDirectoryInfo? UploadDirectory { get; set; }
+    public IrisInstanceRecord[] IrisInstances { get; set; } = [];
+}
+
+public sealed class IrisInstanceRecord
+{
+    public string Name { get; set; } = "";
+    public string Directory { get; set; } = "";
+    public string ConfigurationFile { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string[] Namespaces { get; set; } = [];
+    public string Error { get; set; } = "";
+    public int SuperServerPort { get; set; }
+    public string ConnectionError { get; set; } = "";
 }
 
 public sealed class UploadDirectoryInfo
@@ -161,7 +175,7 @@ public sealed class WorkerRunner : IWorkerRunner
         string script = reader.ReadToEnd();
         if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
         {
-            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory", "MsiUpdates", "SoftwareDatabase" })
+            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory", "MsiUpdates", "SoftwareDatabase", "DatabaseStreaming", "RemoteSoftwareDatabase" })
             {
                 using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream($"NovaTouchUpdater.{helper}.ps1")
                     ?? throw new InvalidOperationException($"Die eingebetteten Schritte {helper} fehlen.");
@@ -234,7 +248,7 @@ public sealed class WorkerRunner : IWorkerRunner
 
         try
         {
-            if (request.LocalExecution && request.Action == "publish-msi-packages")
+            if (request.Action == "publish-msi-packages")
                 request.DatabaseProviderDirectory = irisProvider.EnsureExtracted();
             if (!process.Start()) throw new InvalidOperationException("Windows PowerShell konnte nicht gestartet werden.");
             process.BeginOutputReadLine();

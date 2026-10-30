@@ -39,10 +39,12 @@ internal static partial class Program
                     "update files sit directly below installation packages in an independent column");
                 Assert(selectedPackages.Parent == hosts.Parent && selectedPackages.Top >= hosts.Bottom,
                     "selected packages are listed directly below remote hosts");
-                var packageList = Field<Label>(form, "selectedPackagesList");
-                Assert(packageList.Text.Split(Environment.NewLine).Length == 7 &&
-                    packageList.PreferredSize.Height <= packageList.Height,
-                    "all seven selected packages fit in the list at the current width and scaling");
+                var packageList = Field<TableLayoutPanel>(form, "selectedPackagesTable");
+                var names = packageList.Controls.Cast<Control>().Where(c => packageList.GetColumn(c) == 0).ToArray();
+                var versions = packageList.Controls.Cast<Control>().Where(c => packageList.GetColumn(c) == 1).ToArray();
+                Assert(names.Length == 7 && versions.Length == 7 && names.All(c => c.Left == names[0].Left) &&
+                    versions.All(c => c.Left == versions[0].Left) && packageList.Controls.Cast<Control>().All(c => c.Bottom <= packageList.Height && c.Right <= packageList.Width),
+                    "all seven packages fit in aligned product and version columns at the current width and scaling");
                 if (width == 1710 && scale == 1F)
                 {
                     using var collapsed = new Bitmap(form.Width, form.Height);

@@ -75,7 +75,8 @@ public sealed partial class MainForm
 
     private async Task ExecuteHostUpdateAsync(HostState host, CancellationToken ct, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
-        if (host.IsLocal && (!await PublishLocalSoftwarePackagesAsync(host, ct) || !await StageLocalUpdatePackagesAsync(host, ct))) return;
+        if (!await PublishLocalSoftwarePackagesAsync(host, ct)) return;
+        if (host.IsLocal && !await StageLocalUpdatePackagesAsync(host, ct)) return;
         await UpdateHostAsync(host, ct, delay);
     }
 

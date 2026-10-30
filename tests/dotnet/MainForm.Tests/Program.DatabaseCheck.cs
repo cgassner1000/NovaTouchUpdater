@@ -66,6 +66,7 @@ internal static partial class Program
         DatabaseCheckFormTests();
         DatabaseCheckButtonTests();
         DatabaseUploadSettingsTests();
+        RemoteDatabaseInventoryTests();
     }
 
     private static void DatabaseUploadSettingsTests()
@@ -127,7 +128,7 @@ internal static partial class Program
         Complete(form.RefreshAsync());
         TreeView tree = All(form).OfType<TreeView>().Single();
         TextBox details = All(form).OfType<TextBox>().Single(control => control.Name == "databaseDetails");
-        Assert(form.Text == "Database Check – LOKAL" && tree.Nodes.Count == 3 &&
+        Assert(form.Text == "Database Check" && tree.Nodes.Count == 3 &&
             tree.Nodes[0].Nodes.Cast<TreeNode>().Select(node => node.Text).SequenceEqual(new[] { "APP", "USER" }),
             "the separate local form groups namespaces by instance and never lists percent-prefixed names");
         tree.SelectedNode = tree.Nodes[1];
@@ -170,7 +171,7 @@ internal static partial class Program
         canvas.CreateControl();
         try
         {
-            Assert(button.Text == "BETA: Database Check" && !button.Visible && !button.Enabled, "BETA: Database Check is hidden and disabled for remote-only targets");
+            Assert(button.Text == "BETA: Database Check" && button.Visible && button.Enabled, "BETA: Database Check is available for remote-only targets");
             mode.SelectedIndex = (int)UpdateExecutionMode.Local;
             Assert(button.Visible && button.Enabled, "selecting local execution enables Database Check without a preceding scan");
             foreach (Control control in All(canvas)) _ = control.Handle;
@@ -190,7 +191,7 @@ internal static partial class Program
             mode.SelectedIndex = (int)UpdateExecutionMode.LocalAndRemote;
             HostState local = Targets(form).Single(host => host.IsLocal);
             EditSelection(form, local, false);
-            Assert(!button.Visible && !button.Enabled, "deselecting the local target hides Database Check even in combined mode");
+            Assert(button.Visible && button.Enabled, "remote targets can use Database Check in combined mode without a local target");
             EditSelection(form, local, true);
             Assert(button.Visible && button.Enabled, "the local target can use Database Check alongside selected remote hosts");
             SetField(form, "busy", true);
@@ -204,6 +205,59 @@ internal static partial class Program
             Assert(worker.Requests.IsEmpty, "Database Check availability does not start workers or remote connections");
         }
         finally { canvas.Controls.Remove(content); form.Controls.Add(content); }
+    }
+
+    private static void RemoteDatabaseInventoryTests()
+    {
+        var worker = new DatabaseInventoryRunner();
+        using var form = new MainForm(preview:true, worker, new FakeRunner());
+        _ = form.Handle;
+        Field<TextBox>(form, "txtUser").Text = "fixture-user";
+        Field<TextBox>(form, "txtPassword").Text = "fixture-password";
+        Field<CheckBox>(form, "chkSsl").Checked = true;
+        Field<NumericUpDown>(form, "nHttpsPort").Value = 6001;
+        int localReads = 0;
+        SetField(form, "readIrisInventory", new Func<CancellationToken, Task<IrisInventoryResult>>(_ =>
+        {
+            localReads++;
+            return Task.FromResult(new IrisInventoryResult([new("LOCAL-IRIS", @"C:\IRIS", @"C:\IRIS\iris.cpf", "2026.1", ["USER"], SuperServerPort:1972)], []));
+        }));
+        HostState[] selected = [new() { Host="REMOTE-A" }, new() { Host="OFFLINE" }, new() { Host="REMOTE-B" }, new() { Host="EMPTY" }];
+        var remote = (Task<IrisInventoryResult>)Call(form, "ReadSelectedIrisInventoryAsync", selected, CancellationToken.None)!;
+        Complete(remote);
+        Assert(localReads == 0 && remote.Result.Instances.Select(instance => instance.Name).SequenceEqual(["REMOTE-A / IRIS", "REMOTE-B / IRIS"]) &&
+            remote.Result.Instances.All(instance => instance.Namespaces.SequenceEqual(["APP", "USER"]) && instance.SuperServerPort == 51774),
+            "remote Database Check uses target inventories and keeps host, namespaces and server port together without reading local registry");
+        Assert(remote.Result.Warnings.Length == 2 && remote.Result.Warnings.Any(w => w.StartsWith("OFFLINE:")) && remote.Result.Warnings.Any(w => w.StartsWith("EMPTY:")),
+            "an offline host or an empty inventory does not hide other hosts' instances");
+        Assert(worker.Requests.All(request => request is { Action:"database-inventory", LocalExecution:false, UseSsl:true, HttpsPort:6001, Username:"fixture-user", Password:"fixture-password" }),
+            "remote inventory uses the configured WinRM authentication and HTTPS port without update requests");
+        var combined = (Task<IrisInventoryResult>)Call(form, "ReadSelectedIrisInventoryAsync", new[] { new HostState { Host="LOCALHOST" }, selected[0] }, CancellationToken.None)!;
+        Complete(combined);
+        Assert(localReads == 1 && combined.Result.Instances.Select(instance => instance.Name).SequenceEqual(["LOKAL / LOCAL-IRIS", "REMOTE-A / IRIS"]),
+            "combined Database Check reads each host using its own execution path");
+        using var dialog = new DatabaseCheckForm(_ => Task.FromResult(combined.Result));
+        foreach (Control control in All(dialog)) _ = control.Handle;
+        Complete(dialog.RefreshAsync());
+        TreeView tree = All(dialog).OfType<TreeView>().Single();
+        Assert(tree.Nodes.Count == 2 && tree.Nodes[1].Text.StartsWith("REMOTE-A / IRIS") && tree.Nodes[1].Nodes.Count == 2,
+            "the database dialog lists remote IRIS instances and their filtered namespaces");
+    }
+
+    private sealed class DatabaseInventoryRunner : IWorkerRunner
+    {
+        internal List<WorkerRequest> Requests { get; } = [];
+        public Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> progress, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            Requests.Add(request);
+            return Task.FromResult(request.Host switch {
+                "OFFLINE" => new WorkerResult { Success=false, Error="Fixture host unavailable" },
+                "EMPTY" => new WorkerResult { Success=true },
+                _ => new WorkerResult { Success=true, IrisInstances=[new() { Name="IRIS", Directory=@"D:\RemoteIRIS", ConfigurationFile=@"D:\RemoteIRIS\active.cpf", Version="2026.1", Namespaces=["%SYS", "APP", "USER", "%OTHER"], SuperServerPort=51774 }] }
+            });
+        }
+        public void Dispose() { }
     }
 
     private static void DatabaseCheckLiveSmoke()

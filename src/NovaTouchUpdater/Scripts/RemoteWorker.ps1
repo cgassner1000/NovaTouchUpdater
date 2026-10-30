@@ -280,14 +280,22 @@ try {
     if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
     $req = $requestLine | ConvertFrom-Json
     $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
-    if ($req.Action -eq 'publish-msi-packages') {
-        if (-not $localExecution) { throw 'Der zzzSoftware-Upload ist ausschließlich lokal erlaubt.' }
+    if ($req.Action -in @('database-upload-plan','publish-msi-stream')) {
+        if (-not $localExecution) { throw 'Interne Datenbank-Aktion nur auf dem ausführenden Rechner erlaubt.' }
+        if ($req.Action -eq 'database-upload-plan') {
+            $plan = @(GetSoftwareDatabaseRemotePlan @($req.MsiPackages) @($req.DatabaseTargets) ([string]$req.DatabaseProviderDirectory))
+            Emit @{ Event='result'; Success=$true; DatabasePlan=$plan; Services=@() }
+        } else { PublishStreamedSoftwarePackages @($req.MsiPackages) @($req.DatabasePlan) ([string]$req.DatabaseProviderDirectory) ([int]$req.DatabaseUploadParallelism) }
+        exit 0
+    }
+    if ($req.Action -eq 'publish-msi-packages' -and $localExecution) {
         if ($null -eq $req.PSObject.Properties['DatabaseTargets'] -or @($req.DatabaseTargets).Count -eq 0) { throw 'Lokale IRIS-Konfiguration für zzzSoftware fehlt.' }
         if ($null -eq $req.PSObject.Properties['DatabaseProviderDirectory']) { throw 'Der mitgelieferte IRIS-Provider fehlt.' }
         $databaseParallelism = if ($null -ne $req.PSObject.Properties['DatabaseUploadParallelism']) { [int]$req.DatabaseUploadParallelism } else { 8 }
         PublishLocalIrisSoftwarePackages @($req.MsiPackages) @($req.DatabaseTargets) ([string]$req.DatabaseProviderDirectory) $databaseParallelism
         exit 0
     }
+    if ($req.Action -eq 'publish-msi-packages' -and @($req.MsiPackages).Count -eq 0) { throw 'Keine MSI-Pakete für zzzSoftware ausgewählt.' }
     if (-not $localExecution -and $req.Action -in @('update','check-upload-directory','clean-upload-directory') -and
         (($null -ne $req.PSObject.Properties['MsiPackage'] -and $null -ne $req.MsiPackage) -or
          ($null -ne $req.PSObject.Properties['MsiPackages'] -and $null -ne $req.MsiPackages -and @($req.MsiPackages).Count -gt 0))) {
@@ -297,6 +305,9 @@ try {
     $requestedPath = if ($null -ne $req.PSObject.Properties['RemoteInstallPath']) { [string]$req.RemoteInstallPath } else { '' }
     $skipLocalPackageCopy = $localExecution -and ([string]::IsNullOrWhiteSpace($requestedPath) -or
         ($null -ne $req.PSObject.Properties['SkipLocalPackageCopy'] -and [bool]$req.SkipLocalPackageCopy))
+    if (-not $localExecution -and $req.Action -eq 'publish-msi-packages') {
+        $skipLocalPackageCopy = $null -ne $req.PSObject.Properties['SkipLocalPackageCopy'] -and [bool]$req.SkipLocalPackageCopy
+    }
     $req | Add-Member -NotePropertyName SkipLocalPackageCopy -NotePropertyValue $skipLocalPackageCopy -Force
     if (-not $localExecution -and [string]::IsNullOrWhiteSpace($requestedPath)) {
         $req | Add-Member -NotePropertyName RemoteInstallPath -NotePropertyValue 'C:\install\Novacom' -Force
@@ -328,6 +339,13 @@ try {
     $session = $null
     try {
         $session = if ($localExecution) { [pscustomobject]@{ NovaTouchLocal=$true } } else { New-PSSession @sessionArgs }
+        if ($req.Action -eq 'database-inventory') {
+            $script = 'function ReadSoftwareIrisRegistrations {' + ${function:ReadSoftwareIrisRegistrations}.ToString() + '}; function ReadSoftwareIrisInventory {' + ${function:ReadSoftwareIrisInventory}.ToString() + '}; ReadSoftwareIrisInventory'
+            $instances = @(InvokeWorkerCommand -Session $session -ScriptBlock ([scriptblock]::Create($script)) -ErrorAction Stop)
+            Emit @{ Event='result'; Success=$true; IrisInstances=$instances; Services=@(); Message='IRIS-Instanzen und Namespaces ermittelt.' }
+            exit 0
+        }
+        if ($req.Action -eq 'publish-msi-packages') { Emit (PublishRemoteSoftwarePackages $req $session $PSCommandPath); exit 0 }
         if ($req.Action -eq 'probe') {
             Emit @{ Event='result'; Success=$true; Message=$(if ($localExecution) { 'Lokaler Zugriff bereit' } else { 'WinRM erreichbar und Anmeldung erfolgreich' }); Services=@() }
             exit 0
