@@ -3,6 +3,7 @@ namespace NovaTouchUpdater;
 public sealed partial class MainForm
 {
     private IReadOnlyDictionary<string, string>? preparedPackageHashes;
+    private UpdateComponents activeInstallHashComponents = UpdateComponents.All;
 
     private TransferFileRequest[] PackageFileCandidates(UpdateComponents components)
     {
@@ -22,7 +23,9 @@ public sealed partial class MainForm
     {
         preparedPackageHashes = null;
         paymentHash = fiscalHash = serverSuiteHash = "";
-        string[] paths = PackageFileCandidates(components).Select(file => Path.GetFullPath(file.LocalPath))
+        IEnumerable<string> sources = PackageFileCandidates(components & activeInstallHashComponents).Select(file => file.LocalPath)
+            .Concat(msiPackages.Where(pair => (pair.Key & components & ~activeInstallHashComponents) != 0).Select(pair => pair.Value.PayloadPath));
+        string[] paths = sources.Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var hashes = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var calculateHash = hashFile ?? WorkerRunner.Sha256Async;
@@ -40,7 +43,8 @@ public sealed partial class MainForm
         foreach (var (component, package) in msiPackages.Where(pair => (pair.Key & components) != 0))
         {
             package.Sha256 = hashes[Path.GetFullPath(package.PayloadPath)];
-            foreach (var file in package.CompanionFiles) file.Sha256 = hashes[Path.GetFullPath(file.LocalPath)];
+            foreach (var file in package.CompanionFiles)
+                if (hashes.TryGetValue(Path.GetFullPath(file.LocalPath), out string? companionHash)) file.Sha256 = companionHash;
             Log("SYSTEM", $"MSI {component}: {package.ProductName} {package.ProductVersion}");
         }
     }
@@ -75,7 +79,6 @@ public sealed partial class MainForm
 
     private async Task ExecuteHostUpdateAsync(HostState host, CancellationToken ct, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
-        if (!await PublishLocalSoftwarePackagesAsync(host, ct)) return;
         if (host.IsLocal && !await StageLocalUpdatePackagesAsync(host, ct)) return;
         await UpdateHostAsync(host, ct, delay);
     }

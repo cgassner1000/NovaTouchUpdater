@@ -65,15 +65,17 @@ internal static partial class Program
             remote[0].Updates = new(components);
             worker.Requests.Clear();
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", remote[0], CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.Count == 2 && worker.Requests.First() is { Action:"publish-msi-packages", LocalExecution:false, MsiPackages.Length:3, SkipZipTransfer:true } &&
-                worker.Requests.Last() is { Action:"update", LocalExecution:false, SkipZipTransfer:true, ForceUpdate:true, MsiPackage:null, MsiPackages.Length:0 } && worker.Requests.Last().PaymentZip == payment,
-                "remote updates upload all selected MSIs to zzzSoftware first and install only the permitted payment component");
+            FinishUpdates(form, remote[0]);
+            Assert(worker.Requests.Count == 2 && worker.Requests.Last() is { Action:"publish-msi-packages", LocalExecution:false, MsiPackages.Length:3, SkipZipTransfer:true } &&
+                worker.Requests.First() is { Action:"update", LocalExecution:false, SkipZipTransfer:true, ForceUpdate:true, MsiPackage:null, MsiPackages.Length:0 } && worker.Requests.First().PaymentZip == payment,
+                "remote updates install only payment and then upload all selected MSIs to zzzSoftware");
             Field<CheckBox>(form, "chkSkipLocalPackageCopy").Checked = true;
             Field<CheckBox>(form, "chkIrisTls").Checked = true;
             Call(form, "CaptureCredentials");
             remote[0].Updates = new(UpdateComponents.None);
             worker.Requests.Clear();
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", remote[0], CancellationToken.None, NoRetryDelay)!);
+            FinishUpdates(form, remote[0]);
             Assert(worker.Requests.Single() is { Action:"publish-msi-packages", SkipLocalPackageCopy:true, IrisUseTls:true } && remote[0].Updates!.DatabaseUploadCompleted,
                 "remote MSI-only updates can stream without target copies and carry the independent IRIS TLS option");
             Field<CheckBox>(form, "chkIrisTls").Checked = false;
@@ -125,10 +127,12 @@ internal static partial class Program
             Call(form, "CaptureCredentials");
             worker.Requests.Clear();
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
-            WorkerRequest upload = worker.Requests.First();
+            Assert(worker.Requests.All(request => request.Action != "publish-msi-packages"), "installation finishes before the database phase starts");
+            FinishUpdates(form, local);
+            WorkerRequest upload = worker.Requests.Last();
             Assert(upload is { Action: "publish-msi-packages", LocalExecution: true, MsiPackages.Length: 3, DatabaseTargets.Length: 1, DatabaseUploadParallelism: 2 } &&
-                upload.MsiPackages.All(package => package.Sha256.Length == 64) && worker.Requests.ElementAt(1).Action == "stage-packages",
-                "all selected MSI packages upload to local CPF targets before copying or installation, independently of installed versions");
+                upload.MsiPackages.All(package => package.Sha256.Length == 64) && worker.Requests.First().Action == "stage-packages",
+                "all selected MSI packages upload to local CPF targets after copying and installation");
             Field<NumericUpDown>(form, "nUpdate").Value = 8;
             Call(form, "CaptureCredentials");
             worker.PublicationError = "zzzSoftware-Upload nach TEST:51774/APP fehlgeschlagen. Ursache: MSI 'NovaTouch POS': ERROR #5002: ObjectScript error: <FILEFULL>SaveStream+18^%Library.GlobalStreamAdaptor.1 || zzzSoftware-Upload nach TEST:51774/USER fehlgeschlagen. Ursache: MSI 'NovaTouch POS': ERROR #5002: ObjectScript error: <PROTECT>SaveStream+18";
@@ -143,24 +147,24 @@ internal static partial class Program
             local.Error = "Earlier upload error <FILEFULL>";
             worker.Requests.Clear(); worker.FailPublication = true; local.Updates = new(components);
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.Count == 1 && local.Result == "Fehler" && local.Updates.Pending == components && !local.Updates.DatabaseUploadCompleted,
-                "publication failure prevents copying and installation and retains every pending component");
+            FinishUpdates(form, local);
+            Assert(worker.Requests.Count == 6 && local.Result == "Fehler" && local.Updates.Pending == UpdateComponents.None && !local.Updates.DatabaseUploadCompleted,
+                "publication failure at the end retains successful installations and only leaves the database step unfinished");
             Call(form, "PaintRow", local);
             Assert(local.Error == "TEST:51774/APP · NovaTouch POS: <FILEFULL>" + Environment.NewLine + "TEST:51774/USER · NovaTouch POS: <PROTECT>" &&
                 local.Row!.Cells["information"].Tag is null && local.Log.Any(line => line.Contains("GlobalStreamAdaptor")) &&
-                worker.Requests.Single().DatabaseUploadParallelism == 8,
+                worker.Requests.Last().DatabaseUploadParallelism == 8,
                 "final upload errors list all failed namespaces compactly, retain full log details and use Update parallel without an additional cap");
             worker.Requests.Clear(); worker.FailPublication = false; worker.FailStaging = true;
-            Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
-            Assert(local.Updates.DatabaseUploadCompleted && worker.Requests.Select(request => request.Action).SequenceEqual(["publish-msi-packages", "stage-packages"]),
-                "a successful publication is retained when later copying fails");
-            foreach (UpdateComponents completed in new[] { UpdateComponents.Payment, UpdateComponents.Pos, UpdateComponents.Ntv })
-                local.Updates.Complete(completed, new WorkerResult { Success=true });
+            FinishUpdates(form, local);
+            Assert(local.Updates.DatabaseUploadCompleted && worker.Requests.Select(request => request.Action).SequenceEqual(["publish-msi-packages"]) &&
+                (UpdateComponents)Call(form, "ComponentsForUpdate", local, true)! == UpdateComponents.None,
+                "retry after a final upload failure only republishes and does not copy or install successful components again");
             File.Delete(payment); File.Delete(bundle);
             worker.Requests.Clear(); worker.FailStaging = false;
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", local, CancellationToken.None, NoRetryDelay)!);
-            Assert(worker.Requests.All(request => request.Action != "publish-msi-packages") && worker.Requests.Last().MsiPackage?.Kind == "ntc",
-                "retry after a successful upload neither republishes completed MSIs nor requires their deleted source files");
+            FinishUpdates(form, local);
+            Assert(worker.Requests.IsEmpty, "completed work is not repeated and does not require deleted package sources");
         }
         finally
         {
@@ -168,6 +172,9 @@ internal static partial class Program
             Directory.Delete(root, true);
         }
     }
+
+    private static void FinishUpdates(MainForm form, params HostState[] hosts) =>
+        Complete((Task)Call(form, "CompleteUpdateRunAsync", hosts, CancellationToken.None)!);
 
     private sealed class StagingRunner : IWorkerRunner
     {

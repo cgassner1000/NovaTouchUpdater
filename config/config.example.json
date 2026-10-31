@@ -5,6 +5,8 @@
   "EncryptedPassword": "",
   "UseSsl": false,
   "IrisUseTls": false,
+  "UploadToZzzSoftware": true,
+  "RestartPosAfterUpdate": false,
   "ScanOnStartup": true,
   "SkipLocalPackageCopy": false,
   "SkipZipTransfer": false,

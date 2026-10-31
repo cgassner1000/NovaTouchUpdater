@@ -119,7 +119,7 @@ function PrepareUpdatePackages {
 }
 
 function InstallUpdatePackages {
-    param([string]$wantedJson, [string]$stageDir, [string]$serverSuiteTarget)
+    param([string]$wantedJson, [string]$stageDir, [string]$serverSuiteTarget, [string]$allServicesJson = '')
     $ErrorActionPreference = 'Stop'
     Set-StrictMode -Version Latest
     function UpdateProgress([string]$phase, [string]$message, [Nullable[int]]$percent = $null) {
@@ -321,6 +321,7 @@ function InstallUpdatePackages {
         if ([string]$svc.StartType -ne 'Disabled') { $servicesToStart += $name }
     }
     $allPlans = @($plans.Values)
+    $stopServices = @($wanted)
     foreach ($suitePlan in @($allPlans | Where-Object Kind -eq 'serversuite')) {
         foreach ($other in $allPlans) {
             if ($other -eq $suitePlan) { continue }
@@ -330,6 +331,19 @@ function InstallUpdatePackages {
     if ($suiteNames.Count -gt 0) {
         $currentNames = @(Get-Service -ErrorAction Stop | Where-Object { $_.Name -match '^nt3_server_suite' } | ForEach-Object { $_.Name })
         $expectedNames = @($suiteNames | Sort-Object -Unique)
+        if ($allServicesJson) {
+            $registeredServices = ConvertFrom-Json -InputObject $allServicesJson
+            $allSuiteServices = @($registeredServices | Where-Object Kind -eq 'serversuite')
+            $expectedNames = @($allSuiteServices | ForEach-Object Name | Sort-Object -Unique)
+            # EventLog must be stopped with all suite services stopped, including
+            # instances whose files were already verified in an earlier attempt.
+            foreach ($service in $allSuiteServices) {
+                if ($service.Name -notin @($stopServices | ForEach-Object Name)) {
+                    $stopServices += $service
+                    if ($service.StartType -ne 'Disabled') { $servicesToStart += [string]$service.Name }
+                }
+            }
+        }
         $actualNames = @($currentNames | Sort-Object -Unique)
         if ($expectedNames.Count -ne $actualNames.Count -or
             @($expectedNames | Where-Object { $_ -notin $actualNames }).Count -gt 0) { throw 'Server-Suite-Dienste haben sich während der Vorbereitung geändert. Bitte erneut prüfen.' }
@@ -342,21 +356,22 @@ function InstallUpdatePackages {
     $startedCount = 0
     $startNames = @($servicesToStart | Select-Object -Unique)
     $totalFiles = 0
+    $copiedTargets = @{}
     foreach ($plan in $allPlans) { $totalFiles += $plan.Files.Count }
     $copyProgress = [pscustomobject]@{ Total=$totalFiles; Completed=0; LastPercent=-1; Timer=[Diagnostics.Stopwatch]::StartNew() }
     $startEventLog = $false
     $eventLogReady = $true
     try {
         # Stop every selected service before the first file or directory change.
-        foreach ($svc in $wanted) {
+        foreach ($svc in $stopServices) {
             $service = Get-Service -Name ([WildcardPattern]::Escape([string]$svc.Name)) -ErrorAction Stop
             if ($service.Status -ne 'Stopped') {
-                UpdateProgress 'Dienste stoppen' ("Stoppe Dienst '$($svc.Name)'") ([int][Math]::Floor(50.0 * $stoppedCount / $wanted.Count))
+                UpdateProgress 'Dienste stoppen' ("Stoppe Dienst '$($svc.Name)'") ([int][Math]::Floor(50.0 * $stoppedCount / $stopServices.Count))
                 Stop-Service -Name ([WildcardPattern]::Escape([string]$svc.Name)) -Force -ErrorAction Stop
                 $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
             }
             $stoppedCount++
-            UpdateProgress 'Dienste stoppen' ("Dienst '$($svc.Name)' ist gestoppt ($stoppedCount/$($wanted.Count))") ([int][Math]::Floor(50.0 * $stoppedCount / $wanted.Count))
+            UpdateProgress 'Dienste stoppen' ("Dienst '$($svc.Name)' ist gestoppt ($stoppedCount/$($stopServices.Count))") ([int][Math]::Floor(50.0 * $stoppedCount / $stopServices.Count))
         }
         if ($suiteNames.Count -gt 0) {
             # Keep EventLog stopped throughout suite/Python installation, after all suite services have stopped.
@@ -389,6 +404,7 @@ function InstallUpdatePackages {
             if ($cleanPython) { ClearPythonContents $plan.Target }
             UpdateProgress 'Update installieren' ("$component : Dateien werden installiert nach $($plan.Target); $($copyProgress.Completed)/$totalFiles Dateien verarbeitet") ([int][Math]::Floor(100.0 * $copyProgress.Completed / [Math]::Max(1, $totalFiles)))
             CopyContents $plan.Source $plan.Target $plan.Files $component $copyProgress $cleanPython
+            $copiedTargets[$plan.Target] = $true
             $changes += ($plan.Kind + ' => ' + $plan.Target)
         }
         if ($totalFiles -eq 0) { UpdateProgress 'Update installieren' 'Alle Zielordner wurden angelegt' 100 }
@@ -415,6 +431,11 @@ function InstallUpdatePackages {
             }
             catch { $restartErrors += "Dienst '$name' konnte nicht wieder gestartet werden: $($_.Exception.Message)" }
         }
+    }
+    foreach ($service in $wanted) {
+        $complete = $copiedTargets.ContainsKey((FullPath ([string]$service.InstallDir)))
+        if ($service.Kind -eq 'serversuite') { $complete = $complete -and $copiedTargets.ContainsKey((PythonDirectory ([string]$service.ExePath))) }
+        if ($complete) { [pscustomobject]@{ Event='service-files-installed'; Name=[string]$service.Name } }
     }
     $errors = @($operationError) + @($restartErrors) | Where-Object { $_ }
     if (@($errors).Count -gt 0) { throw ($errors -join ' | ') }

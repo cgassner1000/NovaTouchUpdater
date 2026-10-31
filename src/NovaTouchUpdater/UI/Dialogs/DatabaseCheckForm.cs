@@ -89,7 +89,7 @@ internal sealed class DatabaseCheckForm : Form
             }
             finally { instances.EndUpdate(); }
             int errors = result.Instances.Count(instance => instance.Error.Length > 0) + result.Warnings.Length;
-            status.Text = result.Instances.Length == 0 ? errors > 0 ? "IRIS-Erkennung fehlgeschlagen – siehe Hinweise." : "Keine InterSystems-IRIS-Instanzen auf den ausgewählten Hosts gefunden."
+            status.Text = result.Instances.Length == 0 ? errors > 0 ? "IRIS-Erkennung fehlgeschlagen – siehe Hinweise." : ""
                 : $"{result.Instances.Length} Instanz(en), {namespaceCount} Namespace(s) ohne Präfix %." + (errors > 0 ? $" {errors} Fehler/Hinweis(e)." : "");
             status.ForeColor = errors > 0 ? UiTheme.Warning : UiTheme.Text;
             if (instances.Nodes.Count > 0) instances.SelectedNode = instances.Nodes[0];

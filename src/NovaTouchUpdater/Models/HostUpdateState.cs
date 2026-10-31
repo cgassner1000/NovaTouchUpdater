@@ -16,9 +16,23 @@ internal sealed class HostUpdateState(UpdateComponents components)
     internal bool Changed { get; private set; }
     internal bool AllSkipped { get; private set; } = true;
     internal bool DatabaseUploadCompleted { get; set; }
+    internal bool PosRestartCompleted { get; set; }
+    internal string PosRestartMessage { get; private set; } = "";
+    internal string DatabaseUploadError { get; set; } = "";
+    internal string PosRestartError { get; set; } = "";
+    internal HashSet<string> CompletedServiceNames { get; } = new(StringComparer.OrdinalIgnoreCase);
+    internal void CompletePosRestart(WorkerResult result)
+    {
+        PosRestartCompleted = true;
+        PosRestartError = "";
+        PosRestartMessage = result.Message.Length > 0 ? result.Message : "POS-Neustart nach Update abgeschlossen";
+        Changed |= !result.Skipped;
+        AllSkipped &= result.Skipped;
+    }
     internal void CompleteDatabaseUpload(bool changed)
     {
         DatabaseUploadCompleted = true;
+        DatabaseUploadError = "";
         Changed |= changed;
         AllSkipped &= !changed;
     }
@@ -49,7 +63,8 @@ internal sealed class HostUpdateState(UpdateComponents components)
         foreach (UpdateComponents component in errors.Keys.Where(component => (component & allowed) == 0).ToArray())
             errors.Remove(component);
     }
-    internal string ErrorText => string.Join(" | ", Each(Pending).Where(errors.ContainsKey).Select(c => Label(c) + ": " + errors[c]));
+    internal string ErrorText => string.Join(" | ", Each(Pending).Where(errors.ContainsKey).Select(c => Label(c) + ": " + errors[c])
+        .Concat(new[] { DatabaseUploadError, PosRestartError }.Where(error => error.Length > 0)));
 
     internal void Complete(UpdateComponents component, WorkerResult result)
     {

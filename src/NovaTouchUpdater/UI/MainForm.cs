@@ -52,6 +52,8 @@ public sealed partial class MainForm : Form
     private readonly NumericUpDown nHttpsPort = new();
     private readonly CheckBox chkSsl = new ModernToggleSwitch();
     private readonly CheckBox chkIrisTls = new ModernToggleSwitch { Name = "irisUseTls", Text = "IRIS-Verbindung mit TLS", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkUploadToZzzSoftware = new ModernToggleSwitch { Name = "uploadToZzzSoftware", Text = "Upload nach zzzSoftware", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkRestartPosAfterUpdate = new ModernToggleSwitch { Name = "restartPosAfterUpdate", Text = "POS neustart für update", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkForceUpdate = new ModernToggleSwitch();
     private readonly CheckBox chkSkipZipTransfer = new ModernToggleSwitch();
     private readonly CheckBox chkSkipLocalPackageCopy = new ModernToggleSwitch();
@@ -106,7 +108,7 @@ public sealed partial class MainForm : Form
     {
         runner = worker ?? new WorkerRunner();
         connectionRunner = monitoringWorker ?? new WorkerRunner("NovaTouchUpdater.ConnectionWorker.ps1");
-        prepareDatabaseTargets = _ => Task.FromResult(activeDatabaseTargets ?? throw new InvalidOperationException("IRIS-Upload wurde nicht vorbereitet."));
+        prepareDatabaseTargets = async ct => activeDatabaseTargets ??= IrisUploadPlan.Create(await readIrisInventory(ct), activeIrisUseTls);
         if (preview)
         {
             prepareDatabaseTargets = _ => Task.FromResult(Array.Empty<IrisUploadTarget>());
@@ -207,6 +209,8 @@ public sealed partial class MainForm : Form
         txtUser.Text = config.Username ?? "";
         chkSsl.Checked = config.UseSsl;
         chkIrisTls.Checked = config.IrisUseTls;
+        chkUploadToZzzSoftware.Checked = config.UploadToZzzSoftware;
+        chkRestartPosAfterUpdate.Checked = config.RestartPosAfterUpdate;
         chkScanOnStartup.Checked = config.ScanOnStartup;
         chkSkipLocalPackageCopy.Checked = config.SkipLocalPackageCopy;
         chkSkipZipTransfer.Checked = config.SkipZipTransfer;
@@ -237,6 +241,7 @@ public sealed partial class MainForm : Form
         Hosts = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
         Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
         IrisUseTls = chkIrisTls.Checked,
+        UploadToZzzSoftware = chkUploadToZzzSoftware.Checked, RestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked,
         SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(),
         ScanOnStartup = chkScanOnStartup.Checked,
         SkipLocalPackageCopy = chkSkipLocalPackageCopy.Checked, SkipZipTransfer = chkSkipZipTransfer.Checked
@@ -454,12 +459,14 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(chkSkipLocalPackageCopy, "LOKAL verwendet die ausgewählten Pakete ohne zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt. Für zzzSoftware auf Remote-Hosts werden MSI-Daten direkt über WinRM gestreamt. Sonst werden sie zuerst im Zielpfad bereitgestellt. Ein leerer lokaler Zielpfad verwendet ebenfalls direkt die Quellen.");
         tips.SetToolTip(chkSkipZipTransfer, "REMOTE: ZIP- und MSI-Pakete müssen bereits im Zielpfad des Clients liegen. Dateiname und SHA256 müssen zur gewählten Quelle passen. Die Einstellung betrifft keine lokalen Updates.");
         tips.SetToolTip(chkIrisTls, "TLS für den MSI-Upload zu erkannten IRIS-Instanzen auf lokalen und entfernten Hosts verwenden. Mit 'Konfiguration speichern' für den nächsten Start merken.");
+        tips.SetToolTip(chkUploadToZzzSoftware, "Ausgewählte MSI-Pakete nach den Updates in zzzSoftware hochladen. Standard: eingeschaltet. In der Konfiguration speicherbar.");
+        tips.SetToolTip(chkRestartPosAfterUpdate, "KassaPreh nach den Updates und erfolgreichen Datenbank-Uploads auf den ausgewählten Remote-Geräten starten / neu starten. LOKAL wird ausgeschlossen. Bei ausgeschaltetem Upload erfolgt der Neustart nach den Updates. Nicht gespeicherte POS-Eingaben können verloren gehen.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
         executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            login, optionBar, chkIrisTls, chkScanOnStartup, chkSkipLocalPackageCopy, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
+            login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkRestartPosAfterUpdate, chkScanOnStartup, chkSkipLocalPackageCopy, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(0, 0, 0, 12);
@@ -703,7 +710,7 @@ public sealed partial class MainForm : Form
             // Even the longest option must remain readable if a vertical scrollbar
             // reduces the available width at very large text sizes.
             int width = main.Padding.Horizontal + configuration.Margin.Horizontal + configuration.Padding.Horizontal
-                + new Control[] { chkSkipLocalPackageCopy, chkSkipZipTransfer, chkIrisTls, httpsOptions }
+                + new Control[] { chkSkipLocalPackageCopy, chkSkipZipTransfer, chkIrisTls, chkUploadToZzzSoftware, chkRestartPosAfterUpdate, httpsOptions }
                     .Max(control => control.PreferredSize.Width + control.Margin.Horizontal) + settings.Padding.Horizontal;
             if (main.MinimumSize.Width != width) main.MinimumSize = new Size(width, 0);
         };
@@ -1224,6 +1231,8 @@ public sealed partial class MainForm : Form
         activeSkipLocalPackageCopy = UseLocalPackageSources;
         activeDatabaseUploadParallelism = (int)nUpdate.Value;
         activeIrisUseTls = chkIrisTls.Checked;
+        activeUploadToZzzSoftware = chkUploadToZzzSoftware.Checked;
+        activeRestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked;
         activeStreamDatabasePackages = chkSkipLocalPackageCopy.Checked;
     }
 
@@ -1262,7 +1271,7 @@ public sealed partial class MainForm : Form
     private static UpdateComponents AllowedUpdateComponents(HostState host) => host.IsLocal ? UpdateComponents.All : UpdateComponents.ZipServices;
 
     private UpdateComponents ComponentsForUpdate(HostState host, bool onlyFailed) =>
-        (onlyFailed && host.Updates is { Pending: not UpdateComponents.None } state ? state.Pending : SelectedUpdateComponents()) & AllowedUpdateComponents(host);
+        (onlyFailed && host.Updates is { } state ? state.Pending : SelectedUpdateComponents()) & AllowedUpdateComponents(host);
 
     private bool ValidateCredentials()
     {
@@ -1345,7 +1354,9 @@ public sealed partial class MainForm : Form
         if (selected.Length > 0)
         {
             selected = selected.Where(host => ComponentsForUpdate(host, onlyFailed) != UpdateComponents.None ||
-                (msiPackages.Count > 0 && (!onlyFailed || host.Updates?.DatabaseUploadCompleted != true))).ToArray();
+                (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0 && (!onlyFailed || host.Updates?.DatabaseUploadCompleted != true)) ||
+                (chkRestartPosAfterUpdate.Checked && !host.IsLocal && (!onlyFailed || host.Updates?.PosRestartCompleted != true)) ||
+                (onlyFailed && host.Updates is { } state && (state.DatabaseUploadError.Length > 0 || state.PosRestartError.Length > 0))).ToArray();
             if (selected.Length == 0)
             {
                 MessageBox.Show(this, "Remote sind ausschließlich Payment, Fiscal und Server Suite erlaubt. POS, NTC, SOL und NTV können nur lokal aktualisiert werden.",
@@ -1372,16 +1383,15 @@ public sealed partial class MainForm : Form
                 "Fehlende Update-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        if (msiPackages.Count > 0 && selected.Any(host => host.IsLocal && (!onlyFailed || host.Updates?.DatabaseUploadCompleted != true)) &&
-            !await PrepareLocalDatabaseUploadAsync(appLifetime.Token)) return;
         if (MessageBox.Show(this, UpdateConfirmation(selected, needed, onlyFailed),
             "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
         CaptureCredentials();
+        activeDatabaseTargets = null;
         lastUpdateForce = activeForceUpdate;
         foreach (HostState host in selected)
         {
             UpdateComponents components = ComponentsForUpdate(host, onlyFailed);
-            if (!onlyFailed || host.Updates is null || host.Updates.Pending == UpdateComponents.None)
+            if (!onlyFailed || host.Updates is null)
                 Mark(host, h => h.Updates = new HostUpdateState(components));
             else
                 Mark(host, h => h.Updates!.RestrictTo(AllowedUpdateComponents(h)));
@@ -1391,7 +1401,8 @@ public sealed partial class MainForm : Form
             foreach (HostState host in selected)
                 Mark(host, h => { h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "Paketdateien werden geprüft"; });
             UpdateComponents hashComponents = needed;
-            if (selected.Any(host => host.Updates?.DatabaseUploadCompleted != true))
+            activeInstallHashComponents = needed;
+            if (activeUploadToZzzSoftware && selected.Any(host => host.Updates?.DatabaseUploadCompleted != true))
                 hashComponents |= SelectedUpdateComponents() & UpdateComponents.Msi;
             try { await PrepareUpdatePackageHashesAsync(hashComponents, ct); }
             catch (Exception ex)
@@ -1421,8 +1432,9 @@ public sealed partial class MainForm : Form
             await ParallelPhaseAsync(ready, (int)nUpdate.Value, async (host, token) =>
             {
                 await ExecuteHostUpdateAsync(host, token);
-                CountCompleted();
             }, ct);
+            await CompleteUpdateRunAsync(ready, ct);
+            foreach (HostState host in ready) CountCompleted();
             Log("SYSTEM", "Update-Durchlauf abgeschlossen.");
         });
     }
@@ -1473,6 +1485,12 @@ public sealed partial class MainForm : Form
                     catch (Exception ex) { result = new WorkerResult { Success = false, Error = ex.Message }; }
                     Mark(host, h =>
                     {
+                        state.CompletedServiceNames.UnionWith(result.CompletedServiceNames);
+                        if (result.Services.Length > 0)
+                        {
+                            h.Services = result.Services.ToList();
+                            ReadVersions(h);
+                        }
                         if (result.Success)
                         {
                             state.Complete(component, result);
@@ -1491,25 +1509,7 @@ public sealed partial class MainForm : Form
                 }
                 if (state.Pending != UpdateComponents.None && attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
             }
-            Mark(host, h =>
-            {
-                h.UpdateFailed = state.Pending != UpdateComponents.None;
-                if (h.UpdateFailed)
-                {
-                    if (!string.IsNullOrWhiteSpace(state.ErrorText)) h.Error = state.ErrorText;
-                    h.Result = "Fehler";
-                    h.Phase = "Maximal 3 Versuche: " + HostUpdateState.Label(state.Pending);
-                }
-                else
-                {
-                    h.Error = "";
-                    h.Result = state.AllSkipped ? "Übersprungen" : state.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
-                    h.Phase = state.Attempted == UpdateComponents.None && state.DatabaseUploadCompleted
-                        ? (state.Changed ? "zzzSoftware-Upload abgeschlossen" : "zzzSoftware geprüft – kein Upload erforderlich")
-                        : state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
-                    if (state.Changed) h.SetProgress(100);
-                }
-            });
+            FinishHostUpdate(host);
         }
         catch (OperationCanceledException)
         {
@@ -1521,6 +1521,32 @@ public sealed partial class MainForm : Form
             });
             throw;
         }
+    }
+
+    private void FinishHostUpdate(HostState host)
+    {
+        HostUpdateState state = host.Updates!;
+        Mark(host, h =>
+            {
+                h.UpdateFailed = state.Pending != UpdateComponents.None || state.ErrorText.Length > 0;
+                if (h.UpdateFailed)
+                {
+                    if (!string.IsNullOrWhiteSpace(state.ErrorText)) h.Error = state.ErrorText;
+                    h.Result = "Fehler";
+                    h.Phase = state.Pending != UpdateComponents.None ? "Maximal 3 Versuche: " + HostUpdateState.Label(state.Pending)
+                        : state.DatabaseUploadError.Length > 0 ? "zzzSoftware-Upload fehlgeschlagen" : "POS-Neustart fehlgeschlagen";
+                }
+                else
+                {
+                    h.Error = "";
+                    h.Result = state.AllSkipped ? "Übersprungen" : state.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
+                    h.Phase = state.PosRestartCompleted ? state.PosRestartMessage + (h.RebootRequired ? " · Windows-Neustart erforderlich" : "")
+                        : state.Attempted == UpdateComponents.None && state.DatabaseUploadCompleted
+                        ? (state.Changed ? "zzzSoftware-Upload abgeschlossen" : "zzzSoftware geprüft – kein Upload erforderlich")
+                        : state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
+                    if (state.Changed) h.SetProgress(100);
+                }
+            });
     }
 
     private void InvalidateConnectionChecks()
@@ -1687,6 +1713,7 @@ public sealed partial class MainForm : Form
         // Cancellation prevents new hosts and new attempts, but active updates finish.
         WorkerRequest request = Request(action, host, components);
         request.RetryUpdate = retryUpdate;
+        if (action == "update") request.CompletedServiceNames = host.Updates?.CompletedServiceNames.ToArray() ?? [];
         WorkerResult result = await runner.RunAsync(request, ev =>
         {
             Log(host.Host, ev.Phase + ": " + ev.Message);
@@ -1725,6 +1752,7 @@ public sealed partial class MainForm : Form
         {
             cancellation.Dispose(); cancellation = null; busy = false;
             preparedPackageHashes = null;
+            activeInstallHashComponents = UpdateComponents.All;
             activeDatabaseTargets = null;
             activePassword = "";
             RebuildRows();
@@ -1935,6 +1963,8 @@ public sealed partial class MainForm : Form
         txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle && remote;
         chkSkipLocalPackageCopy.Enabled = idle && selected.Length > 0;
         chkIrisTls.Enabled = idle && selected.Length > 0;
+        chkUploadToZzzSoftware.Enabled = idle;
+        chkRestartPosAfterUpdate.Enabled = idle && remote;
         txtUser.Enabled = txtPassword.Enabled = idle && remote; statusFilter.Enabled = idle;
         executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = readPackages.Enabled = idle;
         useFolderPackages.Enabled = idle && individualPackageSelection && folderPackages.Length > 0;

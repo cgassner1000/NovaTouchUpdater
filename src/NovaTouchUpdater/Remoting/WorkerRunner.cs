@@ -25,6 +25,7 @@ public sealed class WorkerRequest
     public int HttpsPort { get; set; } = 5986;
     public bool ForceUpdate { get; set; }
     public bool RetryUpdate { get; set; }
+    public string[] CompletedServiceNames { get; set; } = [];
     public string RemoteInstallPath { get; set; } = "C:\\install\\Novacom";
     public bool SkipZipTransfer { get; set; }
     public bool SkipLocalPackageCopy { get; set; }
@@ -111,6 +112,7 @@ public sealed class WorkerEvent
 
 public sealed class WorkerResult
 {
+    public string[] CompletedServiceNames { get; set; } = [];
     public string Event { get; set; } = "result";
     public bool Success { get; set; }
     public string Message { get; set; } = "";

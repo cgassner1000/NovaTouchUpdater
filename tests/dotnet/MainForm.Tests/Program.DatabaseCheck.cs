@@ -228,8 +228,8 @@ internal static partial class Program
         Assert(localReads == 0 && remote.Result.Instances.Select(instance => instance.Name).SequenceEqual(["REMOTE-A / IRIS", "REMOTE-B / IRIS"]) &&
             remote.Result.Instances.All(instance => instance.Namespaces.SequenceEqual(["APP", "USER"]) && instance.SuperServerPort == 51774),
             "remote Database Check uses target inventories and keeps host, namespaces and server port together without reading local registry");
-        Assert(remote.Result.Warnings.Length == 2 && remote.Result.Warnings.Any(w => w.StartsWith("OFFLINE:")) && remote.Result.Warnings.Any(w => w.StartsWith("EMPTY:")),
-            "an offline host or an empty inventory does not hide other hosts' instances");
+        Assert(remote.Result.Warnings.Length == 1 && remote.Result.Warnings[0].StartsWith("OFFLINE:") && !remote.Result.Warnings.Any(w => w.StartsWith("EMPTY:")),
+            "an offline host retains its error while hosts without IRIS are silently omitted");
         Assert(worker.Requests.All(request => request is { Action:"database-inventory", LocalExecution:false, UseSsl:true, HttpsPort:6001, Username:"fixture-user", Password:"fixture-password" }),
             "remote inventory uses the configured WinRM authentication and HTTPS port without update requests");
         var combined = (Task<IrisInventoryResult>)Call(form, "ReadSelectedIrisInventoryAsync", new[] { new HostState { Host="LOCALHOST" }, selected[0] }, CancellationToken.None)!;
@@ -242,6 +242,12 @@ internal static partial class Program
         TreeView tree = All(dialog).OfType<TreeView>().Single();
         Assert(tree.Nodes.Count == 2 && tree.Nodes[1].Text.StartsWith("REMOTE-A / IRIS") && tree.Nodes[1].Nodes.Count == 2,
             "the database dialog lists remote IRIS instances and their filtered namespaces");
+        using var emptyDialog = new DatabaseCheckForm(_ => Task.FromResult(new IrisInventoryResult([], [])));
+        foreach (Control control in All(emptyDialog)) _ = control.Handle;
+        Complete(emptyDialog.RefreshAsync());
+        Assert(All(emptyDialog).OfType<TreeView>().Single().Nodes.Count == 0 &&
+            All(emptyDialog).OfType<Label>().Single(control => control.Name == "databaseStatus").Text.Length == 0,
+            "an empty Database Check shows no no-instance notice");
     }
 
     private sealed class DatabaseInventoryRunner : IWorkerRunner

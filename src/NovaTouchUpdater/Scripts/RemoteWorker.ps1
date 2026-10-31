@@ -275,6 +275,7 @@ function SelectUpdateServices($services, $targets, [bool]$forceUpdate) {
 }
 
 $software = $null
+$completedServiceNames = @(); $after = @()
 try {
     $requestLine = [Console]::In.ReadLine()
     if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
@@ -487,6 +488,9 @@ try {
 
         # Filter VOR ZIP-Uebertragung, Entpacken und jeglichem Dienst-Stopp.
         $pending = @(SelectUpdateServices $services $targets ($forceUpdate -or $retryUpdate))
+        if ($null -ne $req.PSObject.Properties['CompletedServiceNames']) {
+            $pending = @($pending | Where-Object { $_.Name -notin @($req.CompletedServiceNames) })
+        }
         $suiteInstances = @($pending | Where-Object Kind -eq 'serversuite')
         if ($suiteInstances.Count -gt 0) {
             Progress 'Server-Suite-Instanzen' ("Alle $($suiteInstances.Count) erkannten Instanzen werden berücksichtigt.")
@@ -609,16 +613,21 @@ try {
             Progress 'Update vorbereiten' ("Prüfe Dateien und Installationsziele für: " + $pendingNames)
             $wantedJson = ConvertTo-Json -InputObject @($pending) -Depth 12 -Compress
             $suiteTarget = if ($targets.ContainsKey('serversuite')) { [string]$targets.serversuite } else { '' }
-            InvokeWorkerCommand -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget -ErrorAction Stop -ScriptBlock ${function:InstallUpdatePackages} |
+            $allServicesJson = ConvertTo-Json -InputObject @($services) -Depth 12 -Compress
+            $filesInstalled = [Collections.Generic.List[string]]::new()
+            $installError = ''
+            try { InvokeWorkerCommand -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget, $allServicesJson -ErrorAction Stop -ScriptBlock ${function:InstallUpdatePackages} |
                 ForEach-Object {
                     if ($null -ne $_ -and $null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') {
                         Progress ([string]$_.Phase) ([string]$_.Message) $_.ProgressPercent
                     }
-                }
+                    elseif ($null -ne $_ -and $null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'service-files-installed') { $filesInstalled.Add([string]$_.Name) }
+                } } catch { $installError = $_.Exception.Message }
             Progress 'Verifikation' 'Versionen und Dienststatus werden erneut kontrolliert'
             $after = @(InvokeWorkerCommand -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
-            $mistakes = @()
+            $mistakes = @(); if ($installError) { $mistakes += $installError }
             foreach ($oldSvc in $pending) {
+                if ($installError -and $oldSvc.Name -notin $filesInstalled) { continue }
                 $previousErrors = $mistakes.Count
                 $current = @($after | Where-Object Name -eq $oldSvc.Name | Select-Object -First 1)
                 if ($current.Count -ne 1) { $mistakes += "Dienst verschwunden: $($oldSvc.Name)"; continue }
@@ -635,9 +644,10 @@ try {
                 if ($oldSvc.Kind -eq 'serversuite' -and $mistakes.Count -eq $previousErrors) {
                     Progress 'Instanz geprüft' ("$($oldSvc.Name): version.txt=$($current[0].ProductVersion); Status=$($current[0].State); Suite=$($current[0].InstallDir)")
                 }
+                if ($mistakes.Count -eq $previousErrors) { $completedServiceNames += [string]$oldSvc.Name }
             }
             if ($mistakes.Count -gt 0) { throw ($mistakes -join ' | ') }
-            Emit @{ Event='result'; Success=$true; Message=$(if ($forceUpdate) { 'Force Update installiert und verifiziert' } else { 'Update installiert und verifiziert' }); Services=$after; Changed=$true }
+            Emit @{ Event='result'; Success=$true; Message=$(if ($forceUpdate) { 'Force Update installiert und verifiziert' } else { 'Update installiert und verifiziert' }); Services=$after; Changed=$true; CompletedServiceNames=$completedServiceNames }
         }
         catch { $updateError = $_.Exception.Message; throw }
         finally {
@@ -653,7 +663,7 @@ catch {
         $position = ([string]$_.InvocationInfo.PositionMessage -replace '[\r\n]+', ' ').Trim()
         $errorText += " | Position: $position"
     }
-    $result = @{ Event='result'; Success=$false; Message='Fehler'; Error=$errorText; Services=@() }
+    $result = @{ Event='result'; Success=$false; Message='Fehler'; Error=$errorText; Services=@($after); CompletedServiceNames=@($completedServiceNames) }
     if ($null -ne $software) {
         $result.DotNet48Installed = $software.DotNet48Installed
         $result.PosVersion = $software.PosVersion

@@ -44,6 +44,20 @@ internal static partial class Program
                 "all verified components complete the host and clear retry eligibility");
         }
 
+        var instanceWorker = new UpdateRunner();
+        using (var form = UpdateForm(instanceWorker, force:true))
+        {
+            HostState host = Populate(form)[0];
+            host.Updates = new(UpdateComponents.ServerSuite);
+            instanceWorker.Outcome = request => instanceWorker.Count(host.Host, UpdateComponents.ServerSuite) == 1
+                ? new WorkerResult { Success=false, Error="Second service instance failed", CompletedServiceNames=["nt3_server_suite_A"] }
+                : instanceWorker.Success(request);
+            Update(form, host);
+            WorkerRequest[] requests = instanceWorker.Requests.Where(request => request.Action == "update").ToArray();
+            Assert(requests.Length == 2 && requests[0].CompletedServiceNames.Length == 0 && requests[1].CompletedServiceNames.SequenceEqual(["nt3_server_suite_A"]),
+                "a retry passes verified service names so the worker only installs failed service instances, including Force mode");
+        }
+
         var permanent = new UpdateRunner();
         using (var form = UpdateForm(permanent))
         {

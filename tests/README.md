@@ -1,5 +1,7 @@
 # Automatische Prüfungen
 
+`MainForm.Tests --updates` prüft zusätzlich die Abschlussphasen nach den Installationen: alle Uploads vor dem ersten automatischen POS-Neustart, keine lokalen POS-Neustarts, Upload an/aus, gespeicherte Schalter, Neustart bei deaktiviertem Upload, Fehler und Wiederholung nur ausstehender Abschlussaktionen. Verifizierte Dienstnamen müssen bei Instanzfehlern an Wiederholungen übergeben werden. `ServerSuiteUpdate.Tests.ps1` prüft dazu echte Worker-Abläufe mit simulierten Diensten: erfolgreiche Instanzen nach Versions-/Statusfehlern oder fehlender anderer Instanz behalten, nur fehlgeschlagene Instanzdateien erneut kopieren und die EventLog-Reihenfolge erhalten. `MainForm.Tests --database` prüft das stille Auslassen von Hosts ohne IRIS-Instanz; Verbindungsfehler bleiben sichtbar. Alle Host-/Dienstaktionen sind simuliert.
+
 `RemoteSoftwareDatabase.Tests.ps1` prüft die Remote-IRIS-Erkennung mit aktiven CPF-Testdateien, Versionsentscheidungen vor der Übertragung, begrenzte MSI-Streams zu mehreren parallelen Namespace-Transaktionen, Abbruch/Rollback, den echten lokalen Hilfsprozess sowie Kopier-, Streaming- und vorhandene-Datei-Modus mit simulierten Remote-Aufrufen. `RemoteDatabaseDispatch.Tests.ps1` prüft WinRM-Einstellungen, JSON-Inventar, unveränderte Streaming-Flags, Sitzungsbereinigung und die weiterhin gesperrte Remote-MSI-Installation. Beide Tests verwenden ausschließlich isolierte Dateien und einen Datenbankersatz ohne Netzwerkverbindungen oder Installer.
 
 ```powershell

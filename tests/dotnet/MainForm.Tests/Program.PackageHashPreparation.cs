@@ -65,6 +65,10 @@ internal static partial class Program
             Complete((Task)Call(form, "PrepareUpdatePackageHashesAsync", UpdateComponents.Ntc, CancellationToken.None, hash)!);
             Assert(reads.Count == 2 && !reads.ContainsKey(payment) && Field<string>(form, "paymentHash") == "",
                 "retry preparation reads only pending components and does not require completed package sources");
+            SetField(form, "activeInstallHashComponents", UpdateComponents.None);
+            reads.Clear();
+            Complete((Task)Call(form, "PrepareUpdatePackageHashesAsync", UpdateComponents.Ntc, CancellationToken.None, hash)!);
+            Assert(reads.Count == 1 && reads.ContainsKey(bundle), "a database-only retry hashes the MSI payload without requiring cabinet files from completed installations");
             using var cancel = new CancellationTokenSource();
             cancel.Cancel();
             reads.Clear();

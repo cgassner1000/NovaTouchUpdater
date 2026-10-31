@@ -246,7 +246,7 @@ function PublishRemoteSoftwarePackages($Request, $Session, [string]$WorkerPath) 
         $parallelism = [int]$Request.DatabaseUploadParallelism
         $planResult = InvokeSoftwareDatabaseChildOperation $Session $remoteWorker @{ Action='database-upload-plan'; LocalExecution=$true; MsiPackages=@($Request.MsiPackages); DatabaseTargets=$targets; DatabaseProviderDirectory=$stage }
         $plan = @($planResult.DatabasePlan)
-        if ($plan.Count -eq 0) { throw 'Keine zzzSoftware in den konfigurierten IRIS-Namespaces auf dem Zielrechner gefunden. Keine Installation gestartet.' }
+        if ($plan.Count -eq 0) { throw 'Keine zzzSoftware in den konfigurierten IRIS-Namespaces auf dem Zielrechner gefunden. Datenbank-Upload nicht durchgeführt.' }
         $errors = @($plan | Where-Object Error)
         $needed = @($plan | ForEach-Object Needed | Sort-Object -Unique)
         if ($needed.Count -eq 0) {

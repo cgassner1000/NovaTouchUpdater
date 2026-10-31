@@ -304,13 +304,16 @@ public sealed partial class MainForm
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Payment/Fiscal: zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen. Inhalt von portable_python vor dem Kopieren löschen; vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. EventLog bleibt während der Installation gestoppt. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
-        if (msiPackages.Count > 0)
+        if (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0)
         {
-            text.AppendLine("zzzSoftware auf allen ausgewählten Hosts: MSI-Pakete in alle IRIS-Namespaces ohne Präfix % hochladen. Gleiche oder neuere Datenbankversionen überspringen; nur ältere Pakete ersetzen. Bei Uploadfehlern werden keine Installationen auf dem betroffenen Host gestartet.");
+            text.AppendLine("Nach den Updates: MSI-Pakete in zzzSoftware aller IRIS-Namespaces ohne Präfix % hochladen. Gleiche oder neuere Datenbankversionen überspringen; nur ältere Pakete ersetzen. Uploadfehler bleiben für eine Wiederholung erhalten.");
             foreach (var package in msiPackages.Values) text.AppendLine("Datenbank: " + package.ProductName + " " + package.ProductVersion);
             if (remoteCount > 0) text.AppendLine(chkSkipLocalPackageCopy.Checked ? "Remote-Datenbank: MSI-Daten über WinRM streamen, keine Paketkopie auf dem Server." :
                 chkSkipZipTransfer.Checked ? "Remote-Datenbank: bereits vorhandene Paketdateien im Zielpfad verwenden." : "Remote-Datenbank: benötigte MSI-Pakete zuerst in den Zielpfad kopieren.");
         }
+        if (!chkUploadToZzzSoftware.Checked) text.AppendLine("zzzSoftware-Upload ausgeschaltet.");
+        if (chkRestartPosAfterUpdate.Checked && remoteCount > 0)
+            text.AppendLine("Zum Schluss: KassaPreh auf erfolgreichen Remote-Geräten starten / neu starten, nach erfolgreichen zzzSoftware-Uploads (falls eingeschaltet). LOKAL bleibt ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen. Bereits gestartete Neustarts werden bei Abbruch vollständig abgeschlossen.");
         if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
             ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
             : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +

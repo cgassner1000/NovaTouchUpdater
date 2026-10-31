@@ -664,13 +664,13 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
                 finally { if ($null -ne $connection) { $connection.Dispose() } }
             }
         }
-        if ($eligible.Count -eq 0 -and $preflightFailures.Count -eq 0) { throw 'Keine zzzSoftware in den konfigurierten lokalen IRIS-Namespaces gefunden. Keine lokale Installation gestartet.' }
+        if ($eligible.Count -eq 0 -and $preflightFailures.Count -eq 0) { throw 'Keine zzzSoftware in den konfigurierten lokalen IRIS-Namespaces gefunden. Datenbank-Upload nicht durchgeführt.' }
         $outcomes = @($preflightFailures.ToArray())
         if ($eligible.Count -gt 0) { $outcomes += @(InvokeSoftwareDatabaseNamespaceUploads $provider @($eligible) $resolved $Parallelism) }
         $count = @($outcomes | Where-Object Success).Count
         $failed = @($outcomes | Where-Object { -not $_.Success } | Sort-Object Key)
         if ($failed.Count -gt 0) {
-            throw ("$count Namespace(s) erfolgreich, $($failed.Count) fehlgeschlagen. Keine lokale Installation gestartet. " + (($failed | ForEach-Object Error) -join ' || '))
+            throw ("$count Namespace(s) erfolgreich, $($failed.Count) fehlgeschlagen. Datenbank-Upload unvollständig. " + (($failed | ForEach-Object Error) -join ' || '))
         }
         $changed = @($outcomes | Where-Object Changed).Count -gt 0
         Emit @{ Event='result'; Success=$true; Changed=$changed; Skipped=(-not $changed); Message=("$count Namespace(s) geprüft; " + ($outcomes | Measure-Object Uploaded -Sum).Sum + ' MSI-Upload(s), ' + ($outcomes | Measure-Object Skipped -Sum).Sum + " gleich/neuer; $skipped ohne zzzSoftware übersprungen."); Services=@() }

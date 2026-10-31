@@ -61,6 +61,7 @@ try
         RemotePath=@"D:\upload\Novacom", Username=@"DOMAIN\support", UseSsl=true, HttpsPort=443,
         SoftwarePath=@"D:\software packages", ExecutionMode="LocalAndRemote", ScanOnStartup=true,
         SkipLocalPackageCopy=true, SkipZipTransfer=true, IrisUseTls=true,
+        UploadToZzzSoftware=false, RestartPosAfterUpdate=true,
         LegacyPassword="A legacy field must never be saved"
     };
     AppConfigStore.Save(path,settings,password);
@@ -79,11 +80,14 @@ try
     Assert(loaded.Settings.ScanOnStartup, "enabled startup scanning survives saving and loading");
     Assert(loaded.Settings.SkipLocalPackageCopy && loaded.Settings.SkipZipTransfer, "both independent package-copy settings survive saving and loading");
     Assert(loaded.Settings.IrisUseTls, "enabled IRIS TLS survives saving and loading");
+    Assert(!loaded.Settings.UploadToZzzSoftware && loaded.Settings.RestartPosAfterUpdate, "database upload and POS restart settings survive saving and loading");
+    settings.UploadToZzzSoftware=true; settings.RestartPosAfterUpdate=false;
     settings.ScanOnStartup=false;
     settings.SkipLocalPackageCopy=false; settings.SkipZipTransfer=false; settings.RemotePath=""; settings.IrisUseTls=false;
     AppConfigStore.Save(path,settings,password);
     Assert(!AppConfigStore.Load(path).Settings.ScanOnStartup, "disabled startup scanning survives saving and loading");
     var cleared=AppConfigStore.Load(path).Settings;
+    Assert(cleared.UploadToZzzSoftware && !cleared.RestartPosAfterUpdate, "enabling database upload and disabling automatic POS restart persists");
     Assert(!cleared.SkipLocalPackageCopy && !cleared.SkipZipTransfer && cleared.RemotePath == "", "disabled copy settings and an explicitly empty destination persist");
     Assert(!cleared.IrisUseTls, "disabled IRIS TLS survives saving and loading");
     settings.RemotePath=loaded.Settings.RemotePath;
@@ -97,6 +101,7 @@ try
     File.WriteAllText(legacy,JsonSerializer.Serialize(new { Hosts=new[] {"OLD-HOST"}, Username="support", Password=password }));
     var old=AppConfigStore.Load(legacy);
     Assert(old.Settings.ScanOnStartup, "configs without a startup setting enable automatic scanning by default");
+    Assert(old.Settings.UploadToZzzSoftware && !old.Settings.RestartPosAfterUpdate, "older configs enable database upload and leave POS restart disabled");
     Assert(!old.Settings.IrisUseTls, "older configs use IRIS without TLS by default");
     Assert(!old.Settings.SkipLocalPackageCopy && !old.Settings.SkipZipTransfer, "older configs retain package copying and remote uploads by default");
     Assert(old.Password==password && old.Settings.HttpsPort==5986 && !old.Settings.UseSsl && old.Settings.ExecutionMode == "Remote","legacy plaintext configs remain readable and missing settings keep remote-mode defaults");

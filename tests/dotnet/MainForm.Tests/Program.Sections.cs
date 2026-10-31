@@ -64,7 +64,7 @@ internal static partial class Program
                 Assert(settings.BorderStyle == BorderStyle.None && !All(settings).OfType<SurfaceCard>().Any(),
                     "expanded settings have no native rectangular border or nested card");
                 Assert(settings.Bounds.IntersectsWith(InForm(form, hosts)), "expanded settings overlap the following menu header");
-                foreach (string name in new[] { "chkSkipLocalPackageCopy", "chkSkipZipTransfer", "chkIrisTls" })
+                foreach (string name in new[] { "chkSkipLocalPackageCopy", "chkSkipZipTransfer", "chkIrisTls", "chkUploadToZzzSoftware", "chkRestartPosAfterUpdate" })
                 {
                     var toggle = Field<CheckBox>(form, name);
                     Assert(toggle.Right <= toggle.Parent!.ClientSize.Width && toggle.Height >= toggle.GetPreferredSize(new Size(toggle.Width, 0)).Height,

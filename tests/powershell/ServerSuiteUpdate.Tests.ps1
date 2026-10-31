@@ -729,9 +729,27 @@ try {
     foreach ($fault in @('stale','stopped','missing')) {
         ResetCase ('verification-' + $fault); Service 'a' 'one'; Service 'b' 'two'; Package
         Set-Variable -Scope Script -Name ($fault + 'After') -Value 'nt3_server_suite_b'
-        $null=RunWorker $false $(switch ($fault) { 'stale' { 'Falsche Version.*nt3_server_suite_b' }; 'stopped' { 'Dienst l.uft nicht.*nt3_server_suite_b' }; 'missing' { 'Dienst verschwunden.*nt3_server_suite_b' } })
+        $failedResult=RunWorker $false $(switch ($fault) { 'stale' { 'Falsche Version.*nt3_server_suite_b' }; 'stopped' { 'Dienst l.uft nicht.*nt3_server_suite_b' }; 'missing' { 'Dienst verschwunden.*nt3_server_suite_b' } })
+        Assert ('nt3_server_suite_a' -in $failedResult.CompletedServiceNames -and 'nt3_server_suite_b' -notin $failedResult.CompletedServiceNames) 'Only fully installed and verified service names are checkpointed after a partial failure'
+        Set-Variable -Scope Script -Name ($fault + 'After') -Value ''
+        $script:request.RetryUpdate=$true; $script:request.CompletedServiceNames=@($failedResult.CompletedServiceNames)
+        $script:events.Clear(); $script:sessionRemoved=0; $script:inventoryReads=0
+        $retryResult=RunWorker
+        Assert ($retryResult.CompletedServiceNames.Count -eq 1 -and $retryResult.CompletedServiceNames[0] -eq 'nt3_server_suite_b') 'The retry installs and verifies only the failed service instance'
+        Assert (@($script:events | Where-Object { $_ -like ('copy:' + (Join-Path $script:case 'one') + '\*') }).Count -eq 0) 'A successful instance is not copied again on retry, including Python'
         Passed ('post-update verification covers every instance: ' + $fault)
     }
+    ResetCase 'retry-only-failed-start'; Service 'a' 'one'; Service 'b' 'two'; Package
+    $script:startFailure='nt3_server_suite_b'
+    $failedResult=RunWorker $false 'Simulated start failure'
+    Assert ($failedResult.CompletedServiceNames.Count -eq 1 -and $failedResult.CompletedServiceNames[0] -eq 'nt3_server_suite_a') 'A start failure retains an independently installed and running service'
+    $script:startFailure=''; $script:request.RetryUpdate=$true; $script:request.CompletedServiceNames=@($failedResult.CompletedServiceNames)
+    $script:events.Clear(); $script:sessionRemoved=0; $script:inventoryReads=0
+    $retryResult=RunWorker
+    Assert ($retryResult.CompletedServiceNames.Count -eq 1 -and $retryResult.CompletedServiceNames[0] -eq 'nt3_server_suite_b') 'A retry after a start failure only reinstalls the failed instance'
+    Assert (@($script:events | Where-Object { $_ -like ('copy:' + (Join-Path $script:case 'one') + '\*') }).Count -eq 0) 'A successful instance is not copied again after another instance fails to start'
+    Passed 'only failed service is installed again after a start failure'
+
     foreach ($existing in @('identical','missing','different')) {
         ResetCase ('reuse-' + $existing); Service 'a' 'one'; Package; $script:request.SkipZipTransfer=$true
         if ($existing -ne 'missing') {
