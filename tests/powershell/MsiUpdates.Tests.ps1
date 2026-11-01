@@ -27,22 +27,23 @@ $package = [pscustomobject]@{ Kind='ntc'; ProductName='NovaTouch Control'; Produ
 
 foreach ($version in @('2.0.0','3.0.0','2.0.0.99')) {
     $decision = GetMsiUpdateDecision @([pscustomobject]@{ Kind='ntc'; DisplayName='NovaTouch Control'; Version=$version; ProductCode=$code }) $package
-    Assert (-not $decision.Install -and -not $decision.Skipped) 'same/newer MSI versions are skipped with the full fourth field'
+    Assert (-not $decision.Install -and -not $decision.Skipped) 'same/newer Windows MSI versions are skipped using the first three fields'
 }
 foreach ($kind in @('pos','ntc','ntv','oman')) {
     $names=@{ pos='NovaTouch POS'; ntc='NovaTouch Control'; ntv='NovaTouch Voucher'; oman='NovaTouch Orderman SOL' }
     $fourPartPackage=[pscustomobject]@{ Kind=$kind; ProductName=$names[$kind]; ProductVersion='2026.4.9800.12345' }
     foreach ($test in @(
-        @{ Version='2026.4.9800.12344'; Install=$true },
-        @{ Version='2026.4.9800.9999'; Install=$true },
+        @{ Version='2026.4.9800.12344'; Install=$false },
+        @{ Version='2026.4.9800.9999'; Install=$false },
         @{ Version='2026.4.9800.12345'; Install=$false },
         @{ Version='2026.4.9800.12346'; Install=$false },
-        @{ Version='2026.4.9800'; Install=$true },
+        @{ Version='2026.4.9800'; Install=$false },
+        @{ Version='2026.4.9799'; Install=$true },
         @{ Version='2026.4.9799.65535'; Install=$true },
         @{ Version='2026.4.9801.0'; Install=$false }
     )) {
         $decision=GetMsiUpdateDecision @([pscustomobject]@{ Kind=$kind; DisplayName=$names[$kind]; Version=$test.Version }) $fourPartPackage
-        Assert ($decision.Install -eq $test.Install) "$kind compares all four release fields numerically: $($test.Version) -> 2026.4.9800.12345"
+        Assert ($decision.Install -eq $test.Install) "$kind compares the three-part Windows version for installation: $($test.Version) -> 2026.4.9800.12345"
     }
 }
 Assert ((GetMsiUpdateDecision @() $package).Skipped) 'absent products are never installed'
@@ -115,7 +116,7 @@ function Start-Process {
         $actualMsi = [regex]::Match($ArgumentList, '^/i "([^"]+)"').Groups[1].Value
         Assert ($actualMsi -ieq [string]$package.PayloadPath) 'direct local MSI installation uses the original file without staging another MSI copy'
     }
-    if ($global:installerExit -in @(0,3010,1641)) { $global:installedVersion = $(if ($global:installedAfter) { $global:installedAfter } else { [string]$package.ProductVersion }) }
+    if ($global:installerExit -in @(0,3010,1641)) { $global:installedVersion = $(if ($global:installedAfter) { $global:installedAfter } else { ([Version]$package.ProductVersion).ToString(3) }) }
     [pscustomobject]@{ ExitCode=$global:installerExit }
 }
 
@@ -146,7 +147,7 @@ function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, 
     if ($local -and $action -eq 'check-upload-directory') { Assert (-not $result.UploadRequired -and @($messages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'MSI-Vorprüfung' }).Count -eq 1) "$name defers an unreadable MSI version to its component without blocking unrelated updates" }
     if ($local) { Assert ($global:sessions -eq 0 -and $global:closed -eq 0) "$name uses no WinRM calls" }
     else { Assert ($global:sessions -eq 0 -and $global:closed -eq 0 -and $global:copies -eq 0 -and $global:adminChecks -eq 0) "$name is blocked before remote sessions, transfers or installation" }
-    if ($expectedSuccess -and $expectedInstall) { Assert ($result.RebootRequired -eq ($exitCode -in @(3010,1641)) -and @($result.InstalledPrograms | Where-Object { $_.Kind -eq $package.Kind -and $_.Version -eq $package.ProductVersion }).Count -eq 1) "$name verifies the complete installed MSI version and preserves reboot-required status" }
+    if ($expectedSuccess -and $expectedInstall) { Assert ($result.RebootRequired -eq ($exitCode -in @(3010,1641)) -and @($result.InstalledPrograms | Where-Object { $_.Kind -eq $package.Kind -and $_.Version -eq ([Version]$package.ProductVersion).ToString(3) }).Count -eq 1) "$name verifies the three-part installed Windows version and preserves reboot-required status" }
     if (Test-Path -LiteralPath $base) { Assert (@(Get-ChildItem -LiteralPath $base -Directory -Filter '.novatouch-updater-msi-*').Count -eq 0) "$name removes its temporary MSI staging directory" }
     if ($global:directSource) {
         Assert ($global:copies -eq 0 -and -not (Test-Path -LiteralPath $base)) "$name creates no destination and makes no extra payload copy"
@@ -229,17 +230,18 @@ try {
     $global:fixtureServices.Clear()
     $package = [pscustomobject]@{ Kind='ntc'; ProductName='NovaTouch Control'; ProductVersion='2026.4.9800.12345'; ProductCode=(FixtureProductCode ([string]$msis.ntcFourPart)); UpgradeCode='';
         PayloadPath=[string]$msis.ntcFourPart; RelativeMsiPath='control-four-part.msi'; Sha256=(Get-FileHash -LiteralPath $msis.ntcFourPart -Algorithm SHA256).Hash; CompanionFiles=@() }
-    RunCase -name 'local-four-part-upgrade' -version '2026.4.9800.12344' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
+    RunCase 'local-four-part-same-release' '2026.4.9800.12344' $true 0 $true $false
     RunCase 'local-four-part-current' '2026.4.9800.12345' $true 0 $true $false
     RunCase 'local-four-part-newer' '2026.4.9800.12346' $true 0 $true $false
-    RunCase 'local-four-part-missing-revision' '2026.4.9800' $true 0 $true $true
-    RunCase -name 'local-four-part-verification-failure' -version '2026.4.9800.12344' -local $true -exitCode 0 -expectedSuccess $false -expectedInstall $true -installedAfter '2026.4.9800' -expectedError 'Installierte MSI-Version wurde nicht bestätigt'
+    RunCase 'local-four-part-missing-revision' '2026.4.9800' $true 0 $true $false
+    RunCase -name 'local-four-part-upgrade' -version '2026.4.9799' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true -installedAfter '2026.4.9800'
+    RunCase -name 'local-four-part-verification-failure' -version '2026.4.9799' -local $true -exitCode 0 -expectedSuccess $false -expectedInstall $true -installedAfter '2026.4.9799' -expectedError 'Installierte MSI-Version wurde nicht bestätigt'
     $package = [pscustomobject]@{ Kind='ntc'; ProductName='NovaTouch Control'; ProductVersion='2026.4.9800.12345'; MsiProductVersion='2026.4.9800'; ProductCode=(FixtureProductCode ([string]$msis.ntcRelease)); UpgradeCode='';
         PayloadPath=[string]$msis.ntcRelease; RelativeMsiPath='ntc-release.msi'; Sha256=(Get-FileHash -LiteralPath $msis.ntcRelease -Algorithm SHA256).Hash; CompanionFiles=@() }
-    RunCase -name 'local-full-release-three-part-msi' -version '2026.4.9800.12344' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
-    RunCase 'local-full-release-three-part-msi-current' '2026.4.9800.12345' $true 0 $true $false
+    RunCase -name 'local-full-release-three-part-msi' -version '2026.4.9799' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
+    RunCase 'local-full-release-three-part-msi-current' '2026.4.9800' $true 0 $true $false
     $package.MsiProductVersion='2026.4.9800.0'
-    RunCase -name 'local-full-release-invalid-msi-property' -version '2026.4.9800.12344' -local $true -exitCode 0 -expectedSuccess $false -expectedInstall $false -direct $true -expectedError 'MSI-ProductVersion stimmt nicht'
+    RunCase -name 'local-full-release-invalid-msi-property' -version '2026.4.9799' -local $true -exitCode 0 -expectedSuccess $false -expectedInstall $false -direct $true -expectedError 'MSI-ProductVersion stimmt nicht'
 } finally {
     $env:TMP=$copyTestOriginalTmp; $env:TEMP=$copyTestOriginalTemp
     $checked = [IO.Path]::GetFullPath($fixture)

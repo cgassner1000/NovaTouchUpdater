@@ -102,23 +102,23 @@ function ScanCase($name, [scriptblock]$setup, $expectedFramework, $expectedPos, 
     Write-Output "PASS $name"
 }
 
-ScanCase '4.8 and 64-bit POS' { Framework 528040; Program 'NovaTouch POS' '2.5.1234' } $true '2.5.1234.0'
+ScanCase '4.8 and 64-bit POS' { Framework 528040; Program 'NovaTouch POS' '2.5.1234' } $true '2.5.1234'
 ScanCase '4.8 OS-specific release' { Framework 528049 } $true 'Nicht installiert'
-ScanCase '4.8.1 and 32-bit POS' { Framework 533320; Program 'NovaTouch POS' '2.5.5678' -Wow32 } $true '2.5.5678.0'
+ScanCase '4.8.1 and 32-bit POS' { Framework 533320; Program 'NovaTouch POS' '2.5.5678' -Wow32 } $true '2.5.5678'
 ScanCase 'below 4.8 threshold' { Framework 528039 } $false 'Nicht installiert'
 ScanCase '4.7.2' { Framework 461808 } $false 'Nicht installiert'
 ScanCase 'framework and POS absent' {} $false 'Nicht installiert'
 ScanCase 'framework key without Release' { $script:registry[$frameworkPath] = [pscustomobject]@{} } $false 'Nicht installiert'
 ScanCase 'framework in 32-bit registry' { Framework 528040 -Wow32 } $true 'Nicht installiert'
 ScanCase 'POS without version' { Program 'NovaTouch POS' '' } $false 'Version unbekannt'
-ScanCase 'case and whitespace in product name' { Program ' novatouch   pos ' '2.5.1' } $false '2.5.1.0'
+ScanCase 'case and whitespace in product name' { Program ' novatouch   pos ' '2.5.1' } $false '2.5.1'
 ScanCase 'unrelated product is not POS' { Program 'NovaTouch POS Tools' '9.9'; Program 'Other POS' '1.0' } $false 'Nicht installiert'
-ScanCase 'duplicate entries across registry views' { Program 'NovaTouch POS' '2.5.1'; Program 'NovaTouch POS' '2.5.1' -Wow32 } $false '2.5.1.0'
-ScanCase 'different installed versions remain visible' { Program 'NovaTouch POS' '2.5.2'; Program 'NovaTouch POS' '2.5.1' -Wow32 } $false '2.5.1.0, 2.5.2.0'
+ScanCase 'duplicate entries across registry views' { Program 'NovaTouch POS' '2.5.1'; Program 'NovaTouch POS' '2.5.1' -Wow32 } $false '2.5.1'
+ScanCase 'different installed versions remain visible' { Program 'NovaTouch POS' '2.5.2'; Program 'NovaTouch POS' '2.5.1' -Wow32 } $false '2.5.1, 2.5.2'
 ScanCase 'registry error remains unknown' { $script:unreadablePath = $uninstall32Path } $null $null $false 'Registry access denied'
-ScanCase 'software results survive service read failure' { Framework 528040; Program 'NovaTouch POS' '2.5.1'; $script:inventoryError='Service inventory failed' } $true '2.5.1.0' $false 'Service inventory failed'
+ScanCase 'software results survive service read failure' { Framework 528040; Program 'NovaTouch POS' '2.5.1'; $script:inventoryError='Service inventory failed' } $true '2.5.1' $false 'Service inventory failed'
 ScanCase 'software scan succeeds without payment and fiscal' { Framework 528040; $script:noServices=$true } $true 'Nicht installiert' -expectedKinds @()
-ScanCase 'POS-only host succeeds without payment and fiscal' { Framework 528040; Program 'NovaTouch POS' '2.5.1'; $script:noServices=$true } $true '2.5.1.0' -expectedKinds @()
+ScanCase 'POS-only host succeeds without payment and fiscal' { Framework 528040; Program 'NovaTouch POS' '2.5.1'; $script:noServices=$true } $true '2.5.1' -expectedKinds @()
 ScanCase 'payment-only host succeeds without fiscal' {} $false 'Nicht installiert'
 ScanCase 'fiscal-only host succeeds without payment' { $script:serviceKinds=@('fiscal') } $false 'Nicht installiert' -expectedKinds @('fiscal')
 ScanCase 'both service kinds remain visible' { $script:serviceKinds=@('payment','fiscal') } $false 'Nicht installiert' -expectedKinds @('payment','fiscal')
@@ -131,15 +131,15 @@ try {
     $versionDll = Join-Path $versionBin 'Nov.NT.Communication.Devices.dll'
     Add-Type -TypeDefinition 'using System.Reflection; [assembly: AssemblyFileVersion("2026.4.9800.12345")] public class InstalledReleaseFixture {}' -OutputAssembly $versionDll
     foreach ($file in @('Nov.WaWi.exe','Nov.Gutscheinverwaltung.exe','Nov.Oman.SOL.Config.exe')) { [IO.File]::Copy($versionDll, (Join-Path $versionBin $file)) }
-    ScanCase 'full POS version from installed DLL' { Program 'NovaTouch POS' '2026.4.9800' -InstallLocation $versionFixture } $false '2026.4.9800.12345'
-    ScanCase 'full POS version from display icon directory' { Program 'NovaTouch POS' '2026.4.9800' -DisplayIcon ('"' + (Join-Path $versionBin 'POS.exe') + '",0') } $false '2026.4.9800.12345'
-    ScanCase 'unrelated installed file release is ignored' { Program 'NovaTouch POS' '2026.4.9799' -InstallLocation $versionFixture } $false '2026.4.9799.0'
+    ScanCase 'POS table retains the three-part Windows version despite a four-part installed DLL' { Program 'NovaTouch POS' '2026.4.9800' -InstallLocation $versionFixture } $false '2026.4.9800'
+    ScanCase 'display icon does not extend the three-part Windows version' { Program 'NovaTouch POS' '2026.4.9800' -DisplayIcon ('"' + (Join-Path $versionBin 'POS.exe') + '",0') } $false '2026.4.9800'
+    ScanCase 'installed file release never replaces Windows inventory' { Program 'NovaTouch POS' '2026.4.9799' -InstallLocation $versionFixture } $false '2026.4.9799'
     ScanCase 'explicit four-part registry version remains intact' { Program 'NovaTouch POS' '2026.4.9800.12346' -InstallLocation $versionFixture } $false '2026.4.9800.12346'
-    ScanCase 'all MSI products retain the fourth installed version field' {
+    ScanCase 'all MSI products retain their three-part Windows inventory version' {
         Program 'NovaTouch Control' '2026.4.9800' -InstallLocation $versionFixture
         Program 'NovaTouch Voucher' '2026.4.9800' -InstallLocation $versionBin
         Program 'NovaTouch Orderman SOL' '2026.4.9800' -InstallLocation $versionFixture
-    } $false 'Nicht installiert' -expectedProgramVersions @{ ntc='2026.4.9800.12345'; ntv='2026.4.9800.12345'; oman='2026.4.9800.12345' }
+    } $false 'Nicht installiert' -expectedProgramVersions @{ ntc='2026.4.9800'; ntv='2026.4.9800'; oman='2026.4.9800' }
 } finally {
     if ($versionFixture.StartsWith([IO.Path]::GetFullPath($TestArtifactsRoot).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { Microsoft.PowerShell.Management\Remove-Item -LiteralPath $versionFixture -Recurse -Force }
 }

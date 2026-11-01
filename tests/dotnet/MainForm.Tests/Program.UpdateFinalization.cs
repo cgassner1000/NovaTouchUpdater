@@ -164,18 +164,21 @@ internal static partial class Program
             packages[UpdateComponents.Pos].ProductVersion="2026.4.9800.12345";
             hosts[2].PosVersion="2026.4.9800.12345";
             foreach (var test in new[] {
-                (Version: "2026.4.9800.12344", Restart: true),
-                (Version: "2026.4.9800.9999", Restart: true),
+                (Version: "2026.4.9799", Restart: true),
+                (Version: "2026.4.9799.65535", Restart: true),
+                (Version: "2026.4.9800.12344", Restart: false),
+                (Version: "2026.4.9800.9999", Restart: false),
                 (Version: "2026.4.9800.12345", Restart: false),
                 (Version: "2026.4.9800.12346", Restart: false),
-                (Version: "2026.4.9800", Restart: true)
+                (Version: "2026.4.9800", Restart: false),
+                (Version: "2026.4.9801", Restart: false)
             })
             {
                 NewRun(); hosts[1].PosVersion=test.Version;
                 FinishUpdates(form, hosts);
                 Assert(worker.Requests.Any(request => request.Action == "restart-pos" && request.Host == "REMOTE-A") == test.Restart &&
                     !worker.Requests.Any(request => request.Action == "restart-pos" && request.Host == "REMOTE-B"),
-                    "POS restart after committed upload compares the fourth version field: " + test.Version + " -> 2026.4.9800.12345");
+                    "POS restart after committed upload compares the three-part Windows version: " + test.Version + " -> 2026.4.9800.12345");
             }
             packages[UpdateComponents.Pos].ProductVersion="2.0.0";
             hosts[1].PosVersion="1.0.0"; hosts[2].PosVersion="1.0.0";

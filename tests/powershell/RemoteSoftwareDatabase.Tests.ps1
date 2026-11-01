@@ -64,6 +64,9 @@ try {
     foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) { $entry.Version='9999.0.0' }
     $plan=@(GetSoftwareDatabaseRemotePlan @($package) $targets $fixture)
     Assert (@($plan | Where-Object { $_.Needed.Count -gt 0 }).Count -eq 0) 'remote preflight skips newer database versions before any payload transfer'
+    foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) { $entry.Version='2026.4.9800.12344' }
+    $plan=@(GetSoftwareDatabaseRemotePlan @($package) $targets $fixture)
+    Assert (@($plan | Where-Object { $_.Needed -contains 'ntc' }).Count -eq 5) 'remote database preflight still uploads a newer fourth-field revision of the same three-part Windows release'
     foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) { $entry.Version=$package.ProductVersion }
     $plan=@(GetSoftwareDatabaseRemotePlan @($package) $targets $fixture)
     Assert (@($plan | Where-Object { $_.Needed.Count -gt 0 }).Count -eq 0) 'remote preflight skips equal database versions before any payload transfer'

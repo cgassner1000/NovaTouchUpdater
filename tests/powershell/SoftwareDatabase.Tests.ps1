@@ -292,6 +292,12 @@ try {
     PublishLocalIrisSoftwarePackages @($release) $targets $fixture
     Assert ($script:results[0].Changed -and [SoftwareDatabaseFixture.Database]::Entries.Count -eq 3 -and
         @([SoftwareDatabaseFixture.Database]::Entries | Where-Object Version -ne '2026.4.9800.12345').Count -eq 0) 'a three-part MSI installer property is validated unchanged while zzzSoftware stores the full application release'
+    $decision = GetMsiUpdateDecision @([pscustomobject]@{ Kind='ntc'; DisplayName='NovaTouch Control'; Version='2026.4.9800' }) $release
+    Assert (-not $decision.Install -and -not $decision.Skipped) 'an equal three-part Windows version needs no local MSI installation even when the selected release has a fourth field'
+    foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) { $entry.Version='2026.4.9800.12344' }
+    $script:results.Clear()
+    PublishLocalIrisSoftwarePackages @($release) $targets $fixture
+    Assert ($script:results[0].Changed -and @([SoftwareDatabaseFixture.Database]::Entries | Where-Object Version -ne '2026.4.9800.12345').Count -eq 0) 'the same package still uploads its newer fourth-field revision to every namespace independently of the Windows installation decision'
     $release.MsiProductVersion='2026.4.9800.0'
     ExpectFailure { PublishLocalIrisSoftwarePackages @($release) $targets $fixture } 'full release metadata never bypasses validation of the actual MSI ProductVersion'
     Write-Host 'PASS SoftwareDatabase tests completed without connecting to a database or running an installer'

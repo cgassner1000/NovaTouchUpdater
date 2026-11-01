@@ -171,6 +171,11 @@ internal static partial class Program
             originalMsiPackages.Where(pair => pair.Key != UpdateComponents.Ntc).All(pair => msiPackages[pair.Key].PayloadPath == pair.Value.PayloadPath),
             "replacing a folder MSI changes only that product while preserving all service packages and the other three MSIs");
         AssertFullVersionDisplayed("individual MSI replacement", "2026.4.9800.12346");
+        HostState local = Targets(form).Single();
+        local.PosVersion = local.NtcVersion = "2026.4.9800";
+        Call(form, "PaintRow", local);
+        Assert((string)local.Row!.Cells["pos"].Value! == "2026.4.9800" && (string)local.Row.Cells["ntc"].Value! == "2026.4.9800",
+            "POS and NTC table columns retain the three-part installed Windows version while selected packages display all four fields");
         using var individualOnly = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
         Call(individualOnly, "SelectIndividualPackage", replacement);
         Assert((UpdateComponents)Call(individualOnly, "SelectedUpdateComponents")! == UpdateComponents.Ntc,

@@ -6,9 +6,9 @@ function GetMsiUpdateDecision {
     function MsiVersion([string]$value) {
         $parsed = $null
         if (-not [Version]::TryParse($value.Trim(), [ref]$parsed)) { throw "MSI-Version nicht sicher vergleichbar: '$value'" }
-        # NovaTouch release versions include the revision, independently of MSI's
-        # built-in upgrade-table comparison. Missing revision means zero.
-        return [Version]::new($parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build), [Math]::Max(0, $parsed.Revision))
+        # Installed MSI versions come from Windows' three-part ProductVersion.
+        # The complete four-part package version remains available for uploads.
+        return [Version]::new($parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build))
     }
     $target = MsiVersion ([string]$Package.ProductVersion)
     if ($null -ne $Package.PSObject.Properties['MsiProductVersion'] -and $Package.MsiProductVersion) {

@@ -205,7 +205,7 @@ public sealed partial class MainForm
         string before = host.Updates!.PosVersionBeforeUpdate;
         if (!Version.TryParse(before, out var installed) || !Version.TryParse(package.ProductVersion, out var target))
             return "POS-Neustart übersprungen: installierte POS-Version vor dem Update nicht eindeutig vergleichbar (" + before + ").";
-        static Version MsiVersion(Version version) => new(version.Major, version.Minor, Math.Max(0, version.Build), Math.Max(0, version.Revision));
+        static Version MsiVersion(Version version) => new(version.Major, version.Minor, Math.Max(0, version.Build));
         return MsiVersion(installed) < MsiVersion(target) ? "" :
             "POS-Neustart übersprungen: POS war vor dem Update bereits gleich/neuer (" + before + ", Ziel " + package.ProductVersion + ").";
     }
