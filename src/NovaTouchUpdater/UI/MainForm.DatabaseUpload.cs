@@ -119,37 +119,38 @@ public sealed partial class MainForm
 
     private async Task CompleteUpdateRunAsync(HostState[] selected, CancellationToken ct)
     {
-        HostState[] completed = selected.Where(host => host.Updates is { Pending: UpdateComponents.None } state &&
-            (!host.UpdateFailed || state.DatabaseUploadError.Length > 0 || state.PosRestartError.Length > 0)).ToArray();
+        HostState[] targets = selected.Where(host => host.Updates is not null && host.Result != "Abgebrochen").ToArray();
         try
         {
-            foreach (HostState host in completed)
+            foreach (HostState host in targets)
             {
+                if (host.UpdateFailed && host.Updates!.Pending != UpdateComponents.None && host.Updates.ErrorText.Length == 0 && host.Error.Length > 0)
+                    foreach (UpdateComponents component in HostUpdateState.Each(host.Updates.Pending)) host.Updates.Fail(component, host.Error);
                 if (!activeUploadToZzzSoftware) host.Updates!.DatabaseUploadError = "";
                 if (!activeRestartPosAfterUpdate) host.Updates!.PosRestartError = "";
             }
-            await ParallelPhaseAsync(completed, activeDatabaseUploadParallelism, async (host, token) =>
+            await ParallelPhaseAsync(targets, activeDatabaseUploadParallelism, async (host, token) =>
             {
                 await PublishLocalSoftwarePackagesAsync(host, token);
             }, ct);
-            bool uploadsFailed = activeUploadToZzzSoftware && msiPackages.Count > 0 && selected.Any(host =>
-                host.Updates?.Pending != UpdateComponents.None || host.Updates.DatabaseUploadError.Length > 0);
+            bool uploadsFailed = activeUploadToZzzSoftware && msiPackages.Count > 0 && targets.Any(host =>
+                !host.Updates!.DatabaseUploadCompleted || host.Updates.DatabaseUploadError.Length > 0);
             if (activeRestartPosAfterUpdate && uploadsFailed)
-                foreach (HostState host in completed.Where(host => !host.IsLocal && !host.Updates!.PosRestartCompleted))
+                foreach (HostState host in targets.Where(host => !host.IsLocal && !host.Updates!.PosRestartCompleted))
                     host.Updates!.PosRestartError = "POS-Neustart wartet auf erfolgreiche zzzSoftware-Uploads.";
             if (activeRestartPosAfterUpdate && !uploadsFailed)
             {
-                HostState[] remote = completed.Where(host => !host.IsLocal && !host.Updates!.PosRestartCompleted && host.Updates.DatabaseUploadError.Length == 0).ToArray();
+                HostState[] remote = targets.Where(host => !host.IsLocal && !host.Updates!.PosRestartCompleted && host.Updates.DatabaseUploadError.Length == 0).ToArray();
                 await ParallelPhaseAsync(remote, activeDatabaseUploadParallelism, RestartPosAfterUpdateAsync, ct);
             }
         }
         catch (OperationCanceledException)
         {
-            foreach (HostState host in completed)
+            foreach (HostState host in targets)
                 Mark(host, h => { h.UpdateFailed = true; h.Result = "Abgebrochen"; h.Phase = "Update-Abschluss abgebrochen"; });
             throw;
         }
-        foreach (HostState host in completed) FinishHostUpdate(host);
+        foreach (HostState host in targets) FinishHostUpdate(host);
     }
 
     private async Task RestartPosAfterUpdateAsync(HostState host, CancellationToken ct)

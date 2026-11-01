@@ -50,18 +50,40 @@ internal static partial class Program
             FinishUpdates(form, hosts);
             Assert(worker.Requests.Count == 0, "completed uploads and POS restarts are never repeated by a finalization retry");
 
-            hosts[0].Updates = new(UpdateComponents.Payment);
+            HostUpdateState localFailure = hosts[0].Updates = new(UpdateComponents.Payment);
+            localFailure.Fail(UpdateComponents.Payment, "Payment service failed");
             hosts[0].UpdateFailed = true;
-            hosts[1].Updates = new(UpdateComponents.None);
+            HostUpdateState remoteFailure = hosts[1].Updates = new(UpdateComponents.Fiscal);
+            remoteFailure.Fail(UpdateComponents.Fiscal, "Fiscal service failed");
+            hosts[1].UpdateFailed = true;
             FinishUpdates(form, hosts);
-            Assert(worker.Requests.All(request => request.Action != "restart-pos") && hosts[1].CanRetryUpdate,
-                "an unfinished server service update also blocks automatic POS restart while its database upload remains outstanding");
-            hosts[0].Updates!.Complete(UpdateComponents.Payment, new WorkerResult { Success=true });
+            Assert(worker.Requests.Count(request => request.Action == "publish-msi-packages") == 2 &&
+                worker.Requests.Where(request => request.Action == "publish-msi-packages").Select(request => request.Host).ToHashSet().SetEquals(["LOCALHOST", "REMOTE-A"]) &&
+                worker.Requests.Last() is { Action:"restart-pos", Host:"REMOTE-A" },
+                "failed local and remote service updates still upload packages and allow remote POS restart after successful uploads");
+            Assert(localFailure.DatabaseUploadCompleted && remoteFailure.DatabaseUploadCompleted &&
+                hosts[0].Result == "Fehler" && hosts[1].Result == "Fehler" && hosts[0].Error.Contains("Payment service failed") && hosts[1].Error.Contains("Fiscal service failed"),
+                "successful database upload and POS restart preserve each failed service and its final error");
+            localFailure.Complete(UpdateComponents.Payment, new WorkerResult { Success=true });
+            remoteFailure.Complete(UpdateComponents.Fiscal, new WorkerResult { Success=true });
             hosts[0].UpdateFailed = false;
             worker.Requests.Clear();
             FinishUpdates(form, hosts);
-            Assert(worker.Requests.Select(request => request.Action).SequenceEqual(["publish-msi-packages", "restart-pos"]),
-                "after the failed service finishes only its outstanding database upload and the waiting POS restart run");
+            Assert(worker.Requests.Count == 0 && hosts.All(host => !host.CanRetryUpdate),
+                "retrying a failed service does not repeat a database upload or POS restart that already succeeded");
+
+            localFailure = hosts[0].Updates = new(UpdateComponents.Payment);
+            localFailure.Fail(UpdateComponents.Payment, "Payment service failed");
+            hosts[0].UpdateFailed = true;
+            worker.FailedUploadHost = "LOCALHOST";
+            FinishUpdates(form, hosts[0]);
+            Assert(!localFailure.DatabaseUploadCompleted && hosts[0].Error.Contains("Payment service failed") && hosts[0].Error.Contains("Synthetic final step failure"),
+                "simultaneous service and database errors are both retained at the end");
+            worker.Requests.Clear(); worker.FailedUploadHost = "";
+            FinishUpdates(form, hosts[0]);
+            Assert(worker.Requests.ToArray() is [{ Action:"publish-msi-packages" }] && localFailure.DatabaseUploadCompleted &&
+                localFailure.Pending == UpdateComponents.Payment && hosts[0].Error.Contains("Payment service failed") && !hosts[0].Error.Contains("Synthetic final step failure"),
+                "a failed database upload can succeed on retry while the service error remains independently pending");
 
             Field<CheckBox>(form, "chkUploadToZzzSoftware").Checked = false;
             Call(form, "CaptureCredentials");

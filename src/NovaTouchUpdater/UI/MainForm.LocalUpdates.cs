@@ -313,7 +313,7 @@ public sealed partial class MainForm
         }
         if (!chkUploadToZzzSoftware.Checked) text.AppendLine("zzzSoftware-Upload ausgeschaltet.");
         if (chkRestartPosAfterUpdate.Checked && remoteCount > 0)
-            text.AppendLine("Zum Schluss: KassaPreh auf erfolgreichen Remote-Geräten starten / neu starten, nach erfolgreichen zzzSoftware-Uploads (falls eingeschaltet). LOKAL bleibt ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen. Bereits gestartete Neustarts werden bei Abbruch vollständig abgeschlossen.");
+            text.AppendLine("Zum Schluss: KassaPreh auf ausgewählten Remote-Geräten starten / neu starten, nach erfolgreichen zzzSoftware-Uploads (falls eingeschaltet). LOKAL bleibt ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen. Bereits gestartete Neustarts werden bei Abbruch vollständig abgeschlossen.");
         if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
             ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
             : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +
