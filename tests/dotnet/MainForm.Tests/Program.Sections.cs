@@ -86,7 +86,24 @@ internal static partial class Program
                     // child window, so compose its verified bounds explicitly.
                     Point clientOrigin = form.PointToScreen(Point.Empty) - (Size)form.Location;
                     using (var graphics = Graphics.FromImage(expanded))
+                    {
+                        var shadow = form.Controls.Cast<Control>().SingleOrDefault(c => c.Name == settings.Name + "Shadow");
+                        if (shadow is not null)
+                        {
+                            using var halo = new Bitmap(shadow.Width, shadow.Height);
+                            shadow.DrawToBitmap(halo, new Rectangle(Point.Empty, halo.Size));
+                            graphics.DrawImageUnscaled(halo, clientOrigin + (Size)shadow.Location);
+                            using var preview = new Bitmap(shadow.Width, shadow.Height);
+                            using (var previewGraphics = Graphics.FromImage(preview))
+                            {
+                                previewGraphics.Clear(form.BackColor);
+                                previewGraphics.DrawImageUnscaled(halo, Point.Empty);
+                                previewGraphics.DrawImageUnscaled(popup, settings.Location - (Size)shadow.Location);
+                            }
+                            preview.Save(Path.Combine(TestWorkspace.Artifacts, "settings-shadow.png"));
+                        }
                         graphics.DrawImageUnscaled(popup, clientOrigin + (Size)settings.Location);
+                    }
                     expanded.Save(Path.Combine(TestWorkspace.Artifacts, "main-sections-open.png"));
                 }
                 ClickSection(settings);

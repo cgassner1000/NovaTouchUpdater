@@ -13,6 +13,7 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
     private Control? overlayOwner;
     private Form? ownerForm;
     private Panel? placeholder;
+    private SectionShadow? shadow;
     private DockStyle collapsedDock;
     private bool positioning;
     private bool moving;
@@ -111,6 +112,8 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
         if (!Expanded) return;
         Expanded = false;
         Application.RemoveMessageFilter(this);
+        shadow?.Dispose();
+        shadow = null;
         moving = true;
         body.Visible = false;
         UpdateHeader();
@@ -186,8 +189,32 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
                 Math.Max(headerHeight, overlayOwner.ClientSize.Height - origin.Y - 6));
             Bounds = new Rectangle(origin, new Size(width, height));
             PerformLayout();
+            PositionShadow();
         }
         finally { positioning = false; }
+    }
+
+    private void PositionShadow()
+    {
+        if (overlayOwner is null || !Expanded) return;
+        if (SystemInformation.HighContrast)
+        {
+            shadow?.Dispose();
+            shadow = null;
+            return;
+        }
+        if (shadow is null)
+        {
+            shadow = new SectionShadow { Name = Name + "Shadow" };
+            overlayOwner.Controls.Add(shadow);
+        }
+        float scale = Math.Max(DeviceDpi / 96F, Font.SizeInPoints / 9.5F);
+        shadow.PositionAround(Bounds, scale, 9 * DeviceDpi / 96F);
+        if (overlayOwner.Controls.GetChildIndex(shadow) != 1 || overlayOwner.Controls.GetChildIndex(this) != 0)
+        {
+            shadow.BringToFront();
+            BringToFront();
+        }
     }
 
     protected override void OnLayout(LayoutEventArgs e)
@@ -270,9 +297,71 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
             if (ownerForm is not null) ownerForm.Deactivate -= OwnerDeactivated;
             if (placeholder?.Parent is { } parent) parent.Layout -= ParentLayout;
             placeholder?.Dispose();
+            shadow?.Dispose();
             content.Layout -= ContentLayout;
         }
         base.Dispose(disposing);
+    }
+
+    // A separate, non-interactive halo keeps the card's bounds and content intact.
+    private sealed class SectionShadow : Control
+    {
+        private RectangleF card;
+        private float cornerRadius;
+        private int spread;
+
+        internal SectionShadow()
+        {
+            SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.UserPaint |
+                ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            SetStyle(ControlStyles.Selectable, false);
+            BackColor = Color.Transparent;
+            TabStop = false;
+            AccessibleRole = AccessibleRole.None;
+        }
+
+        internal void PositionAround(Rectangle bounds, float scale, float radius)
+        {
+            spread = Math.Max(4, (int)Math.Round(8 * scale));
+            int offset = Math.Max(1, (int)Math.Round(2 * scale));
+            cornerRadius = radius;
+            Bounds = new Rectangle(bounds.X - spread, bounds.Y - spread,
+                bounds.Width + spread * 2, bounds.Height + spread * 2 + offset);
+            card = new RectangleF(spread, spread, bounds.Width, bounds.Height);
+            using var hole = UiTheme.RoundRectangle(card, cornerRadius);
+            var ring = new Region(ClientRectangle);
+            ring.Exclude(hole);
+            Region? previous = Region;
+            Region = ring;
+            previous?.Dispose();
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            float offset = spread / 4F;
+            // Several low-opacity layers give a soft falloff without a dark border.
+            using var brush = new SolidBrush(Color.FromArgb(3, 28, 42, 62));
+            for (int layer = 8; layer > 0; layer--)
+            {
+                float distance = spread * layer / 8F;
+                var bounds = new RectangleF(card.X - distance, card.Y - distance + offset,
+                    card.Width + distance * 2, card.Height + distance * 2);
+                using var shape = UiTheme.RoundRectangle(bounds, cornerRadius + distance);
+                e.Graphics.FillPath(brush, shape);
+            }
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x0084) // WM_NCHITTEST: let the underlying control receive clicks.
+            {
+                m.Result = (IntPtr)(-1); // HTTRANSPARENT
+                return;
+            }
+            base.WndProc(ref m);
+        }
     }
 
     private sealed class SectionHeader : ModernButton
