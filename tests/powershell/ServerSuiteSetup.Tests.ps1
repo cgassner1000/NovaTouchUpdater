@@ -79,12 +79,12 @@ function NewState {
     }
     $script:eventLog = [pscustomobject]@{ Name='EventLog'; Status='Running' }
     $eventLog | Add-Member ScriptMethod WaitForStatus { param($state,$timeout) if ([string]$this.Status -ne [string]$state) { throw 'State mismatch' } }
-    $script:copyCount=0
+    $script:copyCount=0; $script:staleInstance=''
 }
 function Get-Service {
     [CmdletBinding()]param([string]$Name)
     if (-not $Name) { return @($script:states.Values) }
-    if ($Name -eq 'EventLog') { return $script:eventLog }
+    if ($Name -eq 'EventLog') { throw 'Windows EventLog must not be accessed by the installer' }
     $script:states[$Name]
 }
 function Get-ItemProperty {
@@ -97,21 +97,19 @@ function Stop-Service {
     [CmdletBinding()]param([string]$Name,[switch]$Force)
     $script:trace.Add('stop:' + $Name)
     if ($Name -eq $script:stopFailure) { throw 'simulated stop error' }
-    if ($Name -eq 'EventLog') { Assert (@($states.Values | Where-Object Status -ne 'Stopped').Count -eq 0) 'all suite services stop before EventLog' }
     (Get-Service -Name $Name).Status = 'Stopped'
 }
 function Start-Service {
     [CmdletBinding()]param([string]$Name)
     $script:trace.Add('start:' + $Name)
     if ($Name -eq $script:startFailure) { throw 'simulated start error' }
-    if ($Name -ne 'EventLog') { Assert ($script:eventLog.Status -eq 'Running') 'EventLog runs before suite restart' }
     (Get-Service -Name $Name).Status = 'Running'
 }
 function Start-Process {
     [CmdletBinding()]param([string]$FilePath,[string]$ArgumentList,[switch]$Wait,[switch]$PassThru,[string]$WindowStyle)
     Assert ($FilePath -eq $script:setup -or $FilePath -eq $script:copiedSetup) 'only verified fixture is passed to simulated setup'
     Assert ($Wait -and $PassThru -and $WindowStyle -eq 'Hidden') 'setup is synchronous and hidden'
-    Assert ($script:eventLog.Status -eq 'Stopped' -and @($states.Values | Where-Object Status -ne 'Stopped').Count -eq 0) 'setup runs with all suite services and EventLog stopped'
+    Assert (@($states.Values | Where-Object Status -ne 'Stopped').Count -eq 0) 'all suite services stay stopped until every setup finishes'
     Assert ($ArgumentList -match '/VERYSILENT' -and $ArgumentList -match '/NORESTART ' -and $ArgumentList -match '/UPDATER=1') 'silent setup prevents reboot and opts into safe instance protocol'
     Assert ($ArgumentList -match '/SERVICENAME="([^"]+)"') 'exact service name is explicit'
     $name=$Matches[1]; $record=@($script:records | Where-Object Name -eq $name)[0]
@@ -127,22 +125,32 @@ function RunInstall($selected = $script:records) {
 NewState
 $result=RunInstall
 Assert ($result.Errors.Count -eq 0 -and $result.InstalledNames.Count -eq 3) 'every installed instance gets its own setup invocation'
+Assert (@($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 3 -and $eventLog.Status -eq 'Running') 'all three instance setups run without stopping EventLog'
+foreach ($start in @($trace | Where-Object { $_ -like 'start:*' })) {
+    Assert ($trace.IndexOf($start) -gt $trace.IndexOf('setup:nt3_server_suite_OFF')) 'suite services start only after the last instance setup returns'
+}
 Assert ('start:nt3_server_suite_OFF' -notin $trace -and $states.nt3_server_suite_OFF.Status -eq 'Stopped') 'disabled service remains stopped'
 NewState; $script:exitCodes.nt3_server_suite_ABC=4
 $result=RunInstall
 Assert ($result.Errors.Count -eq 1 -and $result.Errors[0] -match 'Exitcode 4' -and $result.Errors[0] -match 'Setup-Log:' -and $result.InstalledNames.Count -eq 2) 'failed instance keeps log and does not block other instances'
 $script:exitCodes.Clear(); $script:trace.Clear()
 $result=RunInstall @($script:records | Where-Object Name -eq 'nt3_server_suite_ABC')
-Assert (@($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 1 -and $result.InstalledNames[0] -eq 'nt3_server_suite_ABC') 'retry installs only failed instance while stopping all suite services for EventLog'
+Assert (@($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 1 -and $result.InstalledNames[0] -eq 'nt3_server_suite_ABC') 'retry installs only failed instance while keeping shared suite files free'
 NewState; $script:exitCodes.nt3_server_suite=3010
 $result=RunInstall
 Assert ($result.RebootRequired -and $result.Errors.Count -eq 0) '3010 records pending reboot without restarting Windows'
 NewState; $script:stopFailure='EventLog'
 $result=RunInstall
-Assert ($result.Errors.Count -gt 0 -and @($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 0 -and $eventLog.Status -eq 'Running') 'failed EventLog stop prevents setup and restores services'
+Assert ($result.Errors.Count -eq 0 -and $result.InstalledNames.Count -eq 3 -and $eventLog.Status -eq 'Running') 'an EventLog stop restriction cannot prevent any instance setup'
 NewState; $script:startFailure='EventLog'
 $result=RunInstall
-Assert ($result.InstalledNames.Count -eq 0 -and @($trace | Where-Object { $_ -like 'start:nt3*' }).Count -eq 0) 'failed EventLog recovery leaves suite stopped and no instance checkpointed'
+Assert ($result.Errors.Count -eq 0 -and $result.InstalledNames.Count -eq 3) 'an EventLog start restriction cannot prevent suite recovery'
+NewState; $script:eventLog.Status='Stopped'
+$result=RunInstall
+Assert ($result.Errors.Count -eq 0 -and $result.InstalledNames.Count -eq 3 -and $eventLog.Status -eq 'Stopped') 'an initially stopped EventLog is left unchanged'
+NewState; $script:stopFailure='nt3_server_suite_ABC'
+$result=RunInstall
+Assert ($result.Errors.Count -gt 0 -and @($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 0) 'a suite stop failure prevents all setup invocations'
 NewState; $script:startFailure='nt3_server_suite_ABC'
 $result=RunInstall
 Assert ($result.InstalledNames.Count -eq 2 -and $result.Errors.Count -eq 1) 'one failed service start preserves successful instance checkpoints'
@@ -169,7 +177,8 @@ function CopyRemoteFileWithProgress($session,$source,$target,$label) {
 function ReadInventory {
     foreach ($record in $script:records) {
         $copy=$record | Select-Object *
-        $copy.ProductVersion='2026.4.9999'; $copy.State=[string]$script:states[$copy.Name].Status
+        if ($copy.Name -ne $script:staleInstance) { $copy.ProductVersion='2026.4.9999' }
+        $copy.State=[string]$script:states[$copy.Name].Status
         $copy
     }
 }
@@ -183,6 +192,10 @@ $request.SkipLocalPackageCopy=$false; $request.RemoteInstallPath=Join-Path $fixt
 $script:copiedSetup=Join-Path $request.RemoteInstallPath ([IO.Path]::GetFileName($setup))
 $result=InvokeServerSuiteSetupUpdate $request 'remote' $records $records
 Assert ($result.Success -and $copyCount -eq 1) 'remote setup is copied once for all instances, then revalidated on target'
+Assert (@($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 3) 'remote update invokes the silent setup separately for every installed instance'
+NewState; $script:staleInstance='nt3_server_suite_ABC'
+$result=InvokeServerSuiteSetupUpdate $request 'remote' $records $records
+Assert (-not $result.Success -and $result.CompletedServiceNames.Count -eq 2 -and $result.Error -match 'Instanzversion nicht best.tigt: nt3_server_suite_ABC') 'setup exit zero cannot mark an unchanged remote instance as updated'
 NewState; $request.SkipZipTransfer=$true
 $result=InvokeServerSuiteSetupUpdate $request 'remote' $records $records
 Assert ($result.Success -and $copyCount -eq 0) 'remote no-upload mode uses matching existing setup'

@@ -68,7 +68,7 @@ function InstallServerSuiteSetup {
     $installed = [Collections.Generic.List[string]]::new()
     $failedStarts = [Collections.Generic.List[string]]::new()
     $restore = [Collections.Generic.List[string]]::new()
-    $eventLogAttempted = $false; $eventLogReady = $true; $reboot = $false
+    $reboot = $false
     try {
         foreach ($svc in $all) {
             if ($svc.StartType -ne 'Disabled') { $restore.Add([string]$svc.Name) }
@@ -77,11 +77,6 @@ function InstallServerSuiteSetup {
             if ($service.Status -ne 'Stopped') { Stop-Service -Name ([WildcardPattern]::Escape([string]$svc.Name)) -Force -ErrorAction Stop }
             $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
         }
-        $eventLogAttempted = $true; $eventLogReady = $false
-        Status 'Windows EventLog stoppen' 'Stoppe Windows EventLog vor der Setup-Installation'
-        $eventLog = Get-Service -Name EventLog -ErrorAction Stop
-        if ($eventLog.Status -ne 'Stopped') { Stop-Service -Name EventLog -ErrorAction Stop }
-        $eventLog.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
         foreach ($plan in $plans) {
             $log = Join-Path $logRoot (($plan.Name -replace '[^a-zA-Z0-9_.-]', '_') + '-' + [guid]::NewGuid().ToString('N') + '.log')
             try {
@@ -91,29 +86,20 @@ function InstallServerSuiteSetup {
                 if ($process.ExitCode -eq 3010) { $reboot = $true }
                 elseif ($process.ExitCode -ne 0) { throw "Setup-Exitcode $($process.ExitCode)" }
                 $installed.Add($plan.Name)
+                Status 'Setup abgeschlossen' ("$($plan.Name): Setup beendet (Exitcode $($process.ExitCode)); $($installed.Count)/$($plans.Count) Instanzen installiert")
             } catch { $errors.Add("$($plan.Name): $($_.Exception.Message); Setup-Log: $log") }
         }
     } catch { $errors.Add($_.Exception.Message) }
     finally {
-        if ($eventLogAttempted) {
+        foreach ($name in $restore) {
             try {
-                Status 'Windows EventLog starten' 'Starte Windows EventLog vor den Suite-Diensten'
-                Start-Service -Name EventLog -ErrorAction Stop
-                (Get-Service -Name EventLog -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
-                $eventLogReady = $true
-            } catch { $errors.Add('Windows EventLog konnte nicht gestartet werden: ' + $_.Exception.Message) }
-        }
-        if ($eventLogReady) {
-            foreach ($name in $restore) {
-                try {
-                    Status 'Dienste starten' ("Starte $name")
-                    Start-Service -Name ([WildcardPattern]::Escape($name)) -ErrorAction Stop
-                    (Get-Service -Name ([WildcardPattern]::Escape($name)) -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
-                } catch { $failedStarts.Add($name); $errors.Add("${name}: Dienststart fehlgeschlagen: $($_.Exception.Message)") }
-            }
+                Status 'Dienste starten' ("Starte $name")
+                Start-Service -Name ([WildcardPattern]::Escape($name)) -ErrorAction Stop
+                (Get-Service -Name ([WildcardPattern]::Escape($name)) -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+            } catch { $failedStarts.Add($name); $errors.Add("${name}: Dienststart fehlgeschlagen: $($_.Exception.Message)") }
         }
     }
-    [pscustomobject]@{ Event='setup-result'; InstalledNames=@($installed | Where-Object { $eventLogReady -and $_ -notin $failedStarts });
+    [pscustomobject]@{ Event='setup-result'; InstalledNames=@($installed | Where-Object { $_ -notin $failedStarts });
         RebootRequired=$reboot; Errors=@($errors); Changed=($installed.Count -gt 0) }
 }
 

@@ -304,7 +304,7 @@ public sealed partial class MainForm
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Payment/Fiscal: zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen. " +
             (ServerSuiteInstaller.IsSetup(serverSuiteZip) ? "Setup je Instanz still mit explizitem Dienstnamen und Installationspfad ausführen. Kein automatischer Windows-Neustart. " : "Bisheriges ZIP-Verfahren. ") +
-            "Vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. Konfiguration und Dienstkonten bleiben erhalten. EventLog bleibt während der Installation gestoppt. Deaktivierte Dienste bleiben deaktiviert.");
+            "Vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. Konfiguration und Dienstkonten bleiben erhalten. Windows EventLog bleibt unverändert. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
         if (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0)
         {
