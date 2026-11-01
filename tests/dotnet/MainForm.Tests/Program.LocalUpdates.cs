@@ -107,47 +107,74 @@ internal static partial class Program
             File.WriteAllText(Path.Combine(root, name), "fixture only");
         string nested = Path.Combine(root, "MSI", "NTC");
         Directory.CreateDirectory(nested);
-        MsiFixture.Create(Path.Combine(nested, "control.msi"), "NovaTouch Control", "2026.4.9800", null, "Nov.WaWi.exe", "2026.4.9800.12345");
+        foreach (var product in new[] {
+            (Kind: "control", Name: "NovaTouch Control", File: "Nov.WaWi.exe"),
+            (Kind: "pos", Name: "NovaTouch POS", File: "Nov.NT.Communication.Devices.dll"),
+            (Kind: "voucher", Name: "NovaTouch Voucher", File: "Nov.Gutscheinverwaltung.exe"),
+            (Kind: "sol", Name: "NovaTouch Orderman SOL", File: "Nov.Oman.SOL.Config.exe")
+        })
+            MsiFixture.Create(Path.Combine(nested, product.Kind + ".msi"), product.Name, "2026.4.9800", null, product.File, "2026.4.9800.12345");
         using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
         Populate(form);
         Field<TextBox>(form, "softwarePath").Text = root;
         Complete((Task)Call(form, "LoadSoftwarePackagesAsync")!);
         var list = Field<Label>(form, "selectedPackagesList");
         var folderButton = Field<Button>(form, "useFolderPackages");
-        UpdateComponents folderComponents = UpdateComponents.ZipServices | UpdateComponents.Ntc;
-        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Split(Environment.NewLine).Length == 4,
-            "folder discovery selects and lists root ZIPs and the MSI in a nested folder");
-        void AssertFullVersionDisplayed(string selection)
+        UpdateComponents folderComponents = UpdateComponents.All;
+        var msiPackages = Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages");
+        var originalMsiPackages = msiPackages.ToDictionary();
+        string originalFiscal = Field<string>(form, "fiscalZip"), originalSuite = Field<string>(form, "serverSuiteZip");
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Split(Environment.NewLine).Length == 7,
+            "folder discovery selects and lists all seven components, including nested MSIs");
+        void AssertFullVersionDisplayed(string selection, string version = "2026.4.9800.12345")
         {
             var controls = Field<Dictionary<UpdateComponents, (Button Button, Label Label)>>(form, "msiControls");
             var table = Field<TableLayoutPanel>(form, "selectedPackagesTable");
-            Assert(controls[UpdateComponents.Ntc].Label.Text == "NTC Target: 2026.4.9800.12345" &&
-                table.Controls.OfType<Label>().Any(label => label.Text == "2026.4.9800.12345") && list.Text.Contains("2026.4.9800.12345"),
+            Assert(controls[UpdateComponents.Ntc].Label.Text == "NTC Target: " + version &&
+                table.Controls.OfType<Label>().Any(label => label.Text == version) && list.Text.Contains(version),
                 selection + " displays all four fields in both selected packages and the individual update-file label");
         }
         AssertFullVersionDisplayed("folder selection");
         string individual = Path.Combine(root, "nt.payment_1.0.0.zip");
+        File.WriteAllText(individual, "fixture only");
         Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Payment, individual, "1.0.0"));
-        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.Payment && list.Text.Contains("1.0.0") &&
-            !list.Text.Contains("Fiscal") && Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages").Count == 0 && folderButton.Enabled,
-            "the first individual package clears every automatically selected service and MSI and updates the list");
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Split(Environment.NewLine).Length == 7 &&
+            Field<string>(form, "paymentZip") == individual && Field<string>(form, "fiscalZip") == originalFiscal && Field<string>(form, "serverSuiteZip") == originalSuite &&
+            originalMsiPackages.All(pair => ReferenceEquals(msiPackages[pair.Key], pair.Value)) && folderButton.Enabled,
+            "replacing Payment individually preserves Fiscal, Server Suite and all four MSI packages in the displayed selection");
         Complete((Task)Call(form, "LoadSoftwarePackagesAsync")!);
-        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.Payment && Field<string>(form, "paymentZip") == individual,
-            "rereading the folder cannot replace a manual package even with a newer automatic version");
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && Field<string>(form, "paymentZip") == individual &&
+            originalMsiPackages.All(pair => ReferenceEquals(msiPackages[pair.Key], pair.Value)),
+            "rereading the folder preserves the individually replaced package and every other selected package");
+        Field<ComboBox>(form, "executionMode").SelectedIndex = 0;
         var request = (WorkerRequest)Call(form, "Request", "update", Targets(form)[0], (UpdateComponents)Call(form, "SelectedUpdateComponents")!)!;
-        Assert(request.PaymentZip == individual && request.FiscalZip.Length == 0 && request.ServerSuiteZip.Length == 0 && request.MsiPackages.Length == 0,
-            "the actual update request contains only the individual selection");
-        Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Fiscal, Path.Combine(root, "nt.fiscal_2.0.0.zip"), "2.0.0"));
-        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == (UpdateComponents.Payment | UpdateComponents.Fiscal) &&
-            list.Text.Split(Environment.NewLine).Length == 2, "further individual choices add components without restoring folder-only packages");
+        Assert(request.PaymentZip == individual && request.FiscalZip == originalFiscal && request.ServerSuiteZip == originalSuite && request.MsiPackages.Length == 4,
+            "the actual local update request combines the individually replaced package with every retained folder package");
+        string individualFiscal = Path.Combine(root, "nt.fiscal_1.0.0.zip");
+        File.WriteAllText(individualFiscal, "fixture only");
+        Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Fiscal, individualFiscal, "1.0.0"));
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && Field<string>(form, "paymentZip") == individual &&
+            Field<string>(form, "fiscalZip") == individualFiscal && Field<string>(form, "serverSuiteZip") == originalSuite && msiPackages.Count == 4,
+            "a second individual replacement changes only Fiscal and retains the first replacement and the other products");
         typeof(Button).GetMethod("OnClick", Private)!.Invoke(folderButton, [EventArgs.Empty]);
-        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Split(Environment.NewLine).Length == 4 && !folderButton.Enabled,
-            "the user can restore the complete folder selection explicitly");
-        var msi = Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages")[UpdateComponents.Ntc];
-        Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Ntc, msi.PayloadPath, msi.ProductVersion, msi));
-        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.Ntc && list.Text.Contains("control.msi") && !list.Text.Contains("nt.payment"),
-            "an individually selected MSI also overrides all automatic packages");
-        AssertFullVersionDisplayed("individual selection");
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Split(Environment.NewLine).Length == 7 && !folderButton.Enabled &&
+            Field<string>(form, "paymentZip") == Path.Combine(root, "nt.payment_2.0.0.zip") && Field<string>(form, "fiscalZip") == originalFiscal,
+            "the user can explicitly restore all folder packages and discard individual replacements");
+        string individualMsi = Path.Combine(root, "control-manual.msi");
+        MsiFixture.Create(individualMsi, "NovaTouch Control", "2026.4.9800", null, "Nov.WaWi.exe", "2026.4.9800.12346");
+        Task<SoftwarePackage[]> read = Field<SoftwarePackageCatalog>(form, "packageCatalog").ReadFileAsync(individualMsi, CancellationToken.None);
+        Complete(read);
+        SoftwarePackage replacement = read.GetAwaiter().GetResult().Single();
+        Call(form, "SelectIndividualPackage", replacement);
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Contains("control-manual.msi") &&
+            msiPackages[UpdateComponents.Ntc].PayloadPath == individualMsi && Field<string>(form, "fiscalZip") == originalFiscal &&
+            originalMsiPackages.Where(pair => pair.Key != UpdateComponents.Ntc).All(pair => msiPackages[pair.Key].PayloadPath == pair.Value.PayloadPath),
+            "replacing a folder MSI changes only that product while preserving all service packages and the other three MSIs");
+        AssertFullVersionDisplayed("individual MSI replacement", "2026.4.9800.12346");
+        using var individualOnly = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
+        Call(individualOnly, "SelectIndividualPackage", replacement);
+        Assert((UpdateComponents)Call(individualOnly, "SelectedUpdateComponents")! == UpdateComponents.Ntc,
+            "without a loaded folder an individual choice selects only its own product");
     }
 
     private static void LocalExecutionTests()

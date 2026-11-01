@@ -191,7 +191,6 @@ public sealed partial class MainForm
     {
         if ((package.Component & UpdateComponents.Msi) != 0 && package.Msi is null)
             throw new InvalidDataException("MSI-Paketinformationen fehlen.");
-        if (!individualPackageSelection) ClearPackageSelection();
         individualPackageSelection = true;
         ApplyPackage(package);
         RefreshSelectedPackages();
