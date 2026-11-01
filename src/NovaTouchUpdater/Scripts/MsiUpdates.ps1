@@ -6,8 +6,9 @@ function GetMsiUpdateDecision {
     function MsiVersion([string]$value) {
         $parsed = $null
         if (-not [Version]::TryParse($value.Trim(), [ref]$parsed)) { throw "MSI-Version nicht sicher vergleichbar: '$value'" }
-        # Windows Installer compares major.minor.build; it ignores a fourth field.
-        return [Version]::new($parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build))
+        # NovaTouch release versions include the revision, independently of MSI's
+        # built-in upgrade-table comparison. Missing revision means zero.
+        return [Version]::new($parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build), [Math]::Max(0, $parsed.Revision))
     }
     $target = MsiVersion ([string]$Package.ProductVersion)
     $installed = @($Programs | Where-Object { $_.Kind -eq $kind -and $_.DisplayName -ieq $names[$kind] })

@@ -264,6 +264,26 @@ try {
         Assert ($result.Count -eq 1 -and $result[0].Success -eq $local -and $script:serviceQueries -eq $queriesBefore) 'worker dispatch allows local publication and performs no service or uninstall queries'
         if (-not $local) { Assert ($result[0].Error.Contains('ausschließlich lokal') -and [SoftwareDatabaseFixture.Database]::Events.Count -eq $eventsBefore) 'remote publication is rejected before database connections or WinRM' }
     }
+    [SoftwareDatabaseFixture.Database]::Entries.Clear()
+    $fourPart = Package ntc ([string]$index.ntcFourPart)
+    Assert ($fourPart.ProductVersion -eq '2026.4.9800.12345') 'database requests read all four version fields from real MSI metadata'
+    $script:results.Clear()
+    PublishLocalIrisSoftwarePackages @($fourPart) $targets $fixture
+    Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 3 -and
+        @([SoftwareDatabaseFixture.Database]::Entries | Where-Object Version -ne '2026.4.9800.12345').Count -eq 0) 'zzzSoftware stores the complete four-part MSI version in every namespace'
+    foreach ($test in @(
+        @{ Version='2026.4.9800.12344'; Upload=$true },
+        @{ Version='2026.4.9800.12345'; Upload=$false },
+        @{ Version='2026.4.9800.12346'; Upload=$false },
+        @{ Version='2026.4.9800'; Upload=$true }
+    )) {
+        foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) { $entry.Version=$test.Version }
+        $script:results.Clear()
+        PublishLocalIrisSoftwarePackages @($fourPart) $targets $fixture
+        $expectedVersion = $(if ($test.Upload) { '2026.4.9800.12345' } else { $test.Version })
+        Assert ($script:results.Count -eq 1 -and $script:results[0].Changed -eq $test.Upload -and
+            @([SoftwareDatabaseFixture.Database]::Entries | Where-Object Version -ne $expectedVersion).Count -eq 0) "zzzSoftware compares the fourth version field without overwriting equal/newer releases: $($test.Version) -> 2026.4.9800.12345"
+    }
     Write-Host 'PASS SoftwareDatabase tests completed without connecting to a database or running an installer'
 } finally {
     $env:TEMP = $originalTemp; $env:TMP = $originalTmp

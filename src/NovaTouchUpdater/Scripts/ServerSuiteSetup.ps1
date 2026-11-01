@@ -85,7 +85,7 @@ function InstallServerSuiteSetup {
         foreach ($plan in $plans) {
             $log = Join-Path $logRoot (($plan.Name -replace '[^a-zA-Z0-9_.-]', '_') + '-' + [guid]::NewGuid().ToString('N') + '.log')
             try {
-                Status 'Setup installieren' ("$($plan.Name): $Version nach $($plan.Root); Log: $log")
+                Status 'Setup installieren' ("$($plan.Name): $Version nach $($plan.Root)")
                 $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /NOCANCEL /NOCLOSEAPPLICATIONS /NORESTARTAPPLICATIONS /RESTARTEXITCODE=3010 /UPDATER=1 /SERVICENAME="' + $plan.Name + '" /DIR="' + $plan.Root + '" /LOG="' + $log + '"'
                 $process = Start-Process -FilePath $Setup -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
                 if ($process.ExitCode -eq 3010) { $reboot = $true }

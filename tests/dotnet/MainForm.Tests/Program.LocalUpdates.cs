@@ -42,6 +42,18 @@ internal static partial class Program
         Assert(result.Packages.Single(p => p.Component == UpdateComponents.Ntv).Msi!.CompanionFiles is [{ RelativePath: "data.cab" } cabinet] &&
             cabinet.LocalPath == Path.Combine(msiFolder, "data.cab"),
             "a deeply nested MSI retains its external cabinet from the same source folder");
+        string fourPart = Path.Combine(msiFolder, "control-four-part.msi");
+        string olderRevision = Path.Combine(msiFolder, "control-older-revision.msi");
+        MsiFixture.Create(fourPart, "NovaTouch Control", "2026.4.9800.12345", null);
+        MsiFixture.Create(olderRevision, "NovaTouch Control", "2026.4.9800.12344", null);
+        File.SetLastWriteTimeUtc(fourPart, DateTime.UtcNow.AddHours(-1));
+        SoftwarePackage[] fourPartPackages = await catalog.ReadFileAsync(fourPart, CancellationToken.None);
+        Assert(fourPartPackages is [{ Version: "2026.4.9800.12345", Msi.ProductVersion: "2026.4.9800.12345" }],
+            "MSI metadata and the selected package retain all four version fields");
+        result = await catalog.ReadAsync(root, null, CancellationToken.None);
+        Assert(result.Packages.Single(p => p.Component == UpdateComponents.Ntc) is { Version: "2026.4.9800.12345" } newest && newest.Path == fourPart,
+            "recursive discovery chooses the higher MSI revision even when the older revision has a newer file timestamp");
+        msiPaths["ntcFourPart"] = fourPart;
         using (var archive = ZipFile.Open(Path.Combine(root, "bad-path.zip"), ZipArchiveMode.Create)) archive.CreateEntryFromFile(msiPaths["ntc"], "../Control.msi");
         bool rejected = false;
         try { await catalog.ReadFileAsync(Path.Combine(root, "bad-path.zip"), CancellationToken.None); } catch (InvalidDataException) { rejected = true; }

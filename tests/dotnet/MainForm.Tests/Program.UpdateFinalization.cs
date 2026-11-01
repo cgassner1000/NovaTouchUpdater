@@ -161,7 +161,24 @@ internal static partial class Program
                 Assert(worker.Requests.Where(request => request.Action == "restart-pos").All(request => request.Host != "REMOTE-A") &&
                     hosts[1].Phase.Contains("POS-Neustart übersprungen"), "POS with before-version '" + installed + "' is not automatically restarted");
             }
-            hosts[1].PosVersion="1.0.0";
+            packages[UpdateComponents.Pos].ProductVersion="2026.4.9800.12345";
+            hosts[2].PosVersion="2026.4.9800.12345";
+            foreach (var test in new[] {
+                (Version: "2026.4.9800.12344", Restart: true),
+                (Version: "2026.4.9800.9999", Restart: true),
+                (Version: "2026.4.9800.12345", Restart: false),
+                (Version: "2026.4.9800.12346", Restart: false),
+                (Version: "2026.4.9800", Restart: true)
+            })
+            {
+                NewRun(); hosts[1].PosVersion=test.Version;
+                FinishUpdates(form, hosts);
+                Assert(worker.Requests.Any(request => request.Action == "restart-pos" && request.Host == "REMOTE-A") == test.Restart &&
+                    !worker.Requests.Any(request => request.Action == "restart-pos" && request.Host == "REMOTE-B"),
+                    "POS restart after committed upload compares the fourth version field: " + test.Version + " -> 2026.4.9800.12345");
+            }
+            packages[UpdateComponents.Pos].ProductVersion="2.0.0";
+            hosts[1].PosVersion="1.0.0"; hosts[2].PosVersion="1.0.0";
             NewRun();
             packages.Add(UpdateComponents.Ntc, new() { Kind="ntc", ProductName="NovaTouch Control", ProductVersion="2.0.0", PayloadPath=msi });
             worker.UploadedKindsOverride=["ntc"];
