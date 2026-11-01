@@ -11,6 +11,10 @@ function GetMsiUpdateDecision {
         return [Version]::new($parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build), [Math]::Max(0, $parsed.Revision))
     }
     $target = MsiVersion ([string]$Package.ProductVersion)
+    if ($null -ne $Package.PSObject.Properties['MsiProductVersion'] -and $Package.MsiProductVersion) {
+        $msiVersion = MsiVersion ([string]$Package.MsiProductVersion)
+        if ($msiVersion.Major -ne $target.Major -or $msiVersion.Minor -ne $target.Minor -or $msiVersion.Build -ne $target.Build) { throw 'MSI-Produktversion passt nicht zur vollständigen Paketversion.' }
+    }
     $installed = @($Programs | Where-Object { $_.Kind -eq $kind -and $_.DisplayName -ieq $names[$kind] })
     if ($installed.Count -eq 0) { return [pscustomobject]@{ Install=$false; Skipped=$true; Message=($names[$kind] + ' nicht installiert – übersprungen'); Programs=@() } }
     foreach ($program in $installed) {
@@ -103,7 +107,9 @@ function InstallMsiUpdatePackage {
             try {
                 $query = 'SELECT `Value` FROM `Property` WHERE `Property` = ''' + $property + ''''
                 $view = $database.OpenView($query); $view.Execute(); $record = $view.Fetch()
-                if ($null -eq $record -or [string]$record.StringData(1) -ine [string]$package.$property) { throw "MSI-$property stimmt nicht mit dem ausgewählten Paket überein." }
+                $expected = [string]$package.$property
+                if ($property -eq 'ProductVersion' -and $null -ne $package.PSObject.Properties['MsiProductVersion'] -and $package.MsiProductVersion) { $expected = [string]$package.MsiProductVersion }
+                if ($null -eq $record -or [string]$record.StringData(1) -ine $expected) { throw "MSI-$property stimmt nicht mit dem ausgewählten Paket überein." }
             } finally {
                 if ($null -ne $record) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($record) }
                 if ($null -ne $view) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view) }

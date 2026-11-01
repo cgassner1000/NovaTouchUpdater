@@ -284,6 +284,16 @@ try {
         Assert ($script:results.Count -eq 1 -and $script:results[0].Changed -eq $test.Upload -and
             @([SoftwareDatabaseFixture.Database]::Entries | Where-Object Version -ne $expectedVersion).Count -eq 0) "zzzSoftware compares the fourth version field without overwriting equal/newer releases: $($test.Version) -> 2026.4.9800.12345"
     }
+    [SoftwareDatabaseFixture.Database]::Entries.Clear()
+    $release = Package ntc ([string]$index.ntcRelease)
+    $release | Add-Member -NotePropertyName MsiProductVersion -NotePropertyValue $release.ProductVersion
+    $release.ProductVersion='2026.4.9800.12345'
+    $script:results.Clear()
+    PublishLocalIrisSoftwarePackages @($release) $targets $fixture
+    Assert ($script:results[0].Changed -and [SoftwareDatabaseFixture.Database]::Entries.Count -eq 3 -and
+        @([SoftwareDatabaseFixture.Database]::Entries | Where-Object Version -ne '2026.4.9800.12345').Count -eq 0) 'a three-part MSI installer property is validated unchanged while zzzSoftware stores the full application release'
+    $release.MsiProductVersion='2026.4.9800.0'
+    ExpectFailure { PublishLocalIrisSoftwarePackages @($release) $targets $fixture } 'full release metadata never bypasses validation of the actual MSI ProductVersion'
     Write-Host 'PASS SoftwareDatabase tests completed without connecting to a database or running an installer'
 } finally {
     $env:TEMP = $originalTemp; $env:TMP = $originalTmp

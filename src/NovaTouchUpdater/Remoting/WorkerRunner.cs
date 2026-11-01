@@ -73,6 +73,7 @@ public sealed class MsiPackageRequest
     public string RelativeMsiPath { get; set; } = "";
     public string ProductName { get; set; } = "";
     public string ProductVersion { get; set; } = "";
+    public string MsiProductVersion { get; set; } = "";
     public string ProductCode { get; set; } = "";
     public string UpgradeCode { get; set; } = "";
     public TransferFileRequest[] CompanionFiles { get; set; } = [];

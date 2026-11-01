@@ -19,7 +19,7 @@ internal static partial class Program
             MsiFixture.Create(file, pair.Value, "2.0.0", pair.Key == "ntv" ? "data.cab" : null);
             msiPaths[pair.Key] = file;
             MsiMetadata metadata = MsiPackageReader.Read(file);
-            Assert(metadata.ProductName == pair.Value && metadata.ProductVersion == "2.0.0" && Guid.TryParse(metadata.ProductCode, out _) && metadata.Component.ToString().Equals(pair.Key, StringComparison.OrdinalIgnoreCase),
+            Assert(metadata.ProductName == pair.Value && metadata.ProductVersion == "2.0.0.0" && metadata.MsiProductVersion == "2.0.0" && Guid.TryParse(metadata.ProductCode, out _) && metadata.Component.ToString().Equals(pair.Key, StringComparison.OrdinalIgnoreCase),
                 "real Windows Installer metadata identifies " + pair.Value + " without installing it");
         }
         File.WriteAllText(Path.Combine(msiFolder, "data.cab"), "fixture only, never installed");
@@ -54,6 +54,40 @@ internal static partial class Program
         Assert(result.Packages.Single(p => p.Component == UpdateComponents.Ntc) is { Version: "2026.4.9800.12345" } newest && newest.Path == fourPart,
             "recursive discovery chooses the higher MSI revision even when the older revision has a newer file timestamp");
         msiPaths["ntcFourPart"] = fourPart;
+        foreach (var product in new[] {
+            (Kind: "ntc", Name: "NovaTouch Control", File: "Nov.WaWi.exe"),
+            (Kind: "pos", Name: "NovaTouch POS", File: "Nov.NT.Communication.Devices.dll"),
+            (Kind: "ntv", Name: "NovaTouch Voucher", File: "Nov.Gutscheinverwaltung.exe"),
+            (Kind: "oman", Name: "NovaTouch Orderman SOL", File: "Nov.Oman.SOL.Config.exe")
+        })
+        {
+            string releaseMsi = Path.Combine(msiFolder, product.Kind + "-release.msi");
+            MsiFixture.Create(releaseMsi, product.Name, "2026.4.9800", null, product.File, "2026.4.9800.12345");
+            var releasePackages = await catalog.ReadFileAsync(releaseMsi, CancellationToken.None);
+            Assert(releasePackages is [{ Version: "2026.4.9800.12345", Msi.ProductVersion: "2026.4.9800.12345", Msi.MsiProductVersion: "2026.4.9800" }],
+                product.Kind + " reads the complete application release from the MSI File table while preserving its three-part installer property");
+            msiPaths[product.Kind + "Release"] = releaseMsi;
+        }
+        string releaseZip = Path.Combine(zipFolder, "control-release.zip");
+        using (var archive = ZipFile.Open(releaseZip, ZipArchiveMode.Create)) archive.CreateEntryFromFile(msiPaths["ntcRelease"], "installer/setup.msi");
+        Assert(await catalog.ReadFileAsync(releaseZip, CancellationToken.None) is [{ Version: "2026.4.9800.12345", Msi.MsiProductVersion: "2026.4.9800" }],
+            "the application file version survives MSI extraction from an arbitrarily named ZIP and cache filename");
+        string namedRelease = Path.Combine(msiFolder, "novatouch.control-2026.4.9800.12345-beta.msi");
+        MsiFixture.Create(namedRelease, "NovaTouch Control", "2026.4.9800", null);
+        Assert(await catalog.ReadFileAsync(namedRelease, CancellationToken.None) is [{ Version: "2026.4.9800.12345" }],
+            "the original MSI filename supplies the revision when no application File table entry is available");
+        string namedZip = Path.Combine(zipFolder, "novatouch.control-2026.4.9800.12345-beta.zip");
+        using (var archive = ZipFile.Open(namedZip, ZipArchiveMode.Create)) archive.CreateEntryFromFile(namedRelease, "setup.msi");
+        Assert(await catalog.ReadFileAsync(namedZip, CancellationToken.None) is [{ Version: "2026.4.9800.12345" }],
+            "a generic MSI entry can use the original ZIP filename instead of the hashed cache filename");
+        string misleadingName = Path.Combine(msiFolder, "control-2026.4.9800.99999.msi");
+        File.Copy(msiPaths["ntcRelease"], misleadingName);
+        Assert(await catalog.ReadFileAsync(misleadingName, CancellationToken.None) is [{ Version: "2026.4.9800.12345" }],
+            "the application version inside the MSI takes precedence over a renamed package");
+        string wrongRelease = Path.Combine(msiFolder, "control-2027.1.1.99999.msi");
+        File.Copy(namedRelease, wrongRelease);
+        Assert(await catalog.ReadFileAsync(wrongRelease, CancellationToken.None) is [{ Version: "2026.4.9800.0" }],
+            "a filename from a different release cannot replace the MSI product version");
         using (var archive = ZipFile.Open(Path.Combine(root, "bad-path.zip"), ZipArchiveMode.Create)) archive.CreateEntryFromFile(msiPaths["ntc"], "../Control.msi");
         bool rejected = false;
         try { await catalog.ReadFileAsync(Path.Combine(root, "bad-path.zip"), CancellationToken.None); } catch (InvalidDataException) { rejected = true; }
@@ -73,7 +107,7 @@ internal static partial class Program
             File.WriteAllText(Path.Combine(root, name), "fixture only");
         string nested = Path.Combine(root, "MSI", "NTC");
         Directory.CreateDirectory(nested);
-        MsiFixture.Create(Path.Combine(nested, "control.msi"), "NovaTouch Control", "2.0.0", null);
+        MsiFixture.Create(Path.Combine(nested, "control.msi"), "NovaTouch Control", "2026.4.9800", null, "Nov.WaWi.exe", "2026.4.9800.12345");
         using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
         Populate(form);
         Field<TextBox>(form, "softwarePath").Text = root;
@@ -83,6 +117,15 @@ internal static partial class Program
         UpdateComponents folderComponents = UpdateComponents.ZipServices | UpdateComponents.Ntc;
         Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && list.Text.Split(Environment.NewLine).Length == 4,
             "folder discovery selects and lists root ZIPs and the MSI in a nested folder");
+        void AssertFullVersionDisplayed(string selection)
+        {
+            var controls = Field<Dictionary<UpdateComponents, (Button Button, Label Label)>>(form, "msiControls");
+            var table = Field<TableLayoutPanel>(form, "selectedPackagesTable");
+            Assert(controls[UpdateComponents.Ntc].Label.Text == "NTC Target: 2026.4.9800.12345" &&
+                table.Controls.OfType<Label>().Any(label => label.Text == "2026.4.9800.12345") && list.Text.Contains("2026.4.9800.12345"),
+                selection + " displays all four fields in both selected packages and the individual update-file label");
+        }
+        AssertFullVersionDisplayed("folder selection");
         string individual = Path.Combine(root, "nt.payment_1.0.0.zip");
         Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Payment, individual, "1.0.0"));
         Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.Payment && list.Text.Contains("1.0.0") &&
@@ -104,6 +147,7 @@ internal static partial class Program
         Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Ntc, msi.PayloadPath, msi.ProductVersion, msi));
         Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.Ntc && list.Text.Contains("control.msi") && !list.Text.Contains("nt.payment"),
             "an individually selected MSI also overrides all automatic packages");
+        AssertFullVersionDisplayed("individual selection");
     }
 
     private static void LocalExecutionTests()
@@ -241,7 +285,7 @@ internal static partial class Program
 
     private static class MsiFixture
     {
-        internal static void Create(string path, string name, string version, string? cabinet)
+        internal static void Create(string path, string name, string version, string? cabinet, string? primaryFile = null, string? fileVersion = null)
         {
             Check(Open(path, new IntPtr(3), out uint database));
             try
@@ -251,6 +295,12 @@ internal static partial class Program
                 foreach (var pair in new Dictionary<string, string> { ["ProductName"] = name, ["ProductVersion"] = version, ["ProductCode"] = Guid.NewGuid().ToString("B"), ["UpgradeCode"] = Guid.NewGuid().ToString("B") })
                     Sql(database, $"INSERT INTO `Property` (`Property`, `Value`) VALUES ('{pair.Key}', '{pair.Value.Replace("'", "''")}')");
                 if (cabinet is not null) Sql(database, $"INSERT INTO `Media` (`DiskId`, `Cabinet`) VALUES (1, '{cabinet}')");
+                if (primaryFile is not null)
+                {
+                    Sql(database, "CREATE TABLE `File` (`File` CHAR(72) NOT NULL, `FileName` CHAR(255) NOT NULL, `Version` CHAR(72) PRIMARY KEY `File`)");
+                    Sql(database, $"INSERT INTO `File` (`File`, `FileName`, `Version`) VALUES ('Application', 'APP~1.EXE|{primaryFile}', '{fileVersion}')");
+                    Sql(database, "INSERT INTO `File` (`File`, `FileName`, `Version`) VALUES ('Unrelated', 'Other.dll', '9999.1.1.99999')");
+                }
                 Check(Commit(database));
             }
             finally { Close(database); }

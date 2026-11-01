@@ -31,7 +31,7 @@ try {
     $targets=@(ConvertSoftwareIrisTargets $script:remoteInventory $false)
     Assert ($targets.Count -eq 1 -and $targets[0].Namespaces -contains 'USER') 'remote upload targets come from the target inventory including USER'
     $index = Get-Content -LiteralPath (Join-Path $TestArtifactsRoot 'local-msi-fixtures.json') -Raw | ConvertFrom-Json
-    $path=[string]$index.ntc
+    $path=[string]$index.ntcRelease
     $installer=New-Object -ComObject WindowsInstaller.Installer; $db=$installer.OpenDatabase($path,0); $values=@{}
     try {
         foreach ($name in @('ProductName','ProductVersion','ProductCode')) {
@@ -40,7 +40,7 @@ try {
             [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($record); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
         }
     } finally { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($db); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer) }
-    $package=[pscustomobject]@{ Kind='ntc'; ProductName=$values.ProductName; ProductVersion=$values.ProductVersion; ProductCode=$values.ProductCode; PayloadPath=$path; Sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash; RelativeMsiPath='' }
+    $package=[pscustomobject]@{ Kind='ntc'; ProductName=$values.ProductName; ProductVersion='2026.4.9800.12345'; MsiProductVersion=$values.ProductVersion; ProductCode=$values.ProductCode; PayloadPath=$path; Sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash; RelativeMsiPath='' }
     $targets[0].Namespaces=@('USER','APP','APP2','APP3','APP4')
     $plan=@(GetSoftwareDatabaseRemotePlan @($package) $targets $fixture)
     Assert ($plan.Count -eq 5 -and @($plan | Where-Object { $_.Needed -contains 'ntc' }).Count -eq 5) 'remote preflight plans missing packages independently for each application namespace'
@@ -57,6 +57,7 @@ try {
     finally { [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds=0; [Console]::SetIn($previousInput) }
     Assert ($script:result.Success -and $script:result.Changed -and [SoftwareDatabaseFixture.Database]::Entries.Count -eq 5 -and [SoftwareDatabaseFixture.Database]::PeakTransactions -eq 2) 'bounded WinRM streams feed independent namespace transactions in multiple waves using the configured concurrency'
     Assert (($script:result.DatabaseUploadedKinds -join ',') -eq 'ntc') 'streamed upload reports the actual committed product instead of inferring POS from Changed'
+    Assert ($package.MsiProductVersion -eq '2026.4.9800' -and @([SoftwareDatabaseFixture.Database]::Entries | Where-Object Version -ne '2026.4.9800.12345').Count -eq 0) 'remote streaming preserves the complete application version separately from the three-part MSI property'
     foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) {
         Assert ([Convert]::ToBase64String($entry.Bytes) -eq [Convert]::ToBase64String($bytes)) 'every namespace receives the complete original MSI bytes through the stream'
     }

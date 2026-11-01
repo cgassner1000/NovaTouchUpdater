@@ -201,6 +201,28 @@ function ReadSoftwareInventory {
         }
     }
 
+    function ProgramReleaseVersion([string]$Kind, [string]$RegistryVersion, [string]$Location, [string]$Executable) {
+        $parsed = $null
+        if (-not [Version]::TryParse($RegistryVersion, [ref]$parsed)) { return $RegistryVersion }
+        $normalized = [Version]::new($parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build), [Math]::Max(0, $parsed.Revision)).ToString(4)
+        if ($parsed.Build -lt 0 -or $parsed.Revision -ge 0) { return $normalized }
+        $primaryFile = @{ ntc='Nov.WaWi.exe'; pos='Nov.NT.Communication.Devices.dll'; ntv='Nov.Gutscheinverwaltung.exe'; oman='Nov.Oman.SOL.Config.exe' }[$Kind]
+        $folders = @()
+        if ($Executable) { $folders += [IO.Path]::GetDirectoryName($Executable) }
+        if ($Location) { $folders += [Environment]::ExpandEnvironmentVariables($Location.Trim().Trim('"')) }
+        foreach ($folder in @($folders | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and [IO.Path]::IsPathRooted($_) } | Select-Object -Unique)) {
+            foreach ($candidate in @((Join-Path $folder $primaryFile), (Join-Path $folder ('bin\' + $primaryFile)))) {
+                try {
+                    if (-not [IO.File]::Exists($candidate)) { continue }
+                    $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($candidate)
+                    if ($info.FileMajorPart -eq $parsed.Major -and $info.FileMinorPart -eq $parsed.Minor -and $info.FileBuildPart -eq $parsed.Build) {
+                        return [Version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart).ToString(4)
+                    }
+                } catch { } # An inaccessible application file retains the registry version.
+            }
+        }
+        return $normalized
+    }
     $posFound = $false
     $posVersions = @()
     $programs = @()
@@ -222,6 +244,7 @@ function ReadSoftwareInventory {
             $icon = if ($null -ne $program.PSObject.Properties['DisplayIcon']) { [string]$program.DisplayIcon } else { '' }
             $exe = ''
             if ($icon -match '^\s*"([^"]+\.exe)"' -or $icon -match '^\s*(.+?\.exe)(?:,\s*-?\d+)?\s*$') { $exe = [Environment]::ExpandEnvironmentVariables($Matches[1]) }
+            $version = ProgramReleaseVersion $kind $version $location $exe
             $programs += [pscustomobject]@{ Kind=$kind; DisplayName=$displayName; Version=$version; ProductCode=$code; InstallLocation=$location; ExecutablePath=$exe }
             if ($kind -eq 'pos') { $posFound = $true; if ($version) { $posVersions += $version } }
         }

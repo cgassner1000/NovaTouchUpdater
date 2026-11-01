@@ -85,7 +85,7 @@ internal sealed class SoftwarePackageCatalog : IDisposable
                 }
                 finally { if (File.Exists(partial)) File.Delete(partial); }
             }
-            MsiMetadata metadata = MsiPackageReader.Read(local);
+            MsiMetadata metadata = MsiPackageReader.Read(local, entry.FullName, path);
             if (metadata.Component == UpdateComponents.None) continue;
             string prefix = (System.IO.Path.GetDirectoryName(entry.FullName.Replace('/', '\\')) ?? "").Replace('\\', '/');
             foreach (string cabinet in metadata.ExternalCabinets)
@@ -103,7 +103,7 @@ internal sealed class SoftwarePackageCatalog : IDisposable
         new(metadata.Component, payload, metadata.ProductVersion, new MsiPackageRequest
         {
             Kind = metadata.Component.ToString().ToLowerInvariant(), PayloadPath = payload, RelativeMsiPath = relative,
-            ProductName = metadata.ProductName, ProductVersion = metadata.ProductVersion, ProductCode = metadata.ProductCode,
+            ProductName = metadata.ProductName, ProductVersion = metadata.ProductVersion, MsiProductVersion = metadata.MsiProductVersion, ProductCode = metadata.ProductCode,
             UpgradeCode = metadata.UpgradeCode, CompanionFiles = companions
         });
 

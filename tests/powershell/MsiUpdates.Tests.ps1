@@ -234,6 +234,12 @@ try {
     RunCase 'local-four-part-newer' '2026.4.9800.12346' $true 0 $true $false
     RunCase 'local-four-part-missing-revision' '2026.4.9800' $true 0 $true $true
     RunCase -name 'local-four-part-verification-failure' -version '2026.4.9800.12344' -local $true -exitCode 0 -expectedSuccess $false -expectedInstall $true -installedAfter '2026.4.9800' -expectedError 'Installierte MSI-Version wurde nicht bestätigt'
+    $package = [pscustomobject]@{ Kind='ntc'; ProductName='NovaTouch Control'; ProductVersion='2026.4.9800.12345'; MsiProductVersion='2026.4.9800'; ProductCode=(FixtureProductCode ([string]$msis.ntcRelease)); UpgradeCode='';
+        PayloadPath=[string]$msis.ntcRelease; RelativeMsiPath='ntc-release.msi'; Sha256=(Get-FileHash -LiteralPath $msis.ntcRelease -Algorithm SHA256).Hash; CompanionFiles=@() }
+    RunCase -name 'local-full-release-three-part-msi' -version '2026.4.9800.12344' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
+    RunCase 'local-full-release-three-part-msi-current' '2026.4.9800.12345' $true 0 $true $false
+    $package.MsiProductVersion='2026.4.9800.0'
+    RunCase -name 'local-full-release-invalid-msi-property' -version '2026.4.9800.12344' -local $true -exitCode 0 -expectedSuccess $false -expectedInstall $false -direct $true -expectedError 'MSI-ProductVersion stimmt nicht'
 } finally {
     $env:TMP=$copyTestOriginalTmp; $env:TEMP=$copyTestOriginalTemp
     $checked = [IO.Path]::GetFullPath($fixture)

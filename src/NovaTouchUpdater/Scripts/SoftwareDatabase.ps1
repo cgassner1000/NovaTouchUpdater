@@ -412,7 +412,9 @@ function TestSoftwareMsiMetadata([string]$Path, $Package) {
             try {
                 $view = $database.OpenView('SELECT `Value` FROM `Property` WHERE `Property` = ''' + $property + '''')
                 [void]$view.Execute(); $record = $view.Fetch()
-                if ($null -eq $record -or [string]$record.StringData(1) -ine [string]$Package.$property) { throw "MSI-$property stimmt nicht mit dem ausgewählten Paket überein." }
+                $expected = [string]$Package.$property
+                if ($property -eq 'ProductVersion' -and $null -ne $Package.PSObject.Properties['MsiProductVersion'] -and $Package.MsiProductVersion) { $expected = [string]$Package.MsiProductVersion }
+                if ($null -eq $record -or [string]$record.StringData(1) -ine $expected) { throw "MSI-$property stimmt nicht mit dem ausgewählten Paket überein." }
             } finally {
                 if ($null -ne $record) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($record) }
                 if ($null -ne $view) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view) }
