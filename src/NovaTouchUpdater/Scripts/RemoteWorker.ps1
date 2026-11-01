@@ -228,8 +228,21 @@ function ReadSoftwareInventory {
     }
 
     # Release >= 528040 means .NET Framework 4.8 or later, including 4.8.1.
+    # Cache server eligibility during the same inventory connection. A database
+    # server need not have the POS software installed to receive its MSI upload.
+    $hasIris = $false
+    foreach ($view in $(if ([Environment]::Is64BitOperatingSystem) { @('Registry64','Registry32') } else { @('Registry32') })) {
+        $registry = $null; $configurations = $null
+        try {
+            $registry = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Enum]::Parse([Microsoft.Win32.RegistryView], $view))
+            $configurations = $registry.OpenSubKey('SOFTWARE\InterSystems\IRIS\Configurations', $false)
+            if ($null -ne $configurations -and $configurations.SubKeyCount -gt 0) { $hasIris = $true }
+        } catch { if (-not $hasIris) { $hasIris = $null } }
+        finally { if ($null -ne $configurations) { $configurations.Dispose() }; if ($null -ne $registry) { $registry.Dispose() } }
+    }
     # Reading uninstall entries avoids Win32_Product and its MSI repair side effects.
     [pscustomobject]@{
+        HasIrisInstances = $hasIris
         DotNet48Installed = ($release -ge 528040)
         PosVersion = if ($posVersions.Count -gt 0) { ($posVersions | Sort-Object -Unique) -join ', ' }
             elseif ($posFound) { 'Version unbekannt' } else { 'Nicht installiert' }
@@ -278,6 +291,7 @@ function SelectUpdateServices($services, $targets, [bool]$forceUpdate) {
 }
 
 $software = $null
+$script:databaseUploadedKinds = @()
 $completedServiceNames = @(); $after = @()
 try {
     $requestLine = [Console]::In.ReadLine()
@@ -468,7 +482,8 @@ try {
         $services = @(InvokeWorkerCommand -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
         if ($req.Action -eq 'scan') {
             Emit @{ Event='result'; Success=$true; Message='Versionen und Software geprüft'; Services=$services;
-                DotNet48Installed=$software.DotNet48Installed; PosVersion=$software.PosVersion; NtcVersion=$software.NtcVersion; InstalledPrograms=@($software.InstalledPrograms) }
+                DotNet48Installed=$software.DotNet48Installed; PosVersion=$software.PosVersion; NtcVersion=$software.NtcVersion; InstalledPrograms=@($software.InstalledPrograms);
+                HasIrisInstances=$(if ($null -ne $software.PSObject.Properties['HasIrisInstances']) { $software.HasIrisInstances } else { $null }) }
             exit 0
         }
         if ($req.Action -ne 'update') { throw ('Unbekannte Aktion: ' + $req.Action) }
@@ -674,7 +689,7 @@ catch {
         $position = ([string]$_.InvocationInfo.PositionMessage -replace '[\r\n]+', ' ').Trim()
         $errorText += " | Position: $position"
     }
-    $result = @{ Event='result'; Success=$false; Message='Fehler'; Error=$errorText; Services=@($after); CompletedServiceNames=@($completedServiceNames) }
+    $result = @{ Event='result'; Success=$false; Message='Fehler'; Error=$errorText; Services=@($after); CompletedServiceNames=@($completedServiceNames); DatabaseUploadedKinds=@($script:databaseUploadedKinds) }
     if ($null -ne $software) {
         $result.DotNet48Installed = $software.DotNet48Installed
         $result.PosVersion = $software.PosVersion

@@ -51,7 +51,7 @@ public sealed partial class MainForm : Form
     private readonly NumericUpDown nUpdate = new();
     private readonly NumericUpDown nHttpsPort = new();
     private readonly CheckBox chkSsl = new ModernToggleSwitch();
-    private readonly CheckBox chkIrisTls = new ModernToggleSwitch { Name = "irisUseTls", Text = "IRIS-Verbindung mit TLS", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkIrisTls = new ModernToggleSwitch { Name = "irisUseTls", Text = "BETA: IRIS-Verbindung mit TLS", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkUploadToZzzSoftware = new ModernToggleSwitch { Name = "uploadToZzzSoftware", Text = "Upload nach zzzSoftware", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkRestartPosAfterUpdate = new ModernToggleSwitch { Name = "restartPosAfterUpdate", Text = "POS neustart für update", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkForceUpdate = new ModernToggleSwitch();
@@ -436,14 +436,14 @@ public sealed partial class MainForm : Form
         chkForceUpdate.Anchor = AnchorStyles.Left;
         chkForceUpdate.Margin = new Padding(3);
         chkForceUpdate.Checked = false;
-        chkSkipLocalPackageCopy.Text = "LOKAL / zzzSoftware - Keine Paketkopie in Zielpfad";
+        chkSkipLocalPackageCopy.Text = "Paketdateien direkt verwenden – ohne zusätzliche Kopie";
         chkSkipLocalPackageCopy.AutoSize = true;
         chkSkipLocalPackageCopy.Anchor = AnchorStyles.Left;
-        chkSkipZipTransfer.Text = "REMOTE - Lokale Datei am Client verwenden ohne upload";
+        chkSkipZipTransfer.Text = "Remote: vorhandene Update-Dateien auf dem Zielrechner verwenden";
         chkSkipZipTransfer.AutoSize = true;
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
         chkSkipZipTransfer.Anchor = AnchorStyles.Left;
-        chkScanOnStartup.Text = "Versionen bei Programmstart prüfen";
+        chkScanOnStartup.Text = "Version beim Programmstart prüfen";
         chkScanOnStartup.AutoSize = true;
         chkScanOnStartup.Anchor = AnchorStyles.Left;
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
@@ -460,13 +460,13 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(chkSkipZipTransfer, "REMOTE: ZIP- und MSI-Pakete müssen bereits im Zielpfad des Clients liegen. Dateiname und SHA256 müssen zur gewählten Quelle passen. Die Einstellung betrifft keine lokalen Updates.");
         tips.SetToolTip(chkIrisTls, "TLS für den MSI-Upload zu erkannten IRIS-Instanzen auf lokalen und entfernten Hosts verwenden. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkUploadToZzzSoftware, "Ausgewählte MSI-Pakete nach den Updates in zzzSoftware hochladen. Standard: eingeschaltet. In der Konfiguration speicherbar.");
-        tips.SetToolTip(chkRestartPosAfterUpdate, "KassaPreh nach den Updates und erfolgreichen Datenbank-Uploads auf den ausgewählten Remote-Geräten starten / neu starten. LOKAL wird ausgeschlossen. Bei ausgeschaltetem Upload erfolgt der Neustart nach den Updates. Nicht gespeicherte POS-Eingaben können verloren gehen.");
+        tips.SetToolTip(chkRestartPosAfterUpdate, "Nur ältere Remote-POS nach einem neu gespeicherten POS-MSI in zzzSoftware starten / neu starten. Kein Neustart ohne POS-Paket, bei gleicher/neuerer POS-Version oder wenn das POS-MSI bereits in zzzSoftware vorhanden ist. LOKAL wird ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
         executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
-        var settingsContent = Stack(FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkRestartPosAfterUpdate, chkScanOnStartup, chkSkipLocalPackageCopy, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
+        var settingsContent = Stack(chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
+            login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkRestartPosAfterUpdate, chkSkipLocalPackageCopy, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(0, 0, 0, 12);
@@ -892,7 +892,7 @@ public sealed partial class MainForm : Form
     private HostState[] SelectedHosts() => ExecutionHosts().Where(host => host.IsSelected).ToArray();
 
     private HostState[] UpdateTargets(bool onlyFailed) => SelectedHosts()
-        .Where(host => onlyFailed ? host.CanRetryUpdate : host.Scanned).ToArray();
+        .Where(host => MatchesSelectedSoftware(host) || IsDatabaseUploadServer(host)).Where(host => onlyFailed ? host.CanRetryUpdate : host.Scanned).ToArray();
 
     private void SetAllHostsSelected(bool selected)
     {
@@ -1024,7 +1024,7 @@ public sealed partial class MainForm : Form
             return;
         }
         if (MessageBox.Show(this,
-            $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'REMOTE - Lokale Datei am Client verwenden ohne upload' aktiviert ist.",
+            $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'Remote: vorhandene Update-Dateien auf dem Zielrechner verwenden' aktiviert ist.",
             "Dateiübertragung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
         CaptureCredentials();
@@ -1278,7 +1278,8 @@ public sealed partial class MainForm : Form
     private static UpdateComponents AllowedUpdateComponents(HostState host) => host.IsLocal ? UpdateComponents.All : UpdateComponents.ZipServices;
 
     private UpdateComponents ComponentsForUpdate(HostState host, bool onlyFailed) =>
-        (onlyFailed && host.Updates is { } state ? state.Pending : SelectedUpdateComponents()) & AllowedUpdateComponents(host);
+        (onlyFailed && host.Updates is { } state ? state.Pending : SelectedUpdateComponents()) &
+        AllowedUpdateComponents(host) & (host.IsLocal ? UpdateComponents.All : host.InstalledComponents ?? UpdateComponents.All);
 
     private bool ValidateCredentials()
     {
@@ -1307,6 +1308,8 @@ public sealed partial class MainForm : Form
 
     private async Task RunScanPhaseAsync(HostState[] targets)
     {
+        targets = targets.Where(host => MatchesSelectedSoftware(host) || IsDatabaseUploadServer(host)).ToArray();
+        if (targets.Length == 0) return;
         CaptureCredentials();
         int parallelism = (int)nScan.Value;
         await InBatchAsync(targets, async ct =>
@@ -1372,6 +1375,7 @@ public sealed partial class MainForm : Form
             }
         }
         if (selected.Any(host => !host.IsLocal) && !ValidateCredentials()) return;
+        if (!EnsureLocalInstallationAccess(selected, onlyFailed)) return;
         if (!IsUpdatePathValid(selected))
         {
             MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad für die Update-Dateien eingeben, z. B. C:\\install\\Novacom.",
@@ -1395,11 +1399,12 @@ public sealed partial class MainForm : Form
         CaptureCredentials();
         activeDatabaseTargets = null;
         lastUpdateForce = activeForceUpdate;
+        Guid updateRunId = Guid.NewGuid();
         foreach (HostState host in selected)
         {
             UpdateComponents components = ComponentsForUpdate(host, onlyFailed);
             if (!onlyFailed || host.Updates is null)
-                Mark(host, h => h.Updates = new HostUpdateState(components));
+                Mark(host, h => h.Updates = new HostUpdateState(components) { RunId = updateRunId, PosVersionBeforeUpdate = h.PosVersion });
             else
                 Mark(host, h => h.Updates!.RestrictTo(AllowedUpdateComponents(h)));
         }
@@ -1425,6 +1430,7 @@ public sealed partial class MainForm : Form
                 throw;
             }
             Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; LOKAL: {(activeSkipLocalPackageCopy ? "direkte Quellen" : activeLocalInstallPath)}; Remote-Zielpfad: {activeRemoteInstallPath}; Remote-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
+            Log("SYSTEM", $"zzzSoftware: {(activeUploadToZzzSoftware ? "aktiviert" : "deaktiviert")}; {msiPackages.Count} MSI-Paket(e) ausgewählt; POS-Neustart: {(activeRestartPosAfterUpdate ? "nur für ältere POS nach neuem POS-MSI-Upload" : "deaktiviert")}");
             ResetProgress(selected.Length);
             var ready = selected;
             if (!activeSkipZipTransfer)
@@ -1432,7 +1438,6 @@ public sealed partial class MainForm : Form
                 ready = await PrepareUploadDirectoriesAsync(selected, true, (host, error) =>
                 {
                     Mark(host, h => { h.Phase = "Uploadvorbereitung fehlgeschlagen"; h.Error = error; h.Result = "Fehler"; h.UpdateFailed = true; });
-                    CountCompleted();
                 }, ct);
                 if (ready is null) return;
             }
@@ -1440,8 +1445,8 @@ public sealed partial class MainForm : Form
             {
                 await ExecuteHostUpdateAsync(host, token);
             }, ct);
-            await CompleteUpdateRunAsync(ready, ct);
-            foreach (HostState host in ready) CountCompleted();
+            await CompleteUpdateRunAsync(selected, ct);
+            foreach (HostState host in selected) CountCompleted();
             Log("SYSTEM", "Update-Durchlauf abgeschlossen.");
         });
     }
@@ -1449,7 +1454,7 @@ public sealed partial class MainForm : Form
     private async Task UpdateHostAsync(HostState host, CancellationToken token, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         HostUpdateState state = host.Updates ?? throw new InvalidOperationException("Update-Komponenten wurden nicht vorbereitet.");
-        state.RestrictTo(AllowedUpdateComponents(host));
+        state.RestrictTo(AllowedUpdateComponents(host) & (host.IsLocal ? UpdateComponents.All : host.InstalledComponents ?? UpdateComponents.All));
         delay ??= (duration, ct) => Task.Delay(duration, ct);
         try
         {
@@ -1552,8 +1557,10 @@ public sealed partial class MainForm : Form
                         : state.Attempted == UpdateComponents.None && state.DatabaseUploadCompleted
                         ? (state.Changed ? "zzzSoftware-Upload abgeschlossen" : "zzzSoftware geprüft – kein Upload erforderlich")
                         : state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
-                    if (state.Changed) h.SetProgress(100);
                 }
+                h.Phase = string.Join(" · ", new[] { h.Phase, state.DatabaseUploadMessage, state.PosRestartSkipMessage }
+                    .Where(message => message.Length > 0).Distinct());
+                if (!h.UpdateFailed && state.Changed) h.SetProgress(100);
             });
     }
 
@@ -1569,7 +1576,7 @@ public sealed partial class MainForm : Form
         // Do not repeatedly authenticate while credentials are being edited.
         if (txtUser.Focused || txtPassword.Focused || nHttpsPort.ContainsFocus || (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)) return;
 
-        var targets = SelectedRemoteHosts().ToDictionary(h => h.Host, h => (Host: h, Revision: h.ConnectionState.Revision), StringComparer.OrdinalIgnoreCase);
+        var targets = SelectedRemoteHosts().Where(host => MatchesSelectedSoftware(host) || IsDatabaseUploadServer(host)).ToDictionary(h => h.Host, h => (Host: h, Revision: h.ConnectionState.Revision), StringComparer.OrdinalIgnoreCase);
         if (targets.Count == 0) return;
         var received = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
         int generation = connectionGeneration;
@@ -1639,6 +1646,7 @@ public sealed partial class MainForm : Form
     private async Task<HostState[]?> PrepareUploadDirectoriesAsync(HostState[] targets, bool forUpdate,
         Action<HostState, string> failed, CancellationToken ct)
     {
+        if (forUpdate) targets = targets.Where(MatchesSelectedSoftware).ToArray();
         var checks = new ConcurrentDictionary<HostState, WorkerResult>();
         foreach (HostState local in targets.Where(h => h.IsLocal)) checks[local] = new WorkerResult { Success = true, UploadRequired = false };
         void Progress(HostState host, WorkerEvent ev)
@@ -1788,7 +1796,7 @@ public sealed partial class MainForm : Form
         h.DotNet48Installed = result.DotNet48Installed;
         ReadMsiInventory(h, result);
         h.Services = result.Services.ToList();
-        if (result.Success) ReadVersions(h);
+        if (result.Success) { ReadVersions(h); h.InstalledComponents = InstalledComponents(h); h.HasIrisInstances = result.HasIrisInstances; }
         else { h.Payment = "–"; h.Fiscal = "–"; h.ServerSuite = "–"; }
     }
 
@@ -1959,7 +1967,7 @@ public sealed partial class MainForm : Form
         btnScan.Enabled = idle && selected.Length > 0;
         btnDatabaseCheck.Visible = selected.Length > 0;
         btnDatabaseCheck.Enabled = idle && selected.Length > 0;
-        btnUpdate.Enabled = idle && selected.Any(h => h.Scanned);
+        btnUpdate.Enabled = idle && UpdateTargets(false).Length > 0;
         btnTransfer.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnSendCommand.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnRetry.Enabled = idle && selected.Any(h => h.CanRetryUpdate);

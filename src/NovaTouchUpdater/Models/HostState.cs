@@ -47,6 +47,8 @@ internal sealed class HostState
     public string Error { get; set; } = "";
     public int Attempt { get; set; }
     public bool Scanned { get; set; }
+    internal UpdateComponents? InstalledComponents { get; set; }
+    internal bool? HasIrisInstances { get; set; }
     public bool UpdateFailed { get; set; }
     public HostUpdateState? Updates { get; set; }
     // Command results preserve the last scan/update retry eligibility. A reboot

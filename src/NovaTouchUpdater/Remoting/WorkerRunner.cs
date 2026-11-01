@@ -113,6 +113,8 @@ public sealed class WorkerEvent
 
 public sealed class WorkerResult
 {
+    public string[] DatabaseUploadedKinds { get; set; } = [];
+    public bool? HasIrisInstances { get; set; }
     public string[] CompletedServiceNames { get; set; } = [];
     public string Event { get; set; } = "result";
     public bool Success { get; set; }

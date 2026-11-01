@@ -518,6 +518,7 @@ function PublishSelectedSoftwarePackages([object[]]$Packages) {
 
 function InvokeSoftwareDatabaseNamespaceUpload($Provider, $Destination, [object[]]$Resolved) {
     $connection = $null; $transaction = $null; $uploaded = 0; $skipped = 0
+    $uploadedKinds = @()
     try {
         # Connections belong to this namespace's runspace and are never shared.
         $connection = OpenSoftwareDatabase $Provider $Destination.Definition $Destination.Namespace
@@ -533,10 +534,11 @@ function InvokeSoftwareDatabaseNamespaceUpload($Provider, $Destination, [object[
             Progress 'zzzSoftware' ($Destination.Key + ' · ' + $msi.Package.ProductName + ' ' + $msi.Package.ProductVersion) 0
             WriteSoftwareDatabaseMsi $Provider $connection $msi $transaction $Destination.Key
             $uploaded++
+            $uploadedKinds += [string]$msi.Package.Kind
         }
         $transaction.Commit()
         Progress 'zzzSoftware' ($Destination.Key + ' · alle ausgewählten MSIs gespeichert') 100
-        return [pscustomobject]@{ Key=$Destination.Key; Success=$true; Changed=($uploaded -gt 0); Uploaded=$uploaded; Skipped=$skipped; Error='' }
+        return [pscustomobject]@{ Key=$Destination.Key; Success=$true; Changed=($uploaded -gt 0); Uploaded=$uploaded; UploadedKinds=@($uploadedKinds | Sort-Object -Unique); Skipped=$skipped; Error='' }
     } catch {
         $secrets = @($Destination.Definition.User, $Destination.Definition.Password)
         $detail = GetSoftwareDatabaseError $_ $secrets
@@ -617,6 +619,7 @@ function InvokeSoftwareDatabaseNamespaceUploads($Provider, [object[]]$Destinatio
 # Targets come from the same local registry/active-CPF inventory as Database
 # Check. Never use an application's SERVER setting as an upload destination.
 function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Targets, [string]$ProviderDirectory, [int]$Parallelism = 8) {
+    $script:databaseUploadedKinds = @()
     if ($Packages.Count -eq 0) { throw 'Keine MSI-Pakete für zzzSoftware ausgewählt.' }
     if ($Targets.Count -eq 0) { throw 'Keine lokalen IRIS-Instanzen für zzzSoftware übergeben.' }
     if ([string]::IsNullOrWhiteSpace($ProviderDirectory) -or -not [IO.Path]::IsPathRooted($ProviderDirectory)) {
@@ -668,12 +671,14 @@ function PublishLocalIrisSoftwarePackages([object[]]$Packages, [object[]]$Target
         $outcomes = @($preflightFailures.ToArray())
         if ($eligible.Count -gt 0) { $outcomes += @(InvokeSoftwareDatabaseNamespaceUploads $provider @($eligible) $resolved $Parallelism) }
         $count = @($outcomes | Where-Object Success).Count
+        $uploadedKinds = @($outcomes | Where-Object Success | ForEach-Object { $_.UploadedKinds } | Sort-Object -Unique)
+        $script:databaseUploadedKinds = $uploadedKinds
         $failed = @($outcomes | Where-Object { -not $_.Success } | Sort-Object Key)
         if ($failed.Count -gt 0) {
             throw ("$count Namespace(s) erfolgreich, $($failed.Count) fehlgeschlagen. Datenbank-Upload unvollständig. " + (($failed | ForEach-Object Error) -join ' || '))
         }
         $changed = @($outcomes | Where-Object Changed).Count -gt 0
-        Emit @{ Event='result'; Success=$true; Changed=$changed; Skipped=(-not $changed); Message=("$count Namespace(s) geprüft; " + ($outcomes | Measure-Object Uploaded -Sum).Sum + ' MSI-Upload(s), ' + ($outcomes | Measure-Object Skipped -Sum).Sum + " gleich/neuer; $skipped ohne zzzSoftware übersprungen."); Services=@() }
+        Emit @{ Event='result'; Success=$true; Changed=$changed; DatabaseUploadedKinds=$uploadedKinds; Skipped=(-not $changed); Message=("$count Namespace(s) geprüft; " + ($outcomes | Measure-Object Uploaded -Sum).Sum + ' MSI-Upload(s), ' + ($outcomes | Measure-Object Skipped -Sum).Sum + " gleich/neuer; $skipped ohne zzzSoftware übersprungen."); Services=@() }
     } finally {
         if ($workRoot.StartsWith($tempBase + '\', [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($workRoot) -match '^database-msi-[0-9a-f]{32}$') {
             Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue

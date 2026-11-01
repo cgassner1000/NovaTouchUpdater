@@ -198,6 +198,7 @@ internal static partial class Program
             if (request.Host == "PC-C.invalid") return Task.FromResult(new WorkerResult { Success=false, Error="Offline test fixture" });
             if (request.Action == "stage-packages" && FailStaging) return Task.FromResult(new WorkerResult { Success=false, Error="Copy fixture failure" });
             return Task.FromResult(new WorkerResult { Success=true, Changed=request.Action == "stage-packages", Skipped=request.Action == "update" && !Installed,
+                Services=Installed ? [new() { Kind="payment", Name="nt.payment", ProductVersion="1.0.0", State="Running" }] : [],
                 NtcVersion=Installed ? "9.0.0" : "Nicht installiert",
                 InstalledPrograms=Installed ? [new() { Kind="ntc", DisplayName="NovaTouch Control", Version="9.0.0" }] : [] });
         }

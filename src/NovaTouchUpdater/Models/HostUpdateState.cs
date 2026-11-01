@@ -11,11 +11,17 @@ internal enum UpdateComponents
 // Only verified successes leave Pending; scans and commands do not reset it.
 internal sealed class HostUpdateState(UpdateComponents components)
 {
+    internal Guid RunId { get; init; } = Guid.NewGuid();
     internal UpdateComponents Pending { get; private set; } = components;
     internal UpdateComponents Attempted { get; private set; }
     internal bool Changed { get; private set; }
     internal bool AllSkipped { get; private set; } = true;
     internal bool DatabaseUploadCompleted { get; set; }
+    internal bool DatabaseUploadChanged { get; private set; }
+    internal bool SuccessfulPosUploadInRun { get; set; }
+    internal string PosVersionBeforeUpdate { get; set; } = "";
+    internal string DatabaseUploadMessage { get; set; } = "";
+    internal string PosRestartSkipMessage { get; set; } = "";
     internal bool PosRestartCompleted { get; set; }
     internal string PosRestartMessage { get; private set; } = "";
     internal string DatabaseUploadError { get; set; } = "";
@@ -29,13 +35,22 @@ internal sealed class HostUpdateState(UpdateComponents components)
         Changed |= !result.Skipped;
         AllSkipped &= result.Skipped;
     }
-    internal void CompleteDatabaseUpload(bool changed)
+    internal void CompleteDatabaseUpload(bool changed, string message = "")
     {
         DatabaseUploadCompleted = true;
+        DatabaseUploadChanged |= changed;
+        DatabaseUploadMessage = message.Length > 0 ? message : changed ? "zzzSoftware-Upload abgeschlossen" : "zzzSoftware geprüft – kein Upload erforderlich";
         DatabaseUploadError = "";
         Changed |= changed;
         AllSkipped &= !changed;
     }
+
+    internal void ResetDatabaseUpload()
+    {
+        DatabaseUploadCompleted = DatabaseUploadChanged = SuccessfulPosUploadInRun = PosRestartCompleted = false;
+        DatabaseUploadError = DatabaseUploadMessage = PosRestartError = PosRestartSkipMessage = "";
+    }
+    internal void RecordDatabaseUploads(IEnumerable<string> kinds) => SuccessfulPosUploadInRun |= kinds.Contains("pos", StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<UpdateComponents, string> errors = [];
 
     internal static IEnumerable<UpdateComponents> Each(UpdateComponents components) =>

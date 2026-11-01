@@ -56,6 +56,7 @@ try {
     try { PublishStreamedSoftwarePackages @($package) $plan $fixture 2 }
     finally { [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds=0; [Console]::SetIn($previousInput) }
     Assert ($script:result.Success -and $script:result.Changed -and [SoftwareDatabaseFixture.Database]::Entries.Count -eq 5 -and [SoftwareDatabaseFixture.Database]::PeakTransactions -eq 2) 'bounded WinRM streams feed independent namespace transactions in multiple waves using the configured concurrency'
+    Assert (($script:result.DatabaseUploadedKinds -join ',') -eq 'ntc') 'streamed upload reports the actual committed product instead of inferring POS from Changed'
     foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) {
         Assert ([Convert]::ToBase64String($entry.Bytes) -eq [Convert]::ToBase64String($bytes)) 'every namespace receives the complete original MSI bytes through the stream'
     }
@@ -71,6 +72,7 @@ try {
     try { ExpectFailure { PublishStreamedSoftwarePackages @($package) @($plan[0]) $fixture 1 } 'an interrupted WinRM stream fails and rolls the namespace back instead of saving partial MSI data' }
     finally { [Console]::SetIn($previousInput) }
     Assert ([SoftwareDatabaseFixture.Database]::ActiveTransactions -eq 0 -and [SoftwareDatabaseFixture.Database]::Entries.Count -eq 5) 'stream failures release namespace transactions and preserve existing setups'
+    Assert (@($script:databaseUploadedKinds).Count -eq 0) 'failed stream reports no committed package proof'
 
     # Real child process and native stdout/stdin relay, without provider/DB access.
     $child=Join-Path $fixture 'relay.ps1'

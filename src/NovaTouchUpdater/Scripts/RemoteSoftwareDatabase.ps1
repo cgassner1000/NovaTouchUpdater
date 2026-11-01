@@ -150,6 +150,7 @@ function RemoveSoftwareDatabaseRemoteStage {
 }
 
 function PublishStreamedSoftwarePackages([object[]]$Packages, [object[]]$Plan, [string]$ProviderDirectory, [int]$Parallelism) {
+    $script:databaseUploadedKinds = @()
     InitializeSoftwareDatabaseStreaming
     $provider = InitializeSoftwareDatabaseProvider @($ProviderDirectory) @('IRIS')
     $applications = @{ ntc='Nov.WaWi'; pos='Nov.NT.POS'; ntv='Nov.Gutscheinverwaltung'; oman='Nov.Oman.SOL.Config' }
@@ -172,13 +173,16 @@ function PublishStreamedSoftwarePackages([object[]]$Packages, [object[]]$Plan, [
         $pump = [NovaTouch.DatabaseStreaming.Pump]::new([NovaTouch.DatabaseStreaming.Source[]]@($resolved.StreamSource), [long[]]@($resolved | ForEach-Object { $_.Package.Length }), [Console]::In)
         try {
             $outcomes += @(InvokeSoftwareDatabaseNamespaceUploads $provider $wave $resolved $limit)
+            $script:databaseUploadedKinds = @($outcomes | Where-Object Success | ForEach-Object { $_.UploadedKinds } | Sort-Object -Unique)
             $pump.Complete()
         } finally { $pump.Dispose() }
     }
+    $uploadedKinds = @($outcomes | Where-Object Success | ForEach-Object { $_.UploadedKinds } | Sort-Object -Unique)
+    $script:databaseUploadedKinds = $uploadedKinds
     $failed = @($outcomes | Where-Object { -not $_.Success } | Sort-Object Key)
     if ($failed.Count -gt 0) { throw (($failed | ForEach-Object Error) -join ' || ') }
     $changed = @($outcomes | Where-Object Changed).Count -gt 0
-    Emit @{ Event='result'; Success=$true; Changed=$changed; Skipped=(-not $changed); Message='MSI-Daten über WinRM gestreamt und in zzzSoftware geprüft/gespeichert.'; Services=@() }
+    Emit @{ Event='result'; Success=$true; Changed=$changed; DatabaseUploadedKinds=$uploadedKinds; Skipped=(-not $changed); Message='MSI-Daten über WinRM gestreamt und in zzzSoftware geprüft/gespeichert.'; Services=@() }
 }
 
 function InvokeSoftwareDatabaseChildOperation($Session, [string]$Worker, $Request, [object[]]$Resolved = @(), [object[]]$Plan = @()) {
@@ -200,7 +204,10 @@ function InvokeSoftwareDatabaseChildOperation($Session, [string]$Worker, $Reques
                             $chunk = [Convert]::ToBase64String($buffer,0,$read)
                             foreach ($event in @(InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareDatabaseChild} -ArgumentList $chunk -ErrorAction Stop)) {
                                 if ($event.Event -eq 'progress') { Progress $event.Phase $event.Message $event.ProgressPercent }
-                                elseif ($event.Event -eq 'result') { if (-not $event.Success) { throw [string]$event.Error }; $result = $event }
+                                elseif ($event.Event -eq 'result') {
+                                    if ($null -ne $event.PSObject.Properties['DatabaseUploadedKinds']) { $script:databaseUploadedKinds = @($event.DatabaseUploadedKinds) }
+                                    if (-not $event.Success) { throw [string]$event.Error }; $result = $event
+                                }
                             }
                         }
                     } finally { $file.Dispose() }
@@ -212,6 +219,7 @@ function InvokeSoftwareDatabaseChildOperation($Session, [string]$Worker, $Reques
             elseif ($event.Event -eq 'result') { $result = $event }
         }
         if ($null -eq $result) { throw 'Keine gültige Rückmeldung des Datenbank-Workers auf dem Zielrechner.' }
+        if ($null -ne $result.PSObject.Properties['DatabaseUploadedKinds']) { $script:databaseUploadedKinds = @($result.DatabaseUploadedKinds) }
         if (-not $result.Success) { throw [string]$result.Error }
         return $result
     } finally { InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareDatabaseChild} -ArgumentList '', $false, $true -ErrorAction SilentlyContinue | Out-Null }

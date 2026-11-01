@@ -15,7 +15,8 @@ internal static partial class Program
             Application.EnableVisualStyles();
             if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
-            if (args.Contains("--updates")) { UpdateRetryTests(); UpdateFinalizationTests(); return 0; }
+            if (args.Contains("--updates")) { UpdateRetryTests(); UpdateFinalizationTests(); UpdateTargetingTests(); return 0; }
+            if (args.Contains("--targeting")) { UpdateTargetingTests(); return 0; }
             if (args.Contains("--staging")) { PackageCopyOptionsTests(); PackageStagingTests(); PackageHashPreparationTests(); return 0; }
             if (args.Contains("--local")) { Complete(PackageCatalogTests()); PackageSelectionTests(); LocalExecutionTests(); RemotePackageRestrictionTests(); return 0; }
             if (args.Contains("--suite-setup")) { Complete(ServerSuiteSetupTests()); return 0; }

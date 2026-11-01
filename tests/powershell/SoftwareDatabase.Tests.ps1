@@ -153,6 +153,7 @@ try {
     Assert ($script:lastProviderDirectories.Count -eq 1 -and $script:lastProviderDirectories[0] -eq $fixture -and
         $script:lastProviderFamilies.Count -eq 1 -and $script:lastProviderFamilies[0] -eq 'IRIS') 'local publication loads only the supplied bundled IRIS provider directory, independently of installed drivers'
     Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and $script:results[0].Success -and $script:serviceQueries -eq $queriesBefore) 'local CPF targets upload all selected MSIs into every eligible namespace on both instance ports without NTC/POS queries'
+    Assert (($script:results[0].DatabaseUploadedKinds -join ',') -eq 'ntc,ntv,oman,pos') 'only committed MSI kinds are reported to the POS restart gate'
     Assert (-not [SoftwareDatabaseFixture.Database]::Events.Exists([Predicate[string]]{ param($line) $line.Contains('/%') }) -and
         [SoftwareDatabaseFixture.Database]::Events -contains 'commit:127.0.0.1:1972/USER') 'local upload never connects to percent-prefixed namespaces but includes USER, deduplicates names and uses only loopback'
     Assert ($script:progress.Exists([Predicate[string]]{ param($line) $line.Contains('/EMPTY') -and $line.Contains('übersprungen') })) 'a namespace without zzzSoftware is explicitly reported and skipped'
@@ -160,6 +161,11 @@ try {
     $script:results.Clear()
     PublishLocalIrisSoftwarePackages $selected $targets $fixture
     Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and $script:results[0].Skipped -and -not $script:results[0].Changed) 'equal versions skip every MSI without replacing existing setups'
+    Assert ($script:results[0].DatabaseUploadedKinds.Count -eq 0) 'equal database versions provide no POS upload proof'
+    foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) { if ($entry.Application -ne 'Nov.NT.POS') { $entry.Version='0.0.0' } }
+    $script:results.Clear()
+    PublishLocalIrisSoftwarePackages $selected $targets $fixture
+    Assert ($script:results[0].Changed -and $script:results[0].DatabaseUploadedKinds -contains 'ntc' -and $script:results[0].DatabaseUploadedKinds -notcontains 'pos') 'other uploaded MSIs do not falsely report a new POS upload'
     foreach ($entry in [SoftwareDatabaseFixture.Database]::Entries) { $entry.Version = '9999.0.0' }
     $script:results.Clear()
     PublishLocalIrisSoftwarePackages $selected $targets $fixture
@@ -188,6 +194,7 @@ try {
         $newEvents = @([SoftwareDatabaseFixture.Database]::Events | Select-Object -Skip $eventsBefore)
         Assert ([SoftwareDatabaseFixture.Database]::Entries.Count -eq 12 -and @($newEvents | Where-Object { $_ -like 'commit:*' }).Count -eq 0 -and
             @($newEvents | Where-Object { $_ -like 'rollback:*' }).Count -eq 3 -and @($newEvents | Where-Object { $_ -like 'begin:*' }).Count -eq 3) "$operation failures roll back each affected namespace without replacing old packages"
+        Assert (@($script:databaseUploadedKinds).Count -eq 0) 'rolled-back POS packages cannot authorize restart'
     }
     [SoftwareDatabaseFixture.Database]::FailStreamOperation = ''; [SoftwareDatabaseFixture.Database]::FailObjectSave = $false
     $script:progress.Clear(); [SoftwareDatabaseFixture.Database]::PeakTransactions = 0
