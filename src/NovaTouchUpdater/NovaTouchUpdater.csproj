@@ -14,6 +14,7 @@
     <UpdaterBuildNumber Condition="'$(UPDATER_BUILD_NUMBER)' != ''">$(UPDATER_BUILD_NUMBER)</UpdaterBuildNumber>
     <Version>$(UpdaterBaseVersion).$(UpdaterBuildNumber)</Version>
     <ApplicationIcon>Assets\NovaTouchUpdater.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
     <!-- The upload worker runs in Windows PowerShell/.NET Framework. Embed the
