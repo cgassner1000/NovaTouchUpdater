@@ -33,6 +33,7 @@ Das Passwort wird beim Speichern mit **Windows DPAPI / LocalMachine** verschlüs
   "UseSsl": false,
   "ScanOnStartup": true,
   "SkipLocalPackageCopy": false,
+  "SkipRemotePackageCopy": false,
   "SkipZipTransfer": false,
   "HttpsPort": 5986,
   "ExecutionMode": "Remote",
@@ -118,12 +119,13 @@ Links neben **Remote-Hosts** steht die Box **Installations-Pakete**. Dort einen 
 
 Der orange Kippschalter **Bei Programmstart prüfen** unter **Einstellungen** steuert die automatische Versionsprüfung nach dem Laden der Config und der Softwarepakete. Die Einstellung wird mit **Konfiguration speichern** als `ScanOnStartup` gesichert. Standardmäßig ist sie eingeschaltet, auch bei älteren Configs ohne dieses Feld. Bei `false` bleibt die Versionsprüfung manuell über **Prüfen** verfügbar. Die Startprüfung berücksichtigt den Ausführungsmodus und die ausgewählten Hosts; nach erfolgreicher Prüfung ist **2. Updates starten** verfügbar. Ohne geladene Config startet keine automatische Versionsprüfung.
 
-Die beiden Kopieroptionen unter **Einstellungen** werden unabhängig gespeichert:
+Die drei Kopieroptionen unter **Einstellungen** werden unabhängig gespeichert:
 
 - **Paketdateien direkt verwenden – ohne zusätzliche Kopie** (`SkipLocalPackageCopy`): Lokal gewählte Pakete direkt aus ihren ursprünglichen Speicherorten verwenden. Einzelne MSIs starten am Quellort mit ihren CAB-Dateien; ZIPs werden temporär entpackt. Für den Remote-Datenbank-Upload werden MSI-Daten bei aktivierter Option direkt über WinRM gestreamt, ohne MSI-Dateien auf dem Server abzulegen. Diese Streaming-Option hat beim Datenbank-Upload Vorrang vor „Remote: vorhandene Update-Dateien auf dem Zielrechner verwenden“. SHA256 und MSI-Metadaten werden weiterhin geprüft.
+- **REMOTE: Paketdateien direkt verwenden - keine zusätzliche Kopie** (`SkipRemotePackageCopy`): Remote-Updates normal installieren, Pakete jedoch nur temporär auf dem Client bereitstellen und anschließend entfernen, auch bei Fehlern. Der eingestellte Zielordner bleibt unberührt; seine Bereinigungsabfrage entfällt. MSI-Pakete für zzzSoftware werden direkt über WinRM gestreamt. Dieser Schalter hat Vorrang vor der Verwendung vorhandener Dateien im Zielordner.
 - **Remote: vorhandene Update-Dateien auf dem Zielrechner verwenden** (`SkipZipTransfer`): Vorhandene ZIPs, MSIs und CAB-Dateien im Zielpfad des jeweiligen Clients verwenden. Sie müssen zur Auswahl auf dem Updater-PC passen; fehlende oder abweichende Dateien führen zur Fehlermeldung statt zum Upload.
 
-Der lokale Schalter steht oberhalb des Remote-Schalters. Ein **leerer Zielpfad** bleibt in der Config erhalten: Lokal werden dann auch bei ausgeschaltetem Kopierschalter direkt die Quellen verwendet; Remote-Updates und manuelle Remote-Uploads verwenden stattdessen **`C:\install\Novacom`**. Bei nicht leerem Zielpfad und ausgeschaltetem lokalen Schalter bleibt die zusätzliche lokale Paketablage aktiv. Beide Schalter sind in älteren Configs ohne diese Felder standardmäßig ausgeschaltet.
+Der lokale Schalter steht oberhalb der beiden Remote-Schalter; die temporäre Remote-Verwendung steht vor der Verwendung vorhandener Clientdateien. Ein **leerer Zielpfad** bleibt in der Config erhalten: Lokal werden dann auch bei ausgeschaltetem Kopierschalter direkt die Quellen verwendet; Remote-Updates ohne temporären Modus und manuelle Remote-Uploads verwenden stattdessen **`C:\install\Novacom`**. Bei nicht leerem Zielpfad und ausgeschaltetem lokalen Schalter bleibt die zusätzliche lokale Paketablage aktiv. Alle drei Schalter sind in älteren Configs ohne diese Felder standardmäßig ausgeschaltet.
 
 | Paket | Erkennung |
 | --- | --- |

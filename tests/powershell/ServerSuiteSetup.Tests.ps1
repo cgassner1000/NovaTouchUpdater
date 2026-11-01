@@ -189,4 +189,24 @@ Assert ($result.Success -and $copyCount -eq 0) 'remote no-upload mode uses match
 NewState; $request.RemoteInstallPath=Join-Path $fixture 'missing target'
 $rejected=$false; try { InvokeServerSuiteSetupUpdate $request 'remote' $records $records | Out-Null } catch { $rejected=$true }
 Assert ($rejected -and $copyCount -eq 0 -and $trace.Count -eq 0) 'remote no-upload missing package fails before stops'
+
+$workerAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $TestScriptsRoot 'RemoteWorker.ps1'), [ref]$null, [ref]$null)
+foreach ($functionName in @('NewRemotePackageStage','RemoveRemotePackageStage')) {
+    $definition=$workerAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName}, $true)
+    . ([scriptblock]::Create($definition.Extent.Text))
+}
+NewState
+$configuredTarget=Join-Path $fixture 'configured-target'
+[void][IO.Directory]::CreateDirectory($configuredTarget)
+[IO.File]::WriteAllText((Join-Path $configuredTarget 'keep.txt'), 'preserve configured target')
+$temporary=NewRemotePackageStage 'remote'
+try {
+    $request.RemoteInstallPath=$temporary.Path; $request.SkipZipTransfer=$false
+    $script:copiedSetup=Join-Path $temporary.Path ([IO.Path]::GetFileName($setup))
+    $result=InvokeServerSuiteSetupUpdate $request 'remote' $records $records
+    Assert ($result.Success -and $copyCount -eq 1) 'temporary remote setup updates every instance from one temporary copy'
+}
+finally { RemoveRemotePackageStage 'remote' $temporary }
+Assert (-not [IO.Directory]::Exists($temporary.Path)) 'temporary remote setup is removed after installation'
+Assert (@(Get-ChildItem -LiteralPath $configuredTarget).Count -eq 1) 'temporary remote setup leaves the configured target unchanged'
 Write-Host 'Server Suite setup tests passed. No real services, installers or remoting were executed.'

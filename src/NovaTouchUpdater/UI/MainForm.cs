@@ -59,6 +59,7 @@ public sealed partial class MainForm : Form
     private readonly CheckBox chkForceUpdate = new ModernToggleSwitch();
     private readonly CheckBox chkSkipZipTransfer = new ModernToggleSwitch();
     private readonly CheckBox chkSkipLocalPackageCopy = new ModernToggleSwitch();
+    private readonly CheckBox chkSkipRemotePackageCopy = new ModernToggleSwitch();
     private readonly CheckBox chkScanOnStartup = new ModernToggleSwitch { Checked = true };
     private readonly ProgressBar progress = new ModernProgressBar();
     private readonly Button btnImport = Button("Hostliste laden");
@@ -100,6 +101,7 @@ public sealed partial class MainForm : Form
     private string activeLocalInstallPath = DefaultRemoteInstallPath;
     private bool activeSkipZipTransfer;
     private bool activeSkipLocalPackageCopy;
+    private bool activeSkipRemotePackageCopy;
     private bool lastUpdateForce;
 
     public MainForm() : this(preview: false) { }
@@ -221,6 +223,7 @@ public sealed partial class MainForm : Form
         chkRestartPosAfterUpdate.Checked = config.RestartPosAfterUpdate;
         chkScanOnStartup.Checked = config.ScanOnStartup;
         chkSkipLocalPackageCopy.Checked = config.SkipLocalPackageCopy;
+        chkSkipRemotePackageCopy.Checked = config.SkipRemotePackageCopy;
         chkSkipZipTransfer.Checked = config.SkipZipTransfer;
         nHttpsPort.Value = config.HttpsPort;
         softwarePath.Text = config.SoftwarePath ?? "";
@@ -252,7 +255,7 @@ public sealed partial class MainForm : Form
         UploadToZzzSoftware = chkUploadToZzzSoftware.Checked, RestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked,
         SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(),
         ScanOnStartup = chkScanOnStartup.Checked,
-        SkipLocalPackageCopy = chkSkipLocalPackageCopy.Checked, SkipZipTransfer = chkSkipZipTransfer.Checked
+        SkipLocalPackageCopy = chkSkipLocalPackageCopy.Checked, SkipRemotePackageCopy = chkSkipRemotePackageCopy.Checked, SkipZipTransfer = chkSkipZipTransfer.Checked
     };
 
     private void SaveConfig()
@@ -447,6 +450,9 @@ public sealed partial class MainForm : Form
         chkSkipLocalPackageCopy.Text = "Paketdateien direkt verwenden – ohne zusätzliche Kopie";
         chkSkipLocalPackageCopy.AutoSize = true;
         chkSkipLocalPackageCopy.Anchor = AnchorStyles.Left;
+        chkSkipRemotePackageCopy.Text = "REMOTE: Paketdateien direkt verwenden - keine zusätzliche Kopie";
+        chkSkipRemotePackageCopy.AutoSize = true;
+        chkSkipRemotePackageCopy.Anchor = AnchorStyles.Left;
         chkSkipZipTransfer.Text = "Remote: vorhandene Update-Dateien auf dem Zielrechner verwenden";
         chkSkipZipTransfer.AutoSize = true;
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
@@ -460,12 +466,13 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Zum Ergänzen von TrustedHosts sind Administratorrechte erforderlich.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
-        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, lokale Kopieroption, Remote-Uploadoption, Benutzer, Passwort, HTTPS, IRIS-TLS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
+        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, lokale und beide Remote-Paketoptionen, Benutzer, Passwort, HTTPS, IRIS-TLS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
         tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Ablage für Update-Pakete. Leer: LOKAL verwendet die gewählten Quellen direkt; Remote-Hosts verwenden C:\\install\\Novacom. Mit dem lokalen Kopierschalter wird dieser Pfad für lokale Updates nicht verwendet.");
         tips.SetToolTip(chkSkipLocalPackageCopy, "LOKAL verwendet die ausgewählten Pakete ohne zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt. Für zzzSoftware auf Remote-Hosts werden MSI-Daten direkt über WinRM gestreamt. Sonst werden sie zuerst im Zielpfad bereitgestellt. Ein leerer lokaler Zielpfad verwendet ebenfalls direkt die Quellen.");
         tips.SetToolTip(chkSkipZipTransfer, "REMOTE: ZIP- und MSI-Pakete müssen bereits im Zielpfad des Clients liegen. Dateiname und SHA256 müssen zur gewählten Quelle passen. Die Einstellung betrifft keine lokalen Updates.");
+        tips.SetToolTip(chkSkipRemotePackageCopy, "REMOTE: Pakete für die Installation nur temporär auf dem Client bereitstellen und danach entfernen. Der eingestellte Zielordner wird weder befüllt noch bereinigt. MSI-Pakete für zzzSoftware werden über WinRM gestreamt. Hat Vorrang vor der Verwendung vorhandener Update-Dateien.");
         tips.SetToolTip(chkIrisTls, "TLS für den MSI-Upload zu erkannten IRIS-Instanzen auf lokalen und entfernten Hosts verwenden. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkUploadToZzzSoftware, "Ausgewählte MSI-Pakete nach den Updates in zzzSoftware hochladen. Standard: eingeschaltet. In der Konfiguration speicherbar.");
         tips.SetToolTip(chkRestartPosAfterUpdate, "Nur ältere Remote-POS nach einem neu gespeicherten POS-MSI in zzzSoftware starten / neu starten. Kein Neustart ohne POS-Paket, bei gleicher/neuerer POS-Version oder wenn das POS-MSI bereits in zzzSoftware vorhanden ist. LOKAL wird ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen.");
@@ -474,7 +481,7 @@ public sealed partial class MainForm : Form
         executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkRestartPosAfterUpdate, chkSkipLocalPackageCopy, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
+            login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkRestartPosAfterUpdate, chkSkipLocalPackageCopy, chkSkipRemotePackageCopy, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(0, 0, 0, 12);
@@ -718,7 +725,7 @@ public sealed partial class MainForm : Form
             // Even the longest option must remain readable if a vertical scrollbar
             // reduces the available width at very large text sizes.
             int width = main.Padding.Horizontal + configuration.Margin.Horizontal + configuration.Padding.Horizontal
-                + new Control[] { chkSkipLocalPackageCopy, chkSkipZipTransfer, chkIrisTls, chkUploadToZzzSoftware, chkRestartPosAfterUpdate, httpsOptions }
+                + new Control[] { chkSkipLocalPackageCopy, chkSkipRemotePackageCopy, chkSkipZipTransfer, chkIrisTls, chkUploadToZzzSoftware, chkRestartPosAfterUpdate, httpsOptions }
                     .Max(control => control.PreferredSize.Width + control.Margin.Horizontal) + settings.Padding.Horizontal;
             if (main.MinimumSize.Width != width) main.MinimumSize = new Size(width, 0);
         };
@@ -1243,11 +1250,12 @@ public sealed partial class MainForm : Form
         activeRemoteInstallPath = RemoteDestinationPath();
         activeSkipZipTransfer = chkSkipZipTransfer.Checked;
         activeSkipLocalPackageCopy = UseLocalPackageSources;
+        activeSkipRemotePackageCopy = chkSkipRemotePackageCopy.Checked;
         activeDatabaseUploadParallelism = (int)nUpdate.Value;
         activeIrisUseTls = chkIrisTls.Checked;
         activeUploadToZzzSoftware = chkUploadToZzzSoftware.Checked;
         activeRestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked;
-        activeStreamDatabasePackages = chkSkipLocalPackageCopy.Checked;
+        activeStreamDatabasePackages = chkSkipLocalPackageCopy.Checked || activeSkipRemotePackageCopy;
     }
 
     private WorkerRequest Request(string action, HostState host, UpdateComponents components = UpdateComponents.All)
@@ -1260,6 +1268,7 @@ public sealed partial class MainForm : Form
         Username = host.IsLocal ? "" : activeUser, Password = host.IsLocal ? "" : activePassword, UseSsl = !host.IsLocal && activeSsl, HttpsPort = activeHttpsPort, ForceUpdate = activeForceUpdate,
         RemoteInstallPath = host.IsLocal ? activeLocalInstallPath : activeRemoteInstallPath,
         SkipZipTransfer = !host.IsLocal && activeSkipZipTransfer, SkipLocalPackageCopy = host.IsLocal && activeSkipLocalPackageCopy,
+        SkipRemotePackageCopy = !host.IsLocal && activeSkipRemotePackageCopy,
         PaymentZip = (components & UpdateComponents.Payment) != 0 ? paymentZip : "",
         PaymentVersion = (components & UpdateComponents.Payment) != 0 ? paymentVersion : "",
         PaymentSha256 = (components & UpdateComponents.Payment) != 0 ? paymentHash : "",
@@ -1437,7 +1446,7 @@ public sealed partial class MainForm : Form
                     });
                 throw;
             }
-            Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; LOKAL: {(activeSkipLocalPackageCopy ? "direkte Quellen" : activeLocalInstallPath)}; Remote-Zielpfad: {activeRemoteInstallPath}; Remote-Übertragung: {(activeSkipZipTransfer ? "deaktiviert" : "aktiv")}");
+            Log("SYSTEM", $"Update gestartet. Modus: {(activeForceUpdate ? "FORCE" : "Normal")}; Hosts: {selected.Length}; Payment: {paymentVersion}; Fiscal: {fiscalVersion}; Server Suite: {serverSuiteVersion}; LOKAL: {(activeSkipLocalPackageCopy ? "direkte Quellen" : activeLocalInstallPath)}; Remote-Paketablage: {(activeSkipRemotePackageCopy ? "nur temporär" : activeRemoteInstallPath)}; Remote-Übertragung: {(activeSkipZipTransfer && !activeSkipRemotePackageCopy ? "deaktiviert" : "aktiv")}");
             Log("SYSTEM", $"zzzSoftware: {(activeUploadToZzzSoftware ? "aktiviert" : "deaktiviert")}; {msiPackages.Count} MSI-Paket(e) ausgewählt; POS-Neustart: {(activeRestartPosAfterUpdate ? "nur für ältere POS nach neuem POS-MSI-Upload" : "deaktiviert")}");
             ResetProgress(selected.Length);
             var ready = selected;
@@ -1656,13 +1665,14 @@ public sealed partial class MainForm : Form
     {
         if (forUpdate) targets = targets.Where(MatchesSelectedSoftware).ToArray();
         var checks = new ConcurrentDictionary<HostState, WorkerResult>();
-        foreach (HostState local in targets.Where(h => h.IsLocal)) checks[local] = new WorkerResult { Success = true, UploadRequired = false };
+        foreach (HostState host in targets.Where(h => h.IsLocal || (forUpdate && activeSkipRemotePackageCopy)))
+            checks[host] = new WorkerResult { Success = true, UploadRequired = false };
         void Progress(HostState host, WorkerEvent ev)
         {
             Log(host.Host, ev.Phase + ": " + ev.Message);
             Mark(host, h => h.ApplyProgress(ev));
         }
-        await Parallel.ForEachAsync(targets.Where(h => !h.IsLocal),
+        await Parallel.ForEachAsync(targets.Where(h => !h.IsLocal && (!forUpdate || !activeSkipRemotePackageCopy)),
             new ParallelOptions { MaxDegreeOfParallelism=(int)nUpdate.Value, CancellationToken=ct }, async (host, token) =>
         {
             try
@@ -1986,6 +1996,7 @@ public sealed partial class MainForm : Form
         nHttpsPort.Enabled = idle && remote && chkSsl.Checked;
         txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle && remote;
         chkSkipLocalPackageCopy.Enabled = idle && selected.Length > 0;
+        chkSkipRemotePackageCopy.Enabled = idle && remote;
         chkIrisTls.Enabled = idle && selected.Length > 0;
         chkUploadToZzzSoftware.Enabled = idle;
         chkRestartPosAfterUpdate.Enabled = idle && remote;

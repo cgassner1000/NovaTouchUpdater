@@ -9,6 +9,7 @@
   "RestartPosAfterUpdate": false,
   "ScanOnStartup": true,
   "SkipLocalPackageCopy": false,
+  "SkipRemotePackageCopy": false,
   "SkipZipTransfer": false,
   "HttpsPort": 5986,
   "ExecutionMode": "Remote",

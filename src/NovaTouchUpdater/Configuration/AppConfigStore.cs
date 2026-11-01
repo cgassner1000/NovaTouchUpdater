@@ -17,6 +17,7 @@ internal sealed class UpdaterConfig
     public bool RestartPosAfterUpdate { get; set; }
     public bool ScanOnStartup { get; set; } = true;
     public bool SkipLocalPackageCopy { get; set; }
+    public bool SkipRemotePackageCopy { get; set; }
     public bool SkipZipTransfer { get; set; }
     public int HttpsPort { get; set; } = 5986;
     public string ExecutionMode { get; set; } = "Remote";
@@ -74,7 +75,7 @@ internal static class AppConfigStore
             UploadToZzzSoftware = settings.UploadToZzzSoftware, RestartPosAfterUpdate = settings.RestartPosAfterUpdate,
             ExecutionMode = settings.ExecutionMode, SoftwarePath = settings.SoftwarePath,
             ScanOnStartup = settings.ScanOnStartup,
-            SkipLocalPackageCopy = settings.SkipLocalPackageCopy, SkipZipTransfer = settings.SkipZipTransfer,
+            SkipLocalPackageCopy = settings.SkipLocalPackageCopy, SkipRemotePackageCopy = settings.SkipRemotePackageCopy, SkipZipTransfer = settings.SkipZipTransfer,
             PasswordProtectionScope = nameof(DataProtectionScope.LocalMachine),
             EncryptedPassword = EncryptPassword(password)
         };

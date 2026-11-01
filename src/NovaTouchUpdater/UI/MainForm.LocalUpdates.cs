@@ -42,7 +42,7 @@ public sealed partial class MainForm
     private bool UseLocalPackageSources => chkSkipLocalPackageCopy.Checked || string.IsNullOrWhiteSpace(txtRemotePath.Text);
     private string RemoteDestinationPath() => string.IsNullOrWhiteSpace(txtRemotePath.Text) ? DefaultRemoteInstallPath : txtRemotePath.Text.Trim();
     private bool IsUpdatePathValid(HostState[] selected) =>
-        !selected.Any(h => !h.IsLocal || !UseLocalPackageSources) ||
+        !selected.Any(h => h.IsLocal ? !UseLocalPackageSources : !chkSkipRemotePackageCopy.Checked) ||
         System.Text.RegularExpressions.Regex.IsMatch(RemoteDestinationPath(), @"^[A-Za-z]:\\");
 
     private void EnsureLocalHost()
@@ -310,7 +310,7 @@ public sealed partial class MainForm
         {
             text.AppendLine("Nach den Updates: MSI-Pakete in zzzSoftware aller IRIS-Namespaces ohne Präfix % hochladen. Gleiche oder neuere Datenbankversionen überspringen; nur ältere Pakete ersetzen. Uploadfehler bleiben für eine Wiederholung erhalten.");
             foreach (var package in msiPackages.Values) text.AppendLine("Datenbank: " + package.ProductName + " " + package.ProductVersion);
-            if (remoteCount > 0) text.AppendLine(chkSkipLocalPackageCopy.Checked ? "Remote-Datenbank: MSI-Daten über WinRM streamen, keine Paketkopie auf dem Server." :
+            if (remoteCount > 0) text.AppendLine(chkSkipLocalPackageCopy.Checked || chkSkipRemotePackageCopy.Checked ? "Remote-Datenbank: MSI-Daten über WinRM streamen, keine Paketkopie auf dem Server." :
                 chkSkipZipTransfer.Checked ? "Remote-Datenbank: bereits vorhandene Paketdateien im Zielpfad verwenden." : "Remote-Datenbank: benötigte MSI-Pakete zuerst in den Zielpfad kopieren.");
         }
         if (!chkUploadToZzzSoftware.Checked) text.AppendLine("zzzSoftware-Upload ausgeschaltet.");
@@ -321,7 +321,9 @@ public sealed partial class MainForm
             ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
             : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +
             "\nNur installierte Komponenten aktualisieren. Direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
-        if (selected.Any(h => !h.IsLocal)) text.AppendLine("REMOTE: ausschließlich Payment, Fiscal und Server Suite. POS, NTC, SOL und NTV werden remote nicht installiert.\nRemote-Zielpfad: " + RemoteDestinationPath() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv"));
+        if (selected.Any(h => !h.IsLocal)) text.AppendLine("REMOTE: ausschließlich Payment, Fiscal und Server Suite. POS, NTC, SOL und NTV werden remote nicht installiert.\n" +
+            (chkSkipRemotePackageCopy.Checked ? "Pakete nur temporär für die Installation bereitstellen und danach entfernen. Keine zusätzliche Kopie oder Bereinigung im eingestellten Zielverzeichnis." :
+            "Remote-Zielpfad: " + RemoteDestinationPath() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv")));
         return text.ToString();
     }
 }

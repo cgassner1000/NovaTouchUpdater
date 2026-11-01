@@ -113,6 +113,7 @@ public sealed partial class MainForm
                 Username=host.IsLocal ? "" : activeUser, Password=host.IsLocal ? "" : activePassword,
                 UseSsl=!host.IsLocal && activeSsl, HttpsPort=activeHttpsPort, RemoteInstallPath=activeRemoteInstallPath,
                 SkipZipTransfer=!host.IsLocal && activeSkipZipTransfer, SkipLocalPackageCopy=!host.IsLocal && activeStreamDatabasePackages,
+                SkipRemotePackageCopy=!host.IsLocal && activeSkipRemotePackageCopy,
                 IrisUseTls=activeIrisUseTls, MsiPackages = packages, DatabaseTargets = targets, DatabaseUploadParallelism = activeDatabaseUploadParallelism };
             WorkerResult result = await runner.RunAsync(request, ev =>
             {

@@ -64,7 +64,7 @@ internal static partial class Program
                 Assert(settings.BorderStyle == BorderStyle.None && !All(settings).OfType<SurfaceCard>().Any(),
                     "expanded settings have no native rectangular border or nested card");
                 Assert(settings.Bounds.IntersectsWith(InForm(form, hosts)), "expanded settings overlap the following menu header");
-                foreach (string name in new[] { "chkSkipLocalPackageCopy", "chkSkipZipTransfer", "chkIrisTls", "chkUploadToZzzSoftware", "chkRestartPosAfterUpdate" })
+                foreach (string name in new[] { "chkSkipLocalPackageCopy", "chkSkipRemotePackageCopy", "chkSkipZipTransfer", "chkIrisTls", "chkUploadToZzzSoftware", "chkRestartPosAfterUpdate" })
                 {
                     var toggle = Field<CheckBox>(form, name);
                     Assert(toggle.Right <= toggle.Parent!.ClientSize.Width && toggle.Height >= toggle.GetPreferredSize(new Size(toggle.Width, 0)).Height,
@@ -132,8 +132,8 @@ internal static partial class Program
                         Call(form, "SelectIndividualPackage", package);
                         Assert(files.Expanded, "selecting a package keeps the section open for the next package");
                     }
-                    Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == (UpdateComponents.Payment | UpdateComponents.Fiscal),
-                        "successive individual selections retain both chosen packages");
+                    Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == (UpdateComponents.ZipServices | UpdateComponents.Msi),
+                        "successive individual selections retain the other previously selected packages");
                     _ = Call(form, "ShowIndividualPackageDialog", (Func<DialogResult>)(() => DialogResult.Cancel));
                     Assert(files.Expanded, "cancelling another file selection also keeps the section open");
                     try

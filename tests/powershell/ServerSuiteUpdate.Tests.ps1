@@ -288,7 +288,7 @@ function AssertEventLogOrder {
     }
 }
 function NoServiceOrTargetChanges {
-    Assert (@($script:events | Where-Object { $_ -match '^(stop|start|restart|copy):' -or ($_ -match '^delete:' -and $_ -notmatch '\.novatouch-updater-stage-') }).Count -eq 0) 'Invalid payload must not stop services, restart EventLog or change installed files'
+    Assert (@($script:events | Where-Object { $_ -match '^(stop|start|restart|copy):' -or ($_ -match '^delete:' -and $_ -notmatch '\.novatouch-updater-stage-' -and $_ -notmatch '\\\.ntu-[a-f0-9]{32}$') }).Count -eq 0) 'Invalid payload must not stop services, restart EventLog or change installed files'
     foreach ($svc in $script:installed) {
         $version = if ($svc.Kind -eq 'serversuite') { [IO.File]::ReadAllText((Join-Path $svc.InstallDir 'version.txt')) } else { [IO.File]::ReadAllText($svc.ExePath) }
         Assert ($version -eq $svc.ProductVersion) 'Original installation must survive validation failure'
@@ -860,6 +860,54 @@ try {
     $result=RunWorker
     Assert ($result.Changed -and @($script:events | Where-Object { $_ -like 'transfer:*' }).Count -gt 0) 'The local copy switch cannot suppress remote transfers'
     Passed 'remote ZIP uploads remain independent of the local copy switch'
+
+    ResetCase 'temporary-preflight'
+    $script:request.SkipRemotePackageCopy=$true
+    $script:request.Action='check-upload-directory'; $script:request.CheckUpdateUpload=$true
+    $check=RunWorker
+    Assert (-not $check.UploadRequired -and $script:events.Count -eq 0 -and -not [IO.Directory]::Exists($script:request.RemoteInstallPath)) 'Temporary remote mode must not inspect, prepare or clean the configured upload target'
+    Passed 'temporary remote packages bypass upload-folder cleanup'
+
+    foreach ($kind in @('payment','fiscal','serversuite')) {
+        ResetCase ('temporary-' + $kind)
+        if ($kind -eq 'serversuite') { Service 'a' 'one'; Package }
+        else { Component $kind; Package @{ 'component.exe'='1.2.3.4'; 'nested/updated.txt'='new' } $kind }
+        $originalTarget=$script:request.RemoteInstallPath
+        WriteFixture (Join-Path $originalTarget 'keep.txt') 'preserve configured target'
+        $script:request.SkipRemotePackageCopy=$true
+        $script:request.SkipZipTransfer=$true
+        $tempRoot=Join-Path $script:fixture 't'
+        [void][IO.Directory]::CreateDirectory($tempRoot)
+        $savedTemp=$env:TEMP; $savedTmp=$env:TMP
+        try {
+            $env:TEMP=$tempRoot; $env:TMP=$tempRoot
+            $result=RunWorker
+            Assert ($result.Changed) 'Temporary remote mode must still install the update'
+            Assert (@(Get-ChildItem -LiteralPath $tempRoot -Force).Count -eq 0) 'Temporary package directory must be removed after installation'
+            Assert (@(Get-ChildItem -LiteralPath $originalTarget -Force).Count -eq 1 -and [IO.File]::ReadAllText((Join-Path $originalTarget 'keep.txt')) -eq 'preserve configured target') 'Configured target must remain untouched'
+            $transfers=@($script:events | Where-Object { $_ -like 'transfer:*' })
+            Assert ($transfers.Count -eq 1 -and $transfers[0].StartsWith('transfer:' + $tempRoot + '\', [StringComparison]::OrdinalIgnoreCase)) 'Package must only be transferred into the temporary directory, even when persistent reuse is enabled'
+        }
+        finally { $env:TEMP=$savedTemp; $env:TMP=$savedTmp }
+        Passed ('temporary remote ' + $kind + ' installs without a persistent package copy')
+    }
+
+    ResetCase 'temporary-failed-hash'
+    Component 'payment'; Package @{ 'component.exe'='1.2.3.4' } 'payment'
+    $script:request.PaymentSha256='0' * 64
+    $script:request.SkipRemotePackageCopy=$true
+    $tempRoot=Join-Path $script:fixture 't'
+    [void][IO.Directory]::CreateDirectory($tempRoot)
+    $savedTemp=$env:TEMP; $savedTmp=$env:TMP
+    try {
+        $env:TEMP=$tempRoot; $env:TMP=$tempRoot
+        $null=RunWorker $false 'SHA256'
+        Assert (@(Get-ChildItem -LiteralPath $tempRoot -Force).Count -eq 0) 'Failed temporary package verification must also clean up'
+        Assert (-not [IO.Directory]::Exists($script:request.RemoteInstallPath)) 'A failed temporary update must never create the configured target'
+        NoServiceOrTargetChanges
+    }
+    finally { $env:TEMP=$savedTemp; $env:TMP=$savedTmp }
+    Passed 'temporary remote package cleanup also runs after SHA256 failure'
 }
 finally {
     # The resolved absolute GUID path was checked at creation; remove only it.

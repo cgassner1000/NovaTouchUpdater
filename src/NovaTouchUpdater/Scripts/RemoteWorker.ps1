@@ -30,6 +30,32 @@ function InvokeWorkerCommand {
     else { Invoke-Command -Session $Session -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction $ErrorActionPreference }
 }
 
+function NewRemotePackageStage($session) {
+    InvokeWorkerCommand -Session $session -ScriptBlock {
+        $base = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
+        $path = Join-Path $base ('.ntu-' + [guid]::NewGuid().ToString('N'))
+        [void][IO.Directory]::CreateDirectory($path)
+        [pscustomobject]@{ Path=$path; Base=$base }
+    }
+}
+
+function RemoveRemotePackageStage($session, $stage) {
+    InvokeWorkerCommand -Session $session -ArgumentList ([string]$stage.Path), ([string]$stage.Base) -ScriptBlock {
+        param([string]$path, [string]$base)
+        $allowed = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
+        $full = [IO.Path]::GetFullPath($path)
+        if ($base -ine $allowed -or [IO.Path]::GetDirectoryName($full) -ine $allowed -or
+            [IO.Path]::GetFileName($full) -notmatch '^\.ntu-[a-f0-9]{32}$') {
+            throw 'Ungültiger temporärer Remote-Paketpfad.'
+        }
+        if (-not [IO.Directory]::Exists($full)) { return }
+        if (([IO.File]::GetAttributes($full) -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Temporärer Remote-Paketpfad ist eine Verknüpfung.'
+        }
+        Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+    } | Out-Null
+}
+
 function NewUploadPipeline($session, [string]$localFile, [string]$remoteFile) {
     $pipeline = [Management.Automation.PowerShell]::Create()
     try {
@@ -321,10 +347,11 @@ try {
     }
     if ($req.Action -eq 'stage-packages' -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
     $requestedPath = if ($null -ne $req.PSObject.Properties['RemoteInstallPath']) { [string]$req.RemoteInstallPath } else { '' }
+    $skipRemotePackageCopy = -not $localExecution -and $null -ne $req.PSObject.Properties['SkipRemotePackageCopy'] -and [bool]$req.SkipRemotePackageCopy
     $skipLocalPackageCopy = $localExecution -and ([string]::IsNullOrWhiteSpace($requestedPath) -or
         ($null -ne $req.PSObject.Properties['SkipLocalPackageCopy'] -and [bool]$req.SkipLocalPackageCopy))
     if (-not $localExecution -and $req.Action -eq 'publish-msi-packages') {
-        $skipLocalPackageCopy = $null -ne $req.PSObject.Properties['SkipLocalPackageCopy'] -and [bool]$req.SkipLocalPackageCopy
+        $skipLocalPackageCopy = $skipRemotePackageCopy -or ($null -ne $req.PSObject.Properties['SkipLocalPackageCopy'] -and [bool]$req.SkipLocalPackageCopy)
     }
     $req | Add-Member -NotePropertyName SkipLocalPackageCopy -NotePropertyValue $skipLocalPackageCopy -Force
     if (-not $localExecution -and [string]::IsNullOrWhiteSpace($requestedPath)) {
@@ -355,6 +382,7 @@ try {
 
         Progress 'Verbindung' $(if ($localExecution) { 'Lokaler Zugriff ohne WinRM' } else { 'WinRM-Verbindung wird aufgebaut' })
     $session = $null
+    $remotePackageStage = $null
     try {
         $session = if ($localExecution) { [pscustomobject]@{ NovaTouchLocal=$true } } else { New-PSSession @sessionArgs }
         if ($req.Action -eq 'database-inventory') {
@@ -371,6 +399,10 @@ try {
         if ($req.Action -in @('check-upload-directory','clean-upload-directory')) {
             $clean=$req.Action -eq 'clean-upload-directory'
             $forUpdate=$null -ne $req.PSObject.Properties['CheckUpdateUpload'] -and [bool]$req.CheckUpdateUpload
+            if ($forUpdate -and $skipRemotePackageCopy) {
+                Emit @{ Event='result'; Success=$true; UploadRequired=$false; Changed=$false; Message='Temporäre Remote-Paketverwendung; Zielordner bleibt unberührt'; Services=@() }
+                exit 0
+            }
             if ($forUpdate) {
                 $uploadRequired=$false
                 if (-not [bool]$req.SkipZipTransfer) {
@@ -523,6 +555,14 @@ try {
             exit 0
         }
         if ($localExecution) { AssertLocalUpdateAccess }
+
+        if ($skipRemotePackageCopy) {
+            $remotePackageStage = NewRemotePackageStage $session
+            $req.RemoteInstallPath = [string]$remotePackageStage.Path
+            # Temporary packages take precedence over reuse of persistent client files.
+            $req.SkipZipTransfer = $false
+            Progress 'Pakete vorbereiten' 'Remote-Pakete nur temporär für die Installation bereitstellen; keine Kopie im eingestellten Zielverzeichnis'
+        }
 
         if ($null -ne $req.PSObject.Properties['ServerSuiteSetup'] -and $req.ServerSuiteSetup) {
             if ($targets.Count -ne 1 -or $req.ServerSuiteZip) { throw 'Server-Suite-Setup muss als separate Komponente ausgeführt werden.' }
@@ -680,7 +720,15 @@ try {
             InvokeWorkerCommand -Session $session -ArgumentList $stage, $remotePath -ScriptBlock ${function:RemoveUpdateStage} -ErrorAction SilentlyContinue | Out-Null
         }
     }
-    finally { if ($null -ne $session -and -not (TestLocalSession $session)) { Remove-PSSession -Session $session -ErrorAction SilentlyContinue } }
+    finally {
+        try {
+            if ($null -ne $remotePackageStage) {
+                try { RemoveRemotePackageStage $session $remotePackageStage }
+                catch { Progress 'Temporäre Pakete' ('Aufräumen fehlgeschlagen: ' + $_.Exception.Message) }
+            }
+        }
+        finally { if ($null -ne $session -and -not (TestLocalSession $session)) { Remove-PSSession -Session $session -ErrorAction SilentlyContinue } }
+    }
 }
 catch {
     $errorText = $_.Exception.Message
