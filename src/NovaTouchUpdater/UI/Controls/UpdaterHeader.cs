@@ -3,20 +3,26 @@ namespace NovaTouchUpdater;
 internal sealed class UpdaterHeader : TableLayoutPanel
 {
     private readonly Label subtitle;
+    private readonly Label title;
     private readonly LinkLabel notice;
+    private readonly Button feedback;
     private bool arranging;
 
-    internal UpdaterHeader(LinkLabel notice)
+    internal UpdaterHeader(LinkLabel notice, Button feedback)
     {
         this.notice = notice;
+        this.feedback = feedback;
+        Name = "updaterHeader";
+        feedback.Name = "reportFeedback";
         Dock = DockStyle.Top;
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         ColumnCount = 3;
-        RowCount = 3;
+        RowCount = 4;
         ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        RowStyles.Add(new RowStyle(SizeType.AutoSize));
         RowStyles.Add(new RowStyle(SizeType.AutoSize));
         RowStyles.Add(new RowStyle(SizeType.AutoSize));
         RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -24,13 +30,15 @@ internal sealed class UpdaterHeader : TableLayoutPanel
         var mark = new AppMark { Margin = new Padding(0, 4, 14, 0) };
         Controls.Add(mark, 0, 0);
         SetRowSpan(mark, 2);
-        var title = new Label
+        title = new Label
         {
             Text = "NovaTouch Updater", Font = new Font("Segoe UI", 22F, FontStyle.Bold),
             AutoSize = true, Dock = DockStyle.Fill, Margin = Padding.Empty
         };
         Controls.Add(title, 1, 0);
-        SetColumnSpan(title, 2);
+        feedback.Anchor = AnchorStyles.Right;
+        feedback.Margin = new Padding(16, 0, 0, 0);
+        Controls.Add(feedback, 2, 0);
         subtitle = new Label
         {
             Text = "ZIP- und MSI-Updates    ·    lokal und remote",
@@ -54,9 +62,15 @@ internal sealed class UpdaterHeader : TableLayoutPanel
             try
             {
                 int markWidth = Controls[0].Width + Controls[0].Margin.Horizontal;
+                int feedbackWidth = feedback.GetPreferredSize(Size.Empty).Width + feedback.Margin.Horizontal;
+                bool separateFeedback = ClientSize.Width - markWidth < TextRenderer.MeasureText(title.Text, title.Font).Width + feedbackWidth;
+                SetCellPosition(feedback, separateFeedback ? new TableLayoutPanelCellPosition(1, 2) : new TableLayoutPanelCellPosition(2, 0));
+                SetColumnSpan(feedback, separateFeedback ? 2 : 1);
+                SetColumnSpan(title, separateFeedback ? 2 : 1);
+                title.MaximumSize = new Size(Math.Max(1, ClientSize.Width - markWidth - (separateFeedback ? 0 : feedbackWidth)), 0);
                 int noticeWidth = notice.GetPreferredSize(Size.Empty).Width + notice.Margin.Horizontal;
                 bool separateRow = notice.Visible && ClientSize.Width - markWidth < TextRenderer.MeasureText(subtitle.Text, subtitle.Font).Width + noticeWidth;
-                SetCellPosition(notice, separateRow ? new TableLayoutPanelCellPosition(1, 2) : new TableLayoutPanelCellPosition(2, 1));
+                SetCellPosition(notice, separateRow ? new TableLayoutPanelCellPosition(1, 3) : new TableLayoutPanelCellPosition(2, 1));
                 SetColumnSpan(notice, separateRow ? 2 : 1);
                 SetColumnSpan(subtitle, separateRow || !notice.Visible ? 2 : 1);
                 subtitle.MaximumSize = new Size(Math.Max(1, ClientSize.Width - markWidth - (!separateRow && notice.Visible ? noticeWidth : 0)), 0);

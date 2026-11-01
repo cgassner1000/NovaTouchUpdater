@@ -6,6 +6,8 @@ Bei jedem Windows-Build und beim Veröffentlichen werden die PowerShell-Quellen 
 
 Eine vorhandene persönliche `config.json` im Hauptordner bleibt dort und wird für lokale Builds neben die EXE kopiert. Die Anwendung selbst lädt und speichert ihre Config weiterhin neben der gestarteten EXE. Die Beispielkonfiguration liegt unter `config/config.example.json`; erzeugte Dateien und persönliche Einstellungen sind in Git ignoriert.
 
+Rechts oben öffnet **Fehler / Vorschlag melden** ein eigenes Formular für Fehlermeldungen und Verbesserungsvorschläge. Der Name ist freiwillig; eine GitHub-Anmeldung ist nicht erforderlich. Gesendet werden nur die Formulareingaben und die Updater-Version, keine Hostlisten, Konfigurationen oder Logs. Eine Issue-Nummer bestätigt das Absenden im Formular. Für das Erstellen der Issues muss der separate [Feedback-Webdienst](src/NovaTouchUpdater.FeedbackServer/README.md) über HTTPS bereitgestellt und seine Adresse beim Build mit `FEEDBACK_ENDPOINT` hinterlegt sein. Der GitHub-Zugang liegt ausschließlich auf dem Webserver. Ohne eingerichteten Dienst bleibt das Formular sichtbar und erklärt, dass das Senden noch nicht eingerichtet ist.
+
 ## Voraussetzungen
 
 - Visual Studio 2026 mit Workload **.NET-Desktopentwicklung** und .NET 8 SDK

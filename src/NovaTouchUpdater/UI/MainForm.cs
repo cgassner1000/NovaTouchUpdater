@@ -34,6 +34,7 @@ public sealed partial class MainForm : Form
     private readonly CancellationTokenSource appLifetime = new();
     private readonly System.Windows.Forms.Timer releaseTimer = new() { Interval = 30 * 60 * 1000 };
     private readonly LinkLabel updateNotice = new() { Name = "updateNotice", Text = "Neue Version verfügbar", Visible = false, LinkColor = Color.FromArgb(22, 125, 65) };
+    private readonly Button btnFeedback = Button("Fehler / Vorschlag melden");
     private readonly ToolTip updateToolTip = new();
 
     private readonly DataGridView table = new();
@@ -133,6 +134,7 @@ public sealed partial class MainForm : Form
         connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
         releaseTimer.Tick += async (_, _) => await CheckAppReleaseAsync();
         updateNotice.LinkClicked += async (_, _) => await UpdateApplicationAsync();
+        btnFeedback.Click += (_, _) => { using var dialog = new FeedbackDialog(new FeedbackClient(releaseHttp, FeedbackClient.ConfiguredEndpoint)); dialog.ShowDialog(this); };
         txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
         txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
         DpiChanged += (_, _) => BeginInvoke((Action)ApplyColumnWidths);
@@ -326,7 +328,7 @@ public sealed partial class MainForm : Form
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        var header = new UpdaterHeader(updateNotice);
+        var header = new UpdaterHeader(updateNotice, btnFeedback);
         main.Controls.Add(header, 0, 0);
 
         // Keep package cards in their own column, independent of the menu headers.

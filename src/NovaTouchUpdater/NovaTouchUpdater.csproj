@@ -17,6 +17,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyMetadata Include="FeedbackEndpoint" Value="$(FEEDBACK_ENDPOINT)" />
+    <Compile Include="$(RepositoryRoot)src\Shared\FeedbackContracts.cs" Link="Feedback\FeedbackContracts.cs" />
     <!-- The upload worker runs in Windows PowerShell/.NET Framework. Embed the
          matching net462 assets, rather than referencing their net8.0 variants. -->
     <PackageReference Include="InterSystems.Data.IRISClient" Version="2.7.0" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
