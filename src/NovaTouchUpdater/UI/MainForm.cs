@@ -453,7 +453,7 @@ public sealed partial class MainForm : Form
         chkSkipRemotePackageCopy.Text = "REMOTE: Paketdateien direkt verwenden - keine zusätzliche Kopie";
         chkSkipRemotePackageCopy.AutoSize = true;
         chkSkipRemotePackageCopy.Anchor = AnchorStyles.Left;
-        chkSkipZipTransfer.Text = "Remote: vorhandene Update-Dateien auf dem Zielrechner verwenden";
+        chkSkipZipTransfer.Text = "REMOTE: Vorhandene Update-Dateien auf dem Zielrechner verwenden";
         chkSkipZipTransfer.AutoSize = true;
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
         chkSkipZipTransfer.Anchor = AnchorStyles.Left;
@@ -1039,7 +1039,7 @@ public sealed partial class MainForm : Form
             return;
         }
         if (MessageBox.Show(this,
-            $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'Remote: vorhandene Update-Dateien auf dem Zielrechner verwenden' aktiviert ist.",
+            $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'REMOTE: Vorhandene Update-Dateien auf dem Zielrechner verwenden' aktiviert ist.",
             "Dateiübertragung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
         CaptureCredentials();
