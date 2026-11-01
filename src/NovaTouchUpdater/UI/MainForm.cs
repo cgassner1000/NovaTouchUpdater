@@ -35,7 +35,7 @@ public sealed partial class MainForm : Form
     private readonly CancellationTokenSource appLifetime = new();
     private readonly System.Windows.Forms.Timer releaseTimer = new() { Interval = 30 * 60 * 1000 };
     private readonly LinkLabel updateNotice = new() { Name = "updateNotice", Text = "Neue Version verfügbar", Visible = false, LinkColor = Color.FromArgb(22, 125, 65) };
-    private readonly Button btnFeedback = Button("Fehler / Vorschlag melden");
+    private readonly Button btnFeedback = Button("Report issue");
     private readonly ToolTip updateToolTip = new();
 
     private readonly DataGridView table = new();

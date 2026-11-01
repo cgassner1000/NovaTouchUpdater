@@ -146,7 +146,7 @@ internal static partial class Program
         foreach (int width in new[] { 600, 1000, 1710 })
         {
             using var notice = new LinkLabel { Text = "Neue Version verfügbar", Visible = true };
-            using var feedback = new ModernButton { Text = "Fehler / Vorschlag melden", AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
+            using var feedback = new ModernButton { Text = "Report issue", AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
             using var header = new UpdaterHeader(notice, feedback);
             var fonts = All(header).ToDictionary(control => control, control => control.Font);
             header.Scale(new SizeF(scale, scale));
