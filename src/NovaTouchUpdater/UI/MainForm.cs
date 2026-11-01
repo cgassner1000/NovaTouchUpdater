@@ -31,6 +31,7 @@ public sealed partial class MainForm : Form
     private bool startupConfigLoaded;
     private AppRelease? availableRelease;
     private readonly HttpClient releaseHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly HttpClient feedbackHttp = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
     private readonly CancellationTokenSource appLifetime = new();
     private readonly System.Windows.Forms.Timer releaseTimer = new() { Interval = 30 * 60 * 1000 };
     private readonly LinkLabel updateNotice = new() { Name = "updateNotice", Text = "Neue Version verfügbar", Visible = false, LinkColor = Color.FromArgb(22, 125, 65) };
@@ -134,7 +135,11 @@ public sealed partial class MainForm : Form
         connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
         releaseTimer.Tick += async (_, _) => await CheckAppReleaseAsync();
         updateNotice.LinkClicked += async (_, _) => await UpdateApplicationAsync();
-        btnFeedback.Click += (_, _) => { using var dialog = new FeedbackDialog(new FeedbackClient(releaseHttp, FeedbackClient.ConfiguredEndpoint)); dialog.ShowDialog(this); };
+        btnFeedback.Click += (_, _) =>
+        {
+            using var dialog = new FeedbackDialog(new FeedbackClient(feedbackHttp, new EmbeddedFeedbackCredentials()));
+            dialog.ShowDialog(this);
+        };
         txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
         txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
         DpiChanged += (_, _) => BeginInvoke((Action)ApplyColumnWidths);
@@ -174,6 +179,7 @@ public sealed partial class MainForm : Form
             appLifetime.Cancel();
             appLifetime.Dispose();
             releaseHttp.Dispose();
+            feedbackHttp.Dispose();
             updateToolTip.Dispose();
             connectionCancellation?.Cancel();
             connectionRunner.Dispose();

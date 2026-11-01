@@ -83,7 +83,7 @@ internal sealed class FeedbackDialog : Form
         bool valid;
         try { Submission().Validate(); valid = true; } catch (ArgumentException) { valid = false; }
         send.Enabled = client.IsConfigured && valid && pending is null && !sent;
-        if (!client.IsConfigured) status.Text = "Das Senden von Meldungen ist noch nicht eingerichtet.";
+        if (!client.IsConfigured) status.Text = "Der Meldungsversand ist in dieser Programmversion noch nicht eingerichtet.";
     }
 
     internal async Task SubmitAsync()
@@ -110,7 +110,7 @@ internal sealed class FeedbackDialog : Form
         {
             if (IsDisposed || cancellation.IsCancellationRequested) return;
             status.ForeColor = UiTheme.Danger;
-            status.Text = ex is OperationCanceledException or HttpRequestException ? "Keine Bestätigung erhalten. Möglicherweise wurde die Meldung bereits erstellt. Bitte später prüfen." : ex.Message;
+            status.Text = ex is OperationCanceledException or HttpRequestException ? "Keine Bestätigung erhalten. Möglicherweise wurde die Meldung bereits erstellt. Bei Wiederholung wird zunächst die GitHub-Liste geprüft." : ex.Message;
         }
         finally
         {

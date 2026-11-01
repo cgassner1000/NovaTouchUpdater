@@ -15,10 +15,11 @@
     <Version>$(UpdaterBaseVersion).$(UpdaterBuildNumber)</Version>
     <ApplicationIcon>Assets\NovaTouchUpdater.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <FeedbackTokenFile>$(NOVATOUCHUPDATER_FEEDBACK_TOKEN_FILE)</FeedbackTokenFile>
   </PropertyGroup>
   <ItemGroup>
-    <AssemblyMetadata Include="FeedbackEndpoint" Value="$(FEEDBACK_ENDPOINT)" />
     <Compile Include="$(RepositoryRoot)src\Shared\FeedbackContracts.cs" Link="Feedback\FeedbackContracts.cs" />
+    <EmbeddedResource Include="$(FeedbackTokenFile)" LogicalName="NovaTouchUpdater.Feedback.Token" Condition="'$(FeedbackTokenFile)' != '' and Exists('$(FeedbackTokenFile)')" />
     <!-- The upload worker runs in Windows PowerShell/.NET Framework. Embed the
          matching net462 assets, rather than referencing their net8.0 variants. -->
     <PackageReference Include="InterSystems.Data.IRISClient" Version="2.7.0" GeneratePathProperty="true" PrivateAssets="all" ExcludeAssets="all" />
@@ -52,6 +53,8 @@
     <Exec Command="&quot;$(SystemRoot)\System32\WindowsPowerShell\v1.0\powershell.exe&quot; -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(RepositoryRoot)build\ValidatePowerShell.ps1&quot; -ScriptsDirectory &quot;$(MSBuildProjectDirectory)\Scripts&quot;" />
   </Target>
   <Target Name="ValidateUpdaterVersion" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(FeedbackTokenFile)' != '' and !Exists('$(FeedbackTokenFile)')"
+           Text="Die beim Build angegebene Meldetoken-Datei wurde nicht gefunden." />
     <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(UpdaterBaseVersion)', '^\d+\.\d+$'))"
            Text="version.txt muss genau eine Basisversion im Format Hauptversion.Nebenversion enthalten, zum Beispiel 1.1. Beschreibungszeilen beginnen mit #." />
     <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(UpdaterBuildNumber)', '^\d+$'))"

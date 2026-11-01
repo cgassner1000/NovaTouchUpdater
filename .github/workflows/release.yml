@@ -35,10 +35,28 @@ jobs:
         run: ./build/Release.ps1 -Mode Prepare
 
       - name: Windows-x64-EXE bauen
-        shell: cmd
+        shell: pwsh
         env:
-          FEEDBACK_ENDPOINT: ${{ vars.FEEDBACK_ENDPOINT }}
-        run: call Build-win64.cmd
+          NOVATOUCHUPDATER_FEEDBACK_TOKEN: ${{ secrets.NOVATOUCHUPDATER_FEEDBACK_TOKEN }}
+        run: |
+          $feedbackTokenFile = Join-Path $env:RUNNER_TEMP 'novatouch-feedback.token'
+          try {
+            if ([string]::IsNullOrWhiteSpace($env:NOVATOUCHUPDATER_FEEDBACK_TOKEN)) {
+              throw 'Repository-Secret NOVATOUCHUPDATER_FEEDBACK_TOKEN fehlt. Den erzeugten Token unter Settings > Secrets and variables > Actions speichern.'
+            }
+            [System.IO.File]::WriteAllText($feedbackTokenFile, $env:NOVATOUCHUPDATER_FEEDBACK_TOKEN.Trim(), [System.Text.UTF8Encoding]::new($false))
+            $env:NOVATOUCHUPDATER_FEEDBACK_TOKEN_FILE = $feedbackTokenFile
+            $env:NOVATOUCHUPDATER_FEEDBACK_TOKEN = $null
+            & ./Build-win64.cmd
+            if ($LASTEXITCODE -ne 0) { throw 'Windows-x64-Build fehlgeschlagen.' }
+          }
+          finally {
+            $env:NOVATOUCHUPDATER_FEEDBACK_TOKEN = $null
+            $env:NOVATOUCHUPDATER_FEEDBACK_TOKEN_FILE = $null
+            if (Test-Path -LiteralPath $feedbackTokenFile -PathType Leaf) {
+              Remove-Item -LiteralPath $feedbackTokenFile -Force
+            }
+          }
 
       - name: EXE pruefen und mit Versionsnummer benennen
         shell: pwsh

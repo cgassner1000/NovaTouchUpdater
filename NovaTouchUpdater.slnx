@@ -1,7 +1,6 @@
 <Solution>
   <Folder Name="/Application/">
     <Project Path="src/NovaTouchUpdater/NovaTouchUpdater.csproj" />
-    <Project Path="src/NovaTouchUpdater.FeedbackServer/NovaTouchUpdater.FeedbackServer.csproj" />
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/dotnet/AppRelease.Tests/AppRelease.Tests.csproj" />
@@ -13,7 +12,6 @@
     <Project Path="tests/dotnet/InformationProgress.Tests/InformationProgress.Tests.csproj" />
     <Project Path="tests/dotnet/LdapSearch.Tests/LdapSearch.Tests.csproj" />
     <Project Path="tests/dotnet/MainForm.Tests/MainForm.Tests.csproj" />
-    <Project Path="tests/dotnet/FeedbackServer.Tests/FeedbackServer.Tests.csproj" />
   </Folder>
   <Folder Name="/Project/">
     <File Path="README.md" />
