@@ -31,6 +31,7 @@
     <EmbeddedResource Include="Assets\NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
     <EmbeddedResource Include="Scripts\RemoteWorker.ps1" LogicalName="NovaTouchUpdater.RemoteWorker.ps1" />
     <EmbeddedResource Include="Scripts\UpdateSteps.ps1" LogicalName="NovaTouchUpdater.UpdateSteps.ps1" />
+    <EmbeddedResource Include="Scripts\ServerSuiteSetup.ps1" LogicalName="NovaTouchUpdater.ServerSuiteSetup.ps1" />
     <EmbeddedResource Include="Scripts\UploadDirectory.ps1" LogicalName="NovaTouchUpdater.UploadDirectory.ps1" />
     <EmbeddedResource Include="Scripts\MsiUpdates.ps1" LogicalName="NovaTouchUpdater.MsiUpdates.ps1" />
     <EmbeddedResource Include="Scripts\SoftwareDatabase.ps1" LogicalName="NovaTouchUpdater.SoftwareDatabase.ps1" />

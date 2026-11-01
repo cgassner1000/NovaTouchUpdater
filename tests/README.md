@@ -29,6 +29,20 @@ Die Tests verwenden künstliche Hosts, Testdateien und simulierte Dienste bzw. H
 
 ## Ausführen
 
+Server-Suite-Setup-Verfahren (zusätzlich Inno Setup 6 und lokales `nt3-server-suite`-Repository erforderlich):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\ServerSuiteSetup.Tests.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\ServerSuiteSilentSelection.Tests.ps1
+dotnet run --project tests\dotnet\MainForm.Tests\MainForm.Tests.csproj -c Release -- --suite-setup
+```
+
+Der PowerShell-Test kompiliert den echten Inno-Code mit kleinen Testdateien und prüft die Produkt-/Protokollmetadaten. Die erzeugte EXE wird **niemals ausgeführt**. Alle Dienst-, WinRM- und Setup-Aufrufe sind simuliert. Abgedeckt sind mehrere Instanzen mit Leerzeichen im Pfad, Reihenfolge um EventLog, einzelne Setup-/Startfehler, deaktivierte Dienste, Exitcode 3010, gezielte Wiederholung, SHA256-Prüfung, lokale Direktquellen sowie Remote-Kopieren und Wiederverwendung. `-SuiteRepository` erlaubt einen anderen Quellpfad. Die C#-Prüfung nutzt das erzeugte Fixture für rekursive Erkennung, EXE-Vorrang, Ablehnung alter Setups und getrennte lokale/Remote-Setup-Requests. Vor einem produktiven Rollout bleibt ein Update auf einem Testclient mit dem tatsächlich freizugebenden Setup erforderlich.
+
+Die Inno-Kompilierung prüft zusätzlich den Standardaufruf ohne `/DVersion` mit der tatsächlichen `version.txt`, drei- und vierteilige CI-Versionen sowie Datums- und Suffixversionen. Die textuelle PE-Produktversion muss in jedem Fall erhalten bleiben. Dadurch werden unzulässige numerische Versionsdirektiven bei normalen IDE-Builds erkannt.
+
+`ServerSuiteSilentSelection.Tests.ps1` führt die tatsächlichen Pascal-Funktionen zur Instanzauswahl in einem separaten Inno-Testprogramm ohne Payload aus. Dieses beendet sich bereits in `InitializeSetup`, vor Installation, Wizard, Dienst- oder Registryzugriff. Die 21 Fälle prüfen `/SERVICENAME`, `/INSTANCE`, `/DIR`, widersprüchliche/mehrdeutige Angaben, Erhalt der bisherigen parameterfreien Auswahl sowie die erste stille Standardinstallation. Beide Tests erwarten ein eigenständiges Produktionsskript ohne zusätzliche ISS-Includes.
+
 Alle Befehle im Hauptordner des Repositorys ausführen. Voraussetzungen sind Windows und das .NET-SDK aus den Projektvoraussetzungen. Die PowerShell-Prüfungen laufen jeweils in einem eigenen Windows-PowerShell-Prozess, damit simulierte Funktionen nicht zwischen Tests bestehen bleiben.
 
 Anwendung und alle C#-Testprogramme bauen:

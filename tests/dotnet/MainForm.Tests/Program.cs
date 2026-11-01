@@ -18,6 +18,7 @@ internal static partial class Program
             if (args.Contains("--updates")) { UpdateRetryTests(); UpdateFinalizationTests(); return 0; }
             if (args.Contains("--staging")) { PackageCopyOptionsTests(); PackageStagingTests(); PackageHashPreparationTests(); return 0; }
             if (args.Contains("--local")) { Complete(PackageCatalogTests()); PackageSelectionTests(); LocalExecutionTests(); RemotePackageRestrictionTests(); return 0; }
+            if (args.Contains("--suite-setup")) { Complete(ServerSuiteSetupTests()); return 0; }
             if (args.Contains("--columns")) { ColumnSizingTests(); return 0; }
             if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
             if (args.Contains("--startup")) { StartupChecksTests(); return 0; }

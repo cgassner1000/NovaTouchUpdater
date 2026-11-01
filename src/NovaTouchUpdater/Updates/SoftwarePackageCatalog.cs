@@ -21,7 +21,7 @@ internal sealed class SoftwarePackageCatalog : IDisposable
         {
             ct.ThrowIfCancellationRequested();
             string extension = System.IO.Path.GetExtension(file);
-            if (!extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) && !extension.Equals(".msi", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) && !extension.Equals(".msi", StringComparison.OrdinalIgnoreCase) && !extension.Equals(".exe", StringComparison.OrdinalIgnoreCase)) continue;
             string relativePath = System.IO.Path.GetRelativePath(folder, file);
             progress?.Report("Pakete lesen: " + relativePath);
             try { candidates.AddRange(await ReadFileAsync(file, ct).ConfigureAwait(false)); }
@@ -29,6 +29,7 @@ internal sealed class SoftwarePackageCatalog : IDisposable
             { warnings.Add(relativePath + ": " + ex.Message); }
         }
         return new(candidates.GroupBy(p => p.Component).Select(group => group.OrderByDescending(p => NumericVersion(p.Version))
+            .ThenByDescending(p => p.Component == UpdateComponents.ServerSuite && ServerSuiteInstaller.IsSetup(p.Path))
             .ThenByDescending(p => File.GetLastWriteTimeUtc(p.Path)).ThenBy(p => p.Path, StringComparer.OrdinalIgnoreCase).First()).ToArray(), warnings.ToArray());
     }
 
@@ -36,6 +37,12 @@ internal sealed class SoftwarePackageCatalog : IDisposable
     {
         ct.ThrowIfCancellationRequested();
         path = System.IO.Path.GetFullPath(path);
+        if (ServerSuiteInstaller.IsSetup(path))
+        {
+            var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+            if (!UpdatePackageNames.TryServerSuiteVersion(path, out _) && info.ProductName?.Trim() != "NovaTouch Server Suite") return [];
+            return [new(UpdateComponents.ServerSuite, path, ServerSuiteInstaller.ReadVersion(path))];
+        }
         Match service = ServiceZip.Match(System.IO.Path.GetFileName(path));
         if (service.Success)
             return [new(service.Groups[1].Value.Equals("payment", StringComparison.OrdinalIgnoreCase) ? UpdateComponents.Payment : UpdateComponents.Fiscal, path, service.Groups[2].Value)];

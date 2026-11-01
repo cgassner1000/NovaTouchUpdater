@@ -166,7 +166,7 @@ internal static partial class Program
             UpdateComponents[] kinds = new[] {
                 string.IsNullOrEmpty(request.PaymentZip) ? UpdateComponents.None : UpdateComponents.Payment,
                 string.IsNullOrEmpty(request.FiscalZip) ? UpdateComponents.None : UpdateComponents.Fiscal,
-                string.IsNullOrEmpty(request.ServerSuiteZip) ? UpdateComponents.None : UpdateComponents.ServerSuite
+                string.IsNullOrEmpty(request.ServerSuiteZip) && string.IsNullOrEmpty(request.ServerSuiteSetup) ? UpdateComponents.None : UpdateComponents.ServerSuite
             }.Where(c => c != UpdateComponents.None).ToArray();
             if (kinds.Length != 1) throw new InvalidOperationException("An update request must contain exactly one component ZIP.");
             return kinds[0];

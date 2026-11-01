@@ -64,7 +64,7 @@ public sealed partial class MainForm : Form
     private readonly Button btnSaveConfig = Button("Konfiguration speichern");
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
-    private readonly Button btnServerSuite = Button("Server-Suite-ZIP wählen");
+    private readonly Button btnServerSuite = Button("Server-Suite-Setup wählen");
     private readonly Button btnWinRm = Button("Test WinRM");
     private readonly Button btnScan = Button("Prüfen");
     private readonly Button btnDatabaseCheck = Button("BETA: Database Check");
@@ -962,15 +962,21 @@ public sealed partial class MainForm : Form
 
     private void ChooseServerSuite()
     {
-        using OpenFileDialog dialog = new() { Filter = "ZIP (*.zip)|*.zip", Title = "Server-Suite-Update auswählen" };
+        using OpenFileDialog dialog = new() { Filter = "Server-Suite-Setup (*.exe)|*.exe|Bisheriges ZIP-Paket (*.zip)|*.zip", Title = "Server-Suite-Update auswählen" };
         if (ShowIndividualPackageDialog(() => dialog.ShowDialog(this)) != DialogResult.OK) return;
-        if (!UpdatePackageNames.TryServerSuiteVersion(dialog.FileName, out string version))
+        try
         {
-            ShowIndividualPackageDialog(() => MessageBox.Show(this, "Ungültiger ZIP-Dateiname. Erwartet: nt.server.suite-2026.4.9792.zip",
-                "Server-Suite-Update", MessageBoxButtons.OK, MessageBoxIcon.Warning));
-            return;
+            string version;
+            if (ServerSuiteInstaller.IsSetup(dialog.FileName)) version = ServerSuiteInstaller.ReadVersion(dialog.FileName);
+            else if (!UpdatePackageNames.TryServerSuiteVersion(dialog.FileName, out version))
+                throw new InvalidDataException("Ungültiger ZIP-Dateiname. Erwartet: nt.server.suite-2026.4.9792.zip");
+            SelectIndividualPackage(new SoftwarePackage(UpdateComponents.ServerSuite, dialog.FileName, version));
         }
-        SelectIndividualPackage(new SoftwarePackage(UpdateComponents.ServerSuite, dialog.FileName, version));
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+        {
+            ShowIndividualPackageDialog(() => MessageBox.Show(this, ex.Message,
+                "Server-Suite-Update", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+        }
     }
 
     private async Task TransferFilesAsync()
@@ -1252,7 +1258,8 @@ public sealed partial class MainForm : Form
         FiscalZip = (components & UpdateComponents.Fiscal) != 0 ? fiscalZip : "",
         FiscalVersion = (components & UpdateComponents.Fiscal) != 0 ? fiscalVersion : "",
         FiscalSha256 = (components & UpdateComponents.Fiscal) != 0 ? fiscalHash : "",
-        ServerSuiteZip = (components & UpdateComponents.ServerSuite) != 0 ? serverSuiteZip : "",
+        ServerSuiteZip = (components & UpdateComponents.ServerSuite) != 0 && !ServerSuiteInstaller.IsSetup(serverSuiteZip) ? serverSuiteZip : "",
+        ServerSuiteSetup = (components & UpdateComponents.ServerSuite) != 0 && ServerSuiteInstaller.IsSetup(serverSuiteZip) ? serverSuiteZip : "",
         ServerSuiteVersion = (components & UpdateComponents.ServerSuite) != 0 ? serverSuiteVersion : "",
         ServerSuiteSha256 = (components & UpdateComponents.ServerSuite) != 0 ? serverSuiteHash : ""
         };
@@ -1486,6 +1493,7 @@ public sealed partial class MainForm : Form
                     Mark(host, h =>
                     {
                         state.CompletedServiceNames.UnionWith(result.CompletedServiceNames);
+                        h.RebootRequired |= result.RebootRequired;
                         if (result.Services.Length > 0)
                         {
                             h.Services = result.Services.ToList();

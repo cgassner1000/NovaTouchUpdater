@@ -5,7 +5,7 @@ namespace NovaTouchUpdater;
 internal static class UpdatePackageNames
 {
     private static readonly Regex ServerSuiteFormat = new(
-        @"^nt\.server\.suite-(\d+\.\d+\.\d+(?:\.\d+)?)(?:[-_].*)?\.zip$",
+        @"^nt\.server\.suite-(\d+\.\d+\.\d+(?:\.\d+)?)(?:[-_].*)?\.(?:zip|exe)$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     public static bool TryServerSuiteVersion(string path, out string version)

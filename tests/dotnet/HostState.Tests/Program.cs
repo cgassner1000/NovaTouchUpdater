@@ -44,8 +44,8 @@ Assert(new WorkerRequest().HttpsPort == 5986 &&
 Assert(UpdatePackageNames.TryServerSuiteVersion(@"C:\updates\nt.server.suite-2026.4.9792.zip", out string suiteTarget) && suiteTarget == "2026.4.9792",
     "server-suite target version is read from the ZIP filename");
 Assert(UpdatePackageNames.TryServerSuiteVersion("NT.SERVER.SUITE-2026.4.9792.1-release.zip", out string suiteRevision) && suiteRevision == "2026.4.9792.1" &&
-    !UpdatePackageNames.TryServerSuiteVersion("nt.server.suite-2026.4.zip", out _) && !UpdatePackageNames.TryServerSuiteVersion("nt.server.suite-2026.4.9792.exe", out _) &&
-    !UpdatePackageNames.TryServerSuiteVersion("other-2026.4.9792.zip", out _), "server-suite file selection requires the expected prefix, ZIP extension and a complete version");
+    !UpdatePackageNames.TryServerSuiteVersion("nt.server.suite-2026.4.zip", out _) && UpdatePackageNames.TryServerSuiteVersion("nt.server.suite-2026.4.9792.exe", out _) &&
+    !UpdatePackageNames.TryServerSuiteVersion("other-2026.4.9792.zip", out _), "server-suite filenames require the expected prefix, ZIP/EXE extension and a complete version");
 Assert(DisplayText.ServiceVersions([]) == "Nicht installiert", "a successfully read empty service inventory is shown as not installed");
 Assert(DisplayText.ServiceVersions([new ServiceInfo { ProductVersion="1.2.3.4" }]) == "1.2.3.4" &&
     DisplayText.ServiceVersions([new ServiceInfo { FileVersion="2.3.4.5" }]) == "2.3.4.5", "installed services keep product versions and file-version fallback");

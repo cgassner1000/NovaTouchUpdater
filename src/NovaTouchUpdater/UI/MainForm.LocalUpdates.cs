@@ -85,7 +85,7 @@ public sealed partial class MainForm
         selector.Controls.Add(FlowRow(browseSoftware, readPackages), 1, 0);
         var card = Section("Installations-Pakete", Stack(new Label
         {
-            Text = "Softwareordner mit ZIP- und MSI-Paketen (inkl. Unterordner):", AutoSize = true, Dock = DockStyle.Fill
+            Text = "Softwareordner mit Setup-, ZIP- und MSI-Paketen (inkl. Unterordner):", AutoSize = true, Dock = DockStyle.Fill
         }, selector, packageStatus));
         card.Name = "localUpdateCard";
         browseSoftware.Click += async (_, _) =>
@@ -302,7 +302,9 @@ public sealed partial class MainForm
         text.AppendLine("\nNur bereits installierte Komponenten werden aktualisiert.");
         if ((needed & UpdateComponents.ZipServices) != 0)
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Payment/Fiscal: zusätzliche Client-Dateien bleiben erhalten.");
-        if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen. Inhalt von portable_python vor dem Kopieren löschen; vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. EventLog bleibt während der Installation gestoppt. Deaktivierte Dienste bleiben deaktiviert.");
+        if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen. " +
+            (ServerSuiteInstaller.IsSetup(serverSuiteZip) ? "Setup je Instanz still mit explizitem Dienstnamen und Installationspfad ausführen. Kein automatischer Windows-Neustart. " : "Bisheriges ZIP-Verfahren. ") +
+            "Vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. Konfiguration und Dienstkonten bleiben erhalten. EventLog bleibt während der Installation gestoppt. Deaktivierte Dienste bleiben deaktiviert.");
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
         if (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0)
         {

@@ -38,6 +38,7 @@ public sealed class WorkerRequest
     public string PaymentSha256 { get; set; } = "";
     public string FiscalSha256 { get; set; } = "";
     public string ServerSuiteZip { get; set; } = "";
+    public string ServerSuiteSetup { get; set; } = "";
     public string ServerSuiteVersion { get; set; } = "";
     public string ServerSuiteSha256 { get; set; } = "";
     public TransferFileRequest[] TransferFiles { get; set; } = [];
@@ -177,7 +178,7 @@ public sealed class WorkerRunner : IWorkerRunner
         string script = reader.ReadToEnd();
         if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
         {
-            foreach (string helper in new[] { "UpdateSteps", "UploadDirectory", "MsiUpdates", "SoftwareDatabase", "DatabaseStreaming", "RemoteSoftwareDatabase" })
+            foreach (string helper in new[] { "UpdateSteps", "ServerSuiteSetup", "UploadDirectory", "MsiUpdates", "SoftwareDatabase", "DatabaseStreaming", "RemoteSoftwareDatabase" })
             {
                 using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream($"NovaTouchUpdater.{helper}.ps1")
                     ?? throw new InvalidOperationException($"Die eingebetteten Schritte {helper} fehlen.");

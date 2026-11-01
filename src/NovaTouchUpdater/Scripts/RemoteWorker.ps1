@@ -114,12 +114,15 @@ function GetUpdateTargets($request) {
         @{ Kind='serversuite'; Prefix='ServerSuite'; Label='Server-Suite' }
     )) {
         $zipProperty=$request.PSObject.Properties[$component.Prefix + 'Zip']
+        if ($component.Kind -eq 'serversuite' -and $null -ne $request.PSObject.Properties['ServerSuiteSetup'] -and $request.ServerSuiteSetup) {
+            $zipProperty=$request.PSObject.Properties['ServerSuiteSetup']
+        }
         if ($null -eq $zipProperty -or [string]::IsNullOrWhiteSpace([string]$zipProperty.Value)) { continue }
         $versionProperty=$request.PSObject.Properties[$component.Prefix + 'Version']
         if ($null -eq $versionProperty -or [string]::IsNullOrWhiteSpace([string]$versionProperty.Value)) { throw "$($component.Label)-ZIP ausgewählt, aber Zielversion fehlt." }
         $targets[$component.Kind]=[string]$versionProperty.Value
     }
-    if ($targets.Count -eq 0) { throw 'Keine Update-ZIP ausgewählt.' }
+    if ($targets.Count -eq 0) { throw 'Kein Update-Paket ausgewählt.' }
     return $targets
 }
 
@@ -357,7 +360,8 @@ try {
             if ($forUpdate) {
                 $uploadRequired=$false
                 if (-not [bool]$req.SkipZipTransfer) {
-                    if ($req.PaymentZip -or $req.FiscalZip -or $req.ServerSuiteZip) {
+                    if ($req.PaymentZip -or $req.FiscalZip -or $req.ServerSuiteZip -or
+                        ($null -ne $req.PSObject.Properties['ServerSuiteSetup'] -and $req.ServerSuiteSetup)) {
                         $inventory=@(InvokeWorkerCommand -Session $session -ScriptBlock ${function:ReadInventory} -ErrorAction Stop)
                         $checkTargets=GetUpdateTargets $req
                         $force=($null -ne $req.PSObject.Properties['ForceUpdate'] -and [bool]$req.ForceUpdate) -or
@@ -504,6 +508,13 @@ try {
             exit 0
         }
         if ($localExecution) { AssertLocalUpdateAccess }
+
+        if ($null -ne $req.PSObject.Properties['ServerSuiteSetup'] -and $req.ServerSuiteSetup) {
+            if ($targets.Count -ne 1 -or $req.ServerSuiteZip) { throw 'Server-Suite-Setup muss als separate Komponente ausgeführt werden.' }
+            $setupResult = InvokeServerSuiteSetupUpdate $req $session $pending $services
+            Emit $setupResult
+            if ($setupResult.Success) { exit 0 } else { exit 1 }
+        }
 
         $skipZipTransfer = -not $localExecution -and [bool]$req.SkipZipTransfer
         if ($skipLocalPackageCopy) {
