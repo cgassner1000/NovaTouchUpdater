@@ -14,9 +14,9 @@ internal static partial class Program
         var remoteDirectOption = Field<CheckBox>(form, "chkSkipRemotePackageCopy");
         var destination = Field<TextBox>(form, "txtRemotePath");
         var settings = (TableLayoutPanel)localOption.Parent!;
-        Assert(localOption.Text == "Paketdateien direkt verwenden – ohne zusätzliche Kopie" &&
-            remoteOption.Text == "REMOTE: Vorhandene Update-Dateien auf dem Zielrechner verwenden" &&
-            remoteDirectOption.Text == "REMOTE: Paketdateien direkt verwenden - keine zusätzliche Kopie" &&
+        Assert(localOption.Text == "Installationspakete nicht Lokal ablegen" &&
+            remoteOption.Text == "Kein upload, vorhandene Update-Dateien auf dem Zielrechner verwenden" &&
+            remoteDirectOption.Text == "Paketdateien direkt verwenden - keine zusätzliche Kopie" &&
             settings.GetRow(localOption) < settings.GetRow(remoteDirectOption) && settings.GetRow(remoteDirectOption) < settings.GetRow(remoteOption),
             "the new remote direct-package switch appears above reuse of existing remote packages");
         destination.Text = "";

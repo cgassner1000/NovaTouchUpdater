@@ -54,8 +54,8 @@ public sealed partial class MainForm : Form
     private readonly NumericUpDown nHttpsPort = new();
     private readonly CheckBox chkSsl = new ModernToggleSwitch();
     private readonly CheckBox chkIrisTls = new ModernToggleSwitch { Name = "irisUseTls", Text = "BETA: IRIS-Verbindung mit TLS", AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly CheckBox chkUploadToZzzSoftware = new ModernToggleSwitch { Name = "uploadToZzzSoftware", Text = "Upload nach zzzSoftware", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly CheckBox chkRestartPosAfterUpdate = new ModernToggleSwitch { Name = "restartPosAfterUpdate", Text = "POS neustart für update", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkUploadToZzzSoftware = new ModernToggleSwitch { Name = "uploadToZzzSoftware", Text = "Installationspakete in Datenbank hochladen", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkRestartPosAfterUpdate = new ModernToggleSwitch { Name = "restartPosAfterUpdate", Text = "NovaTouch POS nach Datenbank-upload neu starten", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkForceUpdate = new ModernToggleSwitch();
     private readonly CheckBox chkSkipZipTransfer = new ModernToggleSwitch();
     private readonly CheckBox chkSkipLocalPackageCopy = new ModernToggleSwitch();
@@ -323,6 +323,31 @@ public sealed partial class MainForm : Form
         return row;
     }
 
+    private static Control SettingsDivider(string title)
+    {
+        var row = new TableLayoutPanel
+        {
+            Name = title.ToLowerInvariant() + "SettingsDivider", AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, Anchor = AnchorStyles.Left,
+            ColumnCount = 2, RowCount = 1, Margin = new Padding(3, 12, 3, 6), TabStop = false
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        row.Controls.Add(new Label
+        {
+            Text = title, AutoSize = true, Anchor = AnchorStyles.Left,
+            Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), ForeColor = UiTheme.Muted,
+            Margin = new Padding(0, 0, 12, 0)
+        }, 0, 0);
+        row.Controls.Add(new Panel
+        {
+            Width = 110, Height = 1, Anchor = AnchorStyles.Left,
+            BackColor = UiTheme.Border, Margin = Padding.Empty, TabStop = false
+        }, 1, 0);
+        return row;
+    }
+
     private void ConstructUi()
     {
         var main = new TableLayoutPanel
@@ -447,13 +472,13 @@ public sealed partial class MainForm : Form
         chkForceUpdate.Anchor = AnchorStyles.Left;
         chkForceUpdate.Margin = new Padding(3);
         chkForceUpdate.Checked = false;
-        chkSkipLocalPackageCopy.Text = "Paketdateien direkt verwenden – ohne zusätzliche Kopie";
+        chkSkipLocalPackageCopy.Text = "Installationspakete nicht Lokal ablegen";
         chkSkipLocalPackageCopy.AutoSize = true;
         chkSkipLocalPackageCopy.Anchor = AnchorStyles.Left;
-        chkSkipRemotePackageCopy.Text = "REMOTE: Paketdateien direkt verwenden - keine zusätzliche Kopie";
+        chkSkipRemotePackageCopy.Text = "Paketdateien direkt verwenden - keine zusätzliche Kopie";
         chkSkipRemotePackageCopy.AutoSize = true;
         chkSkipRemotePackageCopy.Anchor = AnchorStyles.Left;
-        chkSkipZipTransfer.Text = "REMOTE: Vorhandene Update-Dateien auf dem Zielrechner verwenden";
+        chkSkipZipTransfer.Text = "Kein upload, vorhandene Update-Dateien auf dem Zielrechner verwenden";
         chkSkipZipTransfer.AutoSize = true;
         chkSkipZipTransfer.TextAlign = ContentAlignment.MiddleLeft;
         chkSkipZipTransfer.Anchor = AnchorStyles.Left;
@@ -480,8 +505,10 @@ public sealed partial class MainForm : Form
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
         executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
-        var settingsContent = Stack(chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkRestartPosAfterUpdate, chkSkipLocalPackageCopy, chkSkipRemotePackageCopy, chkSkipZipTransfer, chkForceUpdate, targetPath, FlowRow(btnSaveConfig));
+        var settingsContent = Stack(SettingsDivider("ALLGEMEIN"), chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
+            login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkForceUpdate, chkRestartPosAfterUpdate, targetPath,
+            SettingsDivider("LOKAL"), chkSkipLocalPackageCopy,
+            SettingsDivider("REMOTE"), chkSkipRemotePackageCopy, chkSkipZipTransfer, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(0, 0, 0, 12);
@@ -1039,7 +1066,7 @@ public sealed partial class MainForm : Form
             return;
         }
         if (MessageBox.Show(this,
-            $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'REMOTE: Vorhandene Update-Dateien auf dem Zielrechner verwenden' aktiviert ist.",
+            $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'Kein upload, vorhandene Update-Dateien auf dem Zielrechner verwenden' aktiviert ist.",
             "Dateiübertragung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
         CaptureCredentials();
