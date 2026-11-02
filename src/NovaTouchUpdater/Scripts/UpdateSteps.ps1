@@ -1,4 +1,36 @@
 # Serialized into authenticated remote sessions by RemoteWorker.ps1.
+function StopServerSuiteProcesses {
+    $ErrorActionPreference = 'Stop'
+    $phase = 'Server-Suite-Prozesse beenden'
+    $processes = @(Get-Process -ErrorAction Stop | Where-Object { $_.ProcessName -like 'nt3_server_suite*' })
+    if ($processes.Count -eq 0) {
+        [pscustomobject]@{ Event='progress'; Phase=$phase; Message='Keine verbliebenen nt3_server_suite*-Prozesse gefunden'; ProgressPercent=$null }
+        return
+    }
+    [pscustomobject]@{ Event='progress'; Phase=$phase;
+        Message=("Beende $($processes.Count) verbliebene Prozesse: " + (($processes | ForEach-Object { "$($_.ProcessName) (PID $($_.Id))" }) -join ', ')); ProgressPercent=$null }
+    $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+    $LASTEXITCODE = -1
+    try {
+        # Native stderr is captured as diagnostics, including processes which
+        # exit between enumeration and taskkill. Verify actual survivors below.
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $taskkill /F /FI 'IMAGENAME eq nt3_server_suite*' /IM '*' 2>&1)
+        $killExitCode = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = 'Stop' }
+    for ($attempt = 0; $attempt -lt 25; $attempt++) {
+        $remaining = @(Get-Process -ErrorAction Stop | Where-Object { $_.ProcessName -like 'nt3_server_suite*' })
+        if ($remaining.Count -eq 0) { break }
+        if ($attempt -lt 24) { Start-Sleep -Milliseconds 200 }
+    }
+    if ($remaining.Count -gt 0) {
+        $names = ($remaining | ForEach-Object { "$($_.ProcessName) (PID $($_.Id))" }) -join ', '
+        throw "Server-Suite-Prozesse konnten nicht beendet werden: $names. taskkill Exitcode ${killExitCode}: $($output -join ' ')"
+    }
+    [pscustomobject]@{ Event='progress'; Phase=$phase; Message='Alle nt3_server_suite*-Prozesse sind beendet'; ProgressPercent=$null }
+}
+
 function PrepareUpdatePackages {
     param([string]$base, [string]$kindsCsv, [string]$pZip, [string]$fZip, [string]$sZip)
     $ErrorActionPreference = 'Stop'
@@ -371,6 +403,7 @@ function InstallUpdatePackages {
             $stoppedCount++
             UpdateProgress 'Dienste stoppen' ("Dienst '$($svc.Name)' ist gestoppt ($stoppedCount/$($stopServices.Count))") ([int][Math]::Floor(50.0 * $stoppedCount / $stopServices.Count))
         }
+        if ($suiteNames.Count -gt 0) { StopServerSuiteProcesses }
         foreach ($plan in $allPlans) {
             $component = switch ($plan.Kind) {
                 'payment' { 'nt.payment' }

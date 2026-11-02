@@ -11,6 +11,7 @@ $env:TEMP = Join-Path $fixture 'temp'
 $env:TMP = $env:TEMP
 [void][IO.Directory]::CreateDirectory($env:TEMP)
 . ([scriptblock]::Create((Get-Content -LiteralPath (Join-Path $TestScriptsRoot 'ServerSuiteSetup.ps1') -Raw -Encoding UTF8)))
+. (Join-Path $PSScriptRoot '..\Shared\ServerSuiteProcesses.ps1')
 
 # Compile the actual installer code against tiny fixtures, never execute it.
 $iss = Get-Content -LiteralPath (Join-Path $SuiteRepository 'installer\nt3-server-suite-setup.iss') -Raw -Encoding UTF8
@@ -80,6 +81,7 @@ function NewState {
     $script:eventLog = [pscustomobject]@{ Name='EventLog'; Status='Running' }
     $eventLog | Add-Member ScriptMethod WaitForStatus { param($state,$timeout) if ([string]$this.Status -ne [string]$state) { throw 'State mismatch' } }
     $script:copyCount=0; $script:staleInstance=''
+    ResetSuiteProcessFixture $script:trace $script:states
 }
 function Get-Service {
     [CmdletBinding()]param([string]$Name)
@@ -110,6 +112,7 @@ function Start-Process {
     Assert ($FilePath -eq $script:setup -or $FilePath -eq $script:copiedSetup) 'only verified fixture is passed to simulated setup'
     Assert ($Wait -and $PassThru -and $WindowStyle -eq 'Hidden') 'setup is synchronous and hidden'
     Assert (@($states.Values | Where-Object Status -ne 'Stopped').Count -eq 0) 'all suite services stay stopped until every setup finishes'
+    Assert (@($script:suiteProcesses | Where-Object ProcessName -Like 'nt3_server_suite*').Count -eq 0) 'setup cannot start while a suite process survives'
     Assert ($ArgumentList -match '/VERYSILENT' -and $ArgumentList -match '/NORESTART ' -and $ArgumentList -match '/UPDATER=1') 'silent setup prevents reboot and opts into safe instance protocol'
     Assert ($ArgumentList -match '/SERVICENAME="([^"]+)"') 'exact service name is explicit'
     $name=$Matches[1]; $record=@($script:records | Where-Object Name -eq $name)[0]
@@ -130,6 +133,20 @@ foreach ($start in @($trace | Where-Object { $_ -like 'start:*' })) {
     Assert ($trace.IndexOf($start) -gt $trace.IndexOf('setup:nt3_server_suite_OFF')) 'suite services start only after the last instance setup returns'
 }
 Assert ('start:nt3_server_suite_OFF' -notin $trace -and $states.nt3_server_suite_OFF.Status -eq 'Stopped') 'disabled service remains stopped'
+Assert ('taskkill:suite' -notin $trace) 'no leftover process is a successful no-op without taskkill'
+NewState; AddSuiteProcessFixtures
+$result=RunInstall
+Assert ($result.Errors.Count -eq 0 -and $trace.IndexOf('taskkill:suite') -lt $trace.IndexOf('setup:nt3_server_suite') -and
+    $script:suiteProcesses.Count -eq 1 -and $script:suiteProcesses[0].ProcessName -eq 'python') 'all suite process suffixes and casing are killed before setup; other process names survive'
+foreach ($fault in @('denied','survives')) {
+    NewState; AddSuiteProcessFixtures; $script:suiteProcessFault=$fault
+    $result=RunInstall
+    Assert ($result.Errors.Count -gt 0 -and $result.Errors[0] -match 'taskkill Exitcode' -and
+        @($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 0 -and 'start:nt3_server_suite' -in $trace) 'a surviving process blocks every setup and still attempts service recovery'
+}
+NewState; AddSuiteProcessFixtures; $script:suiteProcessFault='disappeared'
+$result=RunInstall
+Assert ($result.Errors.Count -eq 0 -and $result.InstalledNames.Count -eq 3) 'processes which disappear during taskkill do not fail the setup'
 NewState; $script:exitCodes.nt3_server_suite_ABC=4
 $result=RunInstall
 Assert ($result.Errors.Count -eq 1 -and $result.Errors[0] -match 'Exitcode 4' -and $result.Errors[0] -match 'Setup-Log:' -and $result.InstalledNames.Count -eq 2) 'failed instance keeps log and does not block other instances'
@@ -150,7 +167,7 @@ $result=RunInstall
 Assert ($result.Errors.Count -eq 0 -and $result.InstalledNames.Count -eq 3 -and $eventLog.Status -eq 'Stopped') 'an initially stopped EventLog is left unchanged'
 NewState; $script:stopFailure='nt3_server_suite_ABC'
 $result=RunInstall
-Assert ($result.Errors.Count -gt 0 -and @($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 0) 'a suite stop failure prevents all setup invocations'
+Assert ($result.Errors.Count -gt 0 -and @($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 0 -and 'process-scan' -notin $trace) 'a suite stop failure prevents process termination and all setup invocations'
 NewState; $script:startFailure='nt3_server_suite_ABC'
 $result=RunInstall
 Assert ($result.InstalledNames.Count -eq 2 -and $result.Errors.Count -eq 1) 'one failed service start preserves successful instance checkpoints'
@@ -190,8 +207,10 @@ Assert ($result.Success -and $result.CompletedServiceNames.Count -eq 3 -and $cop
 NewState
 $request.SkipLocalPackageCopy=$false; $request.RemoteInstallPath=Join-Path $fixture 'remote target'
 $script:copiedSetup=Join-Path $request.RemoteInstallPath ([IO.Path]::GetFileName($setup))
+AddSuiteProcessFixtures
 $result=InvokeServerSuiteSetupUpdate $request 'remote' $records $records
 Assert ($result.Success -and $copyCount -eq 1) 'remote setup is copied once for all instances, then revalidated on target'
+Assert ('taskkill:suite' -in $trace) 'remote setup includes process termination in its serialized script'
 Assert (@($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 3) 'remote update invokes the silent setup separately for every installed instance'
 NewState; $script:staleInstance='nt3_server_suite_ABC'
 $result=InvokeServerSuiteSetupUpdate $request 'remote' $records $records

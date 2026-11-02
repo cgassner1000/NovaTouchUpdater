@@ -12,7 +12,7 @@ function AssertServerSuiteSetup {
     if ([version](([string]$info.ProductVersion).Trim()) -ne [version]$Version) { throw "Server-Suite-Setup hat nicht die Zielversion ${Version}: $($info.ProductVersion)" }
 }
 
-# Self-contained except for AssertServerSuiteSetup, serialized into the existing
+# Self-contained except for AssertServerSuiteSetup/StopServerSuiteProcesses, serialized into the existing
 # authenticated session. Only the setup performs deployment/cleanup.
 function InstallServerSuiteSetup {
     param([string]$Setup, [string]$Hash, [string]$Version, [string]$PendingJson, [string]$AllJson)
@@ -77,6 +77,7 @@ function InstallServerSuiteSetup {
             if ($service.Status -ne 'Stopped') { Stop-Service -Name ([WildcardPattern]::Escape([string]$svc.Name)) -Force -ErrorAction Stop }
             $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
         }
+        StopServerSuiteProcesses
         foreach ($plan in $plans) {
             $log = Join-Path $logRoot (($plan.Name -replace '[^a-zA-Z0-9_.-]', '_') + '-' + [guid]::NewGuid().ToString('N') + '.log')
             try {
@@ -128,7 +129,7 @@ function InvokeServerSuiteSetupUpdate($request, $session, $pending, $services) {
         if ($direct -or $skipTransfer) { throw "Vorhandenes Server-Suite-Setup fehlt oder SHA256 stimmt nicht: $target" }
         CopyRemoteFileWithProgress $session $source $target 'Server-Suite-Setup'
     }
-    $script = 'param($setup,$hash,$version,$pendingJson,$allJson); function AssertServerSuiteSetup {' + ${function:AssertServerSuiteSetup}.ToString() + '}; function InstallServerSuiteSetup {' + ${function:InstallServerSuiteSetup}.ToString() + '}; InstallServerSuiteSetup $setup $hash $version $pendingJson $allJson'
+    $script = 'param($setup,$hash,$version,$pendingJson,$allJson); function StopServerSuiteProcesses {' + ${function:StopServerSuiteProcesses}.ToString() + '}; function AssertServerSuiteSetup {' + ${function:AssertServerSuiteSetup}.ToString() + '}; function InstallServerSuiteSetup {' + ${function:InstallServerSuiteSetup}.ToString() + '}; InstallServerSuiteSetup $setup $hash $version $pendingJson $allJson'
     $argsList = @($target, $hash, $version, (ConvertTo-Json -InputObject @($pending) -Depth 12 -Compress), (ConvertTo-Json -InputObject @($services) -Depth 12 -Compress))
     $outcome = InvokeWorkerCommand -Session $session -ArgumentList $argsList -ScriptBlock ([scriptblock]::Create($script)) -ErrorAction Stop | ForEach-Object {
         if ($_.Event -eq 'progress') { Progress ([string]$_.Phase) ([string]$_.Message) } else { $_ }

@@ -16,6 +16,7 @@ Assert ($script:fixture.StartsWith($workspace + '\artifacts\test-results\', [Str
 [void][IO.Directory]::CreateDirectory($script:fixture)
 . ([scriptblock]::Create((Get-Content -LiteralPath (Join-Path $TestScriptsRoot 'UpdateSteps.ps1') -Raw -Encoding UTF8)))
 . ([scriptblock]::Create((Get-Content -LiteralPath (Join-Path $TestScriptsRoot 'UploadDirectory.ps1') -Raw -Encoding UTF8)))
+. (Join-Path $PSScriptRoot '..\Shared\ServerSuiteProcesses.ps1')
 
 function FixturePath([string]$path) {
     $full = [IO.Path]::GetFullPath($path)
@@ -94,6 +95,9 @@ function Remove-Item {
 function Copy-Item {
     [CmdletBinding()] param([string]$LiteralPath, [string]$Destination, [switch]$Recurse, [switch]$Force, $ToSession)
     if ($null -eq $ToSession) { AssertLivePhase 'Update installieren' }
+    if ($null -eq $ToSession -and $script:request.ServerSuiteZip) {
+        Assert (@($script:suiteProcesses | Where-Object ProcessName -Like 'nt3_server_suite*').Count -eq 0) 'Suite files cannot change while a matching process survives'
+    }
     $source = FixturePath $LiteralPath
     $target = FixturePath $Destination
     $script:events.Add($(if ($null -ne $ToSession) { 'transfer:' } else { 'copy:' }) + $target)
@@ -164,6 +168,7 @@ function ResetCase([string]$name) {
     [void][IO.Directory]::CreateDirectory($script:case)
     $script:events = [Collections.Generic.List[string]]::new()
     $script:serviceStates = @{}; $script:installed = @(); $script:pythonRoots=@()
+    ResetSuiteProcessFixture $script:events $script:serviceStates
     $script:stopFailure=''; $script:startFailure=''; $script:copyFailure=''; $script:reparsePath=''
     $script:deleteFailure=''
     $script:eventLogService = [pscustomobject]@{ Name='EventLog'; Status='Running' }
@@ -263,7 +268,7 @@ function AssertEventLogUnchanged {
     Assert (@($script:events | Where-Object { $_ -match '^(stop|start|restart):EventLog$' }).Count -eq 0) 'No update may stop, start or restart Windows EventLog'
 }
 function NoServiceOrTargetChanges {
-    Assert (@($script:events | Where-Object { $_ -match '^(stop|start|restart|copy):' -or ($_ -match '^delete:' -and $_ -notmatch '\.novatouch-updater-stage-' -and $_ -notmatch '\\\.ntu-[a-f0-9]{32}$') }).Count -eq 0) 'Invalid payload must not stop services, restart EventLog or change installed files'
+    Assert (@($script:events | Where-Object { $_ -match '^(stop|start|restart|copy|taskkill):' -or ($_ -match '^delete:' -and $_ -notmatch '\.novatouch-updater-stage-' -and $_ -notmatch '\\\.ntu-[a-f0-9]{32}$') }).Count -eq 0) 'Invalid payload must not stop services, kill processes or change installed files'
     foreach ($svc in $script:installed) {
         $version = if ($svc.Kind -eq 'serversuite') { [IO.File]::ReadAllText((Join-Path $svc.InstallDir 'version.txt')) } else { [IO.File]::ReadAllText($svc.ExePath) }
         Assert ($version -eq $svc.ProductVersion) 'Original installation must survive validation failure'
@@ -276,6 +281,30 @@ function NoServiceOrTargetChanges {
 function Passed([string]$message) { Write-Output ('PASS ' + $message) }
 
 try {
+    foreach ($local in @($true,$false)) {
+        ResetCase ('leftover-processes-' + $local); Service 'a' 'one'; Service 'b' 'two'; Package
+        $script:request.LocalExecution=$local; AddSuiteProcessFixtures
+        $result=RunWorker
+        $firstCopy=@($script:events | Where-Object { $_ -like 'copy:*' })[0]
+        Assert ($result.Changed -and $script:events.IndexOf('taskkill:suite') -lt $script:events.IndexOf($firstCopy) -and
+            $script:suiteProcesses.Count -eq 1 -and $script:suiteProcesses[0].ProcessName -eq 'python') 'All matching suite processes must be killed after service stop and before copying, locally and remotely'
+        Passed ('leftover suite processes removed before ZIP installation, local=' + $local)
+    }
+    foreach ($fault in @('denied','survives')) {
+        ResetCase ('taskkill-' + $fault); Service 'a' 'one'; Package; AddSuiteProcessFixtures
+        $script:suiteProcessFault=$fault
+        $null=RunWorker $false 'taskkill Exitcode'
+        Assert (@($script:events | Where-Object { $_ -like 'copy:*' }).Count -eq 0 -and 'start:nt3_server_suite_a' -in $script:events) 'A surviving process prevents installation while still attempting service recovery'
+        Passed ('ZIP installation blocked by surviving suite process, fault=' + $fault)
+    }
+    ResetCase 'taskkill-race'; Service 'a' 'one'; Package; AddSuiteProcessFixtures; $script:suiteProcessFault='disappeared'
+    $null=RunWorker
+    Passed 'Processes disappearing during taskkill do not fail ZIP installation'
+    ResetCase 'unrelated-processes'; Component 'payment'; Package @{ 'component.exe'='1.2.3.4' } 'payment'; AddSuiteProcessFixtures
+    $null=RunWorker
+    Assert ('process-scan' -notin $script:events -and 'taskkill:suite' -notin $script:events -and $script:suiteProcesses.Count -eq 4) 'Payment-only updates must not inspect or kill suite processes'
+    Passed 'Payment-only updates leave all suite processes untouched'
+
     ResetCase 'local-suite'
     Service 'a' 'one'; Service 'b' 'two'; Package
     $script:request.LocalExecution=$true; $script:request.Host='LOCALHOST'

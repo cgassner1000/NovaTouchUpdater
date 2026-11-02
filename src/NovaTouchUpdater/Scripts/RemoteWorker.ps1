@@ -682,7 +682,8 @@ try {
             $allServicesJson = ConvertTo-Json -InputObject @($services) -Depth 12 -Compress
             $filesInstalled = [Collections.Generic.List[string]]::new()
             $installError = ''
-            try { InvokeWorkerCommand -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget, $allServicesJson -ErrorAction Stop -ScriptBlock ${function:InstallUpdatePackages} |
+            $installScript = 'param($wantedJson,$stageDir,$suiteTargetVersion,$allServicesJson); function StopServerSuiteProcesses {' + ${function:StopServerSuiteProcesses}.ToString() + '}; function InstallUpdatePackages {' + ${function:InstallUpdatePackages}.ToString() + '}; InstallUpdatePackages $wantedJson $stageDir $suiteTargetVersion $allServicesJson'
+            try { InvokeWorkerCommand -Session $session -ArgumentList $wantedJson, $stage, $suiteTarget, $allServicesJson -ErrorAction Stop -ScriptBlock ([scriptblock]::Create($installScript)) |
                 ForEach-Object {
                     if ($null -ne $_ -and $null -ne $_.PSObject.Properties['Event'] -and $_.Event -eq 'progress') {
                         Progress ([string]$_.Phase) ([string]$_.Message) $_.ProgressPercent
