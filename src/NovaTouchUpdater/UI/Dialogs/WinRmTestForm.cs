@@ -44,9 +44,10 @@ internal sealed class WinRmTestForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         summary.Dock = DockStyle.Fill;
         summary.AutoSize = true;
-        summary.Text = $"{hosts.Length} Hosts; maximal {this.parallelism} Hosts parallel. Remote-Protokoll: {protocol}.\nZuerst lokales WinRM prüfen und TrustedHosts ergänzen, danach die ausgewählten Remote-Hosts testen.";
+        summary.Text = hosts.Length == 0 ? "Lokales WinRM prüfen und bei Bedarf starten; TrustedHosts vorbereiten."
+            : $"{hosts.Length} Hosts; maximal {this.parallelism} Hosts parallel. Remote-Protokoll: {protocol}.\nZuerst lokales WinRM prüfen und bei Bedarf starten, TrustedHosts ergänzen, danach die ausgewählten Remote-Hosts testen.";
         layout.Controls.Add(summary, 0, 0);
-        localStatus.Text = "Lokales WinRM prüfen und TrustedHosts vorbereiten …";
+        localStatus.Text = "Lokales WinRM vorbereiten und bei Bedarf starten …";
         localStatus.Margin = new Padding(3, 8, 3, 10);
         layout.Controls.Add(localStatus, 0, 1);
         grid.Name = "winRmResults";
@@ -138,9 +139,10 @@ internal sealed class WinRmTestForm : Form
                     row.Tag = $"{row.Cells[0].Value} – {row.Cells[1].Value}\r\n{row.Cells[5].Value}. Es liegt kein vollständiges Testergebnis vor.";
                     for (int column = 2; column <= 4; column++) row.Cells[column].Value = "Nicht bestätigt";
                 }
-            summary.Text = $"{completed} von {diagnostics.Length} Hosttests abgeschlossen" +
+            summary.Text = (diagnostics.Length == 0 ? "Lokale WinRM-Vorbereitung beendet" : $"{completed} von {diagnostics.Length} Hosttests abgeschlossen") +
                 (cancellation.IsCancellationRequested ? " – abgebrochen." : ".") +
-                (preparationFailed ? "\nRemote-Tests wurden wegen eines Fehlers nicht fortgesetzt."
+                (preparationFailed ? "\nWinRM-Vorbereitung fehlgeschlagen – siehe Details."
+                    : diagnostics.Length == 0 ? "\nKeine Remote-Hosts zum Testen ausgewählt."
                     : $"\nRemote-Protokoll: {protocol}. Zeile auswählen für vollständige Details.");
             cancel.Enabled = true;
             cancel.Text = "Schließen";

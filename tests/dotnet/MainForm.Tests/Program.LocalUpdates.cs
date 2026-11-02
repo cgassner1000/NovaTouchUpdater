@@ -219,8 +219,8 @@ internal static partial class Program
         finally { File.Delete(configPath); }
         Field<TextBox>(form, "txtUser").Text = "unused-domain-user";
         Field<TextBox>(form, "txtPassword").Text = "";
-        Assert((bool)Call(form, "ValidateCredentials")! && !Field<Button>(form, "btnWinRm").Enabled && !Field<TextBox>(form, "txtUser").Enabled,
-            "local-only work requires no WinRM credentials or WinRM controls");
+        Assert((bool)Call(form, "ValidateCredentials")! && Field<Button>(form, "btnWinRm").Enabled && Field<TextBox>(form, "txtUser").Enabled,
+            "local-only work requires no WinRM credentials while connection settings and local WinRM diagnosis remain available");
         Complete((Task)Call(form, "RunScansAsync")!);
         Assert(worker.Requests.Count == 2 && worker.Requests.All(r => r.LocalExecution && r.Host == "LOCALHOST" && r.Username.Length == 0 && r.Password.Length == 0) && monitor.Requests.IsEmpty,
             "local scans and version reads run directly without any WinRM monitor request");

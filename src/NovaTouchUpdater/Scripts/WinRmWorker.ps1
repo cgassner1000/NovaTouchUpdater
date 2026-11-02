@@ -1,5 +1,6 @@
 ﻿# WinRM preparation and diagnostics; executed locally by WorkerRunner.
-# Preparation updates only local TrustedHosts; remote diagnostics remain read-only.
+# Preparation starts local WinRM when needed and updates local TrustedHosts.
+# Remote diagnostics remain read-only.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -37,7 +38,14 @@ function Initialize-LocalWinRm([string[]]$remoteHosts) {
     try { $service = Get-Service -Name WinRM -ErrorAction Stop }
     catch { throw "Der lokale WinRM-Dienst ist nicht installiert oder kann nicht abgefragt werden: $($_.Exception.Message)" }
     if ($service.Status -ne 'Running') {
-        throw 'WinRM ist lokal installiert, der Dienst läuft jedoch nicht. Bitte den WinRM-Dienst starten und den Test erneut ausführen.'
+        try {
+            if ($service.StartType -eq 'Disabled') { Set-Service -Name WinRM -StartupType Automatic -ErrorAction Stop }
+            if ($service.Status -eq 'StopPending') { $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) }
+            if ($service.Status -eq 'Paused') { Resume-Service -Name WinRM -ErrorAction Stop }
+            elseif ($service.Status -ne 'StartPending') { Start-Service -Name WinRM -ErrorAction Stop }
+            $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+        }
+        catch { throw "Der lokale WinRM-Dienst konnte nicht gestartet werden. Den Updater als Administrator ausführen und gegebenenfalls die Gruppenrichtlinie prüfen. $($_.Exception.Message)" }
     }
     try {
         $null = Get-Command -Name Test-WSMan -ErrorAction Stop

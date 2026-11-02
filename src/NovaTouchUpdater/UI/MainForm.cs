@@ -463,7 +463,7 @@ public sealed partial class MainForm : Form
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts. LOKAL wird direkt geprüft; Remote-Hosts über WinRM.");
         tips.SetToolTip(btnScan, "Nur Verbindung und installierte Versionen prüfen. Es werden keine Update-Dateien kopiert und keine Programme installiert.");
-        tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Zum Ergänzen von TrustedHosts sind Administratorrechte erforderlich.");
+        tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen und bei Bedarf starten, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Ohne Remote-Auswahl wird nur lokal getestet. Für Dienststart und TrustedHosts sind Administratorrechte erforderlich.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
         tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, lokale und beide Remote-Paketoptionen, Benutzer, Passwort, HTTPS, IRIS-TLS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
@@ -697,7 +697,7 @@ public sealed partial class MainForm : Form
         btnWinRm.Click += (_, _) =>
         {
             HostState[] targets = SelectedRemoteHosts();
-            if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
+            if (busy || selfUpdating || !ValidateCredentials()) return;
             using var dialog = new WinRmTestForm(targets.Select(h => h.Host).ToArray(),
                 txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked, (int)nHttpsPort.Value,
                 hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray());
@@ -1972,7 +1972,6 @@ public sealed partial class MainForm : Form
     {
         bool idle = !busy && !selfUpdating && !loadingPackages && !preparingDatabaseUpload;
         HostState[] selected = SelectedHosts();
-        bool remote = selected.Any(h => !h.IsLocal);
         updateNotice.Enabled = idle;
         btnImport.Enabled = btnEditHosts.Enabled = idle && Mode != UpdateExecutionMode.Local; btnSaveConfig.Enabled = idle;
         btnPayment.Enabled = idle; btnFiscal.Enabled = idle; btnServerSuite.Enabled = idle;
@@ -1981,7 +1980,7 @@ public sealed partial class MainForm : Form
         if (table.Columns.Contains("include")) table.Columns["include"].ReadOnly = !idle;
         foreach (HostState local in hosts.Where(h => h.IsLocal && h.Row is not null))
             local.Row!.Cells["include"].ReadOnly = !idle || LocalFallback;
-        btnWinRm.Enabled = idle && selected.Any(h => !h.IsLocal);
+        btnWinRm.Enabled = idle;
         btnScan.Enabled = idle && selected.Length > 0;
         btnDatabaseCheck.Visible = selected.Length > 0;
         btnDatabaseCheck.Enabled = idle && selected.Length > 0;
@@ -1991,16 +1990,16 @@ public sealed partial class MainForm : Form
         btnRetry.Enabled = idle && selected.Any(h => h.CanRetryUpdate);
         btnExport.Enabled = idle && hosts.Count > 0;
         btnCancel.Enabled = busy || selfUpdating || loadingPackages;
-        nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle && remote; chkForceUpdate.Enabled = idle;
+        nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle; chkForceUpdate.Enabled = idle;
         chkScanOnStartup.Enabled = idle;
-        nHttpsPort.Enabled = idle && remote && chkSsl.Checked;
-        txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle && remote;
-        chkSkipLocalPackageCopy.Enabled = idle && selected.Length > 0;
-        chkSkipRemotePackageCopy.Enabled = idle && remote;
-        chkIrisTls.Enabled = idle && selected.Length > 0;
+        nHttpsPort.Enabled = idle && chkSsl.Checked;
+        txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle;
+        chkSkipLocalPackageCopy.Enabled = idle;
+        chkSkipRemotePackageCopy.Enabled = idle;
+        chkIrisTls.Enabled = idle;
         chkUploadToZzzSoftware.Enabled = idle;
-        chkRestartPosAfterUpdate.Enabled = idle && remote;
-        txtUser.Enabled = txtPassword.Enabled = idle && remote; statusFilter.Enabled = idle;
+        chkRestartPosAfterUpdate.Enabled = idle;
+        txtUser.Enabled = txtPassword.Enabled = idle; statusFilter.Enabled = idle;
         executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = readPackages.Enabled = idle;
         useFolderPackages.Enabled = idle && individualPackageSelection && folderPackages.Length > 0;
         foreach (var controls in msiControls.Values) controls.Button.Enabled = idle;

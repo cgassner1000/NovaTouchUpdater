@@ -5,6 +5,7 @@ internal static partial class Program
 {
     private static void WinRmPreparationTests()
     {
+        SettingsAvailabilityTests();
         foreach (bool success in new[] { true, false })
         {
             var worker = new DiagnosticRunner { PreparationSucceeds = success };
@@ -50,6 +51,60 @@ internal static partial class Program
         Complete(operation);
         Assert(cancelledWorker.Requests.Count == 1 && All(cancelled).OfType<DataGridView>().Single().Rows[0].Cells[5].Value is "Abgebrochen",
             "cancelling local preparation prevents all remote tests and marks pending rows cancelled");
+
+        var localWorker = new DiagnosticRunner { PreparationSucceeds = true };
+        using var localDialog = new WinRmTestForm([], "", "", 1, false);
+        _ = localDialog.Handle;
+        Task localTest = localDialog.RunDiagnosticsAsync(localWorker);
+        localWorker.Prepared.SetResult(true);
+        Complete(localTest);
+        Assert(localWorker.Requests.ToArray() is [{ Action: "winrm-prepare", Hosts.Length: 0 }] &&
+            All(localDialog).OfType<DataGridView>().Single().Rows.Count == 0 &&
+            All(localDialog).OfType<TextBox>().Single().Text.Contains("TrustedHosts"),
+            "WinRM can be prepared and diagnosed locally without any remote host or remote credential request");
+    }
+
+    private static void SettingsAvailabilityTests()
+    {
+        using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
+        HostState[] hosts = Populate(form);
+        var mode = Field<ComboBox>(form, "executionMode");
+        var https = Field<CheckBox>(form, "chkSsl");
+        var port = Field<NumericUpDown>(form, "nHttpsPort");
+        Field<TextBox>(form, "txtUser").Text = "settings-test-user";
+        Field<TextBox>(form, "txtPassword").Text = "test-only";
+        https.Checked = true;
+        port.Value = 443;
+        Control[] settings = [Field<TextBox>(form, "txtUser"), Field<TextBox>(form, "txtPassword"), https,
+            Field<NumericUpDown>(form, "nScan"), Field<NumericUpDown>(form, "nUpdate"), Field<TextBox>(form, "txtRemotePath"),
+            Field<CheckBox>(form, "chkForceUpdate"), Field<CheckBox>(form, "chkScanOnStartup"),
+            Field<CheckBox>(form, "chkSkipLocalPackageCopy"), Field<CheckBox>(form, "chkSkipRemotePackageCopy"),
+            Field<CheckBox>(form, "chkSkipZipTransfer"), Field<CheckBox>(form, "chkIrisTls"),
+            Field<CheckBox>(form, "chkUploadToZzzSoftware"), Field<CheckBox>(form, "chkRestartPosAfterUpdate"),
+            Field<Button>(form, "btnSaveConfig")];
+        foreach (int execution in new[] { 0, 1, 2 })
+        {
+            mode.SelectedIndex = execution;
+            Assert(settings.All(control => control.Enabled) && port.Enabled && Field<Button>(form, "btnWinRm").Enabled,
+                $"all settings remain editable in execution mode {execution}");
+            var config = (UpdaterConfig)Call(form, "CaptureConfig")!;
+            Assert(config.Username == "settings-test-user" && config.UseSsl && config.HttpsPort == 443 &&
+                Field<TextBox>(form, "txtPassword").Text == "test-only",
+                "switching execution mode retains connection settings for configuration capture");
+        }
+        foreach (HostState host in hosts) host.IsSelected = false;
+        Call(form, "UpdateButtons");
+        Assert(Targets(form) is [{ IsLocal: true }] && settings.All(control => control.Enabled),
+            "all settings remain editable when every remote host is unchecked");
+        SetField(form, "busy", true);
+        Call(form, "UpdateButtons");
+        Assert(settings.All(control => !control.Enabled) && !port.Enabled && !Field<Button>(form, "btnWinRm").Enabled,
+            "settings and WinRM preparation remain locked during an active operation");
+        SetField(form, "busy", false);
+        https.Checked = false;
+        Call(form, "UpdateButtons");
+        Assert(settings.All(control => control.Enabled) && !port.Enabled,
+            "settings unlock after an operation while the HTTPS port follows its switch");
     }
 
     private sealed class DiagnosticRunner : IWorkerRunner

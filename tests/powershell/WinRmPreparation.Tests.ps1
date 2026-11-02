@@ -12,7 +12,7 @@ function Get-Service {
     $script:order.Add('service')
     Assert ($Name -eq 'WinRM') 'Only the local WinRM service may be inspected'
     if ($script:scenario -eq 'missing-service') { throw 'Service not installed' }
-    [pscustomobject]@{ Status = $(if ($script:scenario -eq 'stopped-service') { 'Stopped' } else { 'Running' }) }
+    return $script:service
 }
 function Test-WSMan {
     param($ComputerName, $ErrorAction)
@@ -38,43 +38,95 @@ function Set-Item {
 }
 function New-PSSession { throw 'Preparation must never open a remote session' }
 function Invoke-Command { throw 'Preparation must never execute a remote command' }
-function Start-Service { throw 'Checking local WinRM must not change service state' }
-function Set-Service { throw 'Checking local WinRM must not change service configuration' }
+function Start-Service {
+    param($Name, $ErrorAction)
+    Assert ($Name -eq 'WinRM') 'Only local WinRM may be started'
+    $script:order.Add('start')
+    if ($script:scenario -eq 'start-denied') { throw 'Access denied starting WinRM' }
+    $script:service.Status = 'StartPending'
+}
+function Resume-Service {
+    param($Name, $ErrorAction)
+    Assert ($Name -eq 'WinRM') 'Only local WinRM may be resumed'
+    $script:order.Add('resume')
+    $script:service.Status = 'StartPending'
+}
+function Set-Service {
+    param($Name, $StartupType, $ErrorAction)
+    Assert ($Name -eq 'WinRM' -and $StartupType -eq 'Automatic') 'Only disabled local WinRM may be enabled'
+    $script:order.Add('enable')
+    if ($script:scenario -eq 'activation-denied') { throw 'Policy denies changing WinRM' }
+    $script:service.StartType = $StartupType
+}
 foreach ($scenario in @('success', 'already-trusted', 'empty-list', 'existing-wildcard', 'missing-service', 'stopped-service',
-    'broken-wsman', 'read-denied', 'write-denied', 'policy-override', 'invalid-host')) {
+    'disabled-service', 'starting-service', 'stopping-service', 'paused-service', 'start-denied', 'start-timeout', 'activation-denied',
+    'local-only', 'broken-wsman', 'read-denied', 'write-denied', 'policy-override', 'invalid-host')) {
     $script:scenario = $scenario
     $script:order = [Collections.Generic.List[string]]::new()
     $script:writes = 0
+    $script:service = [pscustomobject]@{
+        Status = $(switch ($scenario) {
+            { $_ -in @('stopped-service','disabled-service','start-denied','start-timeout','activation-denied') } { 'Stopped'; break }
+            'starting-service' { 'StartPending' }
+            'stopping-service' { 'StopPending' }
+            'paused-service' { 'Paused' }
+            default { 'Running' }
+        })
+        StartType = $(if ($scenario -in @('disabled-service','activation-denied')) { 'Disabled' } else { 'Manual' })
+    }
+    $script:service | Add-Member ScriptMethod WaitForStatus {
+        param($status, $timeout)
+        $script:order.Add('wait:' + $status)
+        if ($script:scenario -eq 'start-timeout') { throw 'Timed out waiting for WinRM' }
+        $this.Status = [string]$status
+    }
     $script:stored = switch ($scenario) {
         'already-trusted' { 'keep.invalid,POS01,pos02' }
         'empty-list' { '' }
         'existing-wildcard' { '*.existing.invalid' }
+        'local-only' { '' }
         default { 'keep.invalid, POS01' }
     }
     $script:request = [pscustomobject]@{ Action = 'winrm-prepare'; Hosts = @(' pos01 ', 'POS02', 'pos02') }
     if ($scenario -eq 'invalid-host') { $script:request.Hosts = @('*.invalid') }
+    if ($scenario -eq 'local-only') { $script:request.Hosts = @() }
     $writer = [IO.StringWriter]::new(); $original = [Console]::Out
     try { [Console]::SetOut($writer); & ([scriptblock]::Create($source)) }
     finally { [Console]::SetOut($original) }
     $result = $writer.ToString() | ConvertFrom-Json
-    $succeeds = $scenario -in @('success', 'already-trusted', 'empty-list', 'existing-wildcard')
+    $succeeds = $scenario -in @('success', 'already-trusted', 'empty-list', 'existing-wildcard', 'stopped-service',
+        'disabled-service', 'starting-service', 'stopping-service', 'paused-service', 'local-only')
     Assert ($result.Success -eq $succeeds) "Unexpected preparation result ($scenario): $($result.Error)"
     Assert ($result.Tcp -eq 'Nicht getestet' -and $result.Session -eq 'Nicht getestet') 'Preparation must not run remote diagnostics'
     if ($succeeds) {
-        Assert ($script:stored -split ',' -icontains 'POS01') 'First requested host missing'
-        Assert ($script:stored -split ',' -icontains 'POS02') 'Second requested host missing'
-        Assert (@($script:stored -split ',' | Where-Object { $_ -ieq 'pos02' }).Count -eq 1) 'Hosts must not be duplicated'
+        if ($scenario -ne 'local-only') {
+            Assert ($script:stored -split ',' -icontains 'POS01') 'First requested host missing'
+            Assert ($script:stored -split ',' -icontains 'POS02') 'Second requested host missing'
+            Assert (@($script:stored -split ',' | Where-Object { $_ -ieq 'pos02' }).Count -eq 1) 'Hosts must not be duplicated'
+        }
         Assert ($result.Message -match 'installiert und funktionsfähig') 'Missing local health result'
-        Assert ($script:order[0] -eq 'service' -and $script:order[1] -eq 'wsman') 'Local health must precede TrustedHosts changes'
+        Assert ($script:service.Status -eq 'Running' -and $script:order[0] -eq 'service' -and
+            $script:order.IndexOf('wsman') -lt $script:order.IndexOf('read')) 'Running service and local health must precede TrustedHosts changes'
     }
+    if ($scenario -in @('stopped-service','disabled-service','stopping-service')) {
+        Assert ('start' -in $script:order -and $script:order.IndexOf('wait:Running') -lt $script:order.IndexOf('wsman')) 'WinRM must be started and confirmed before WSMan is tested'
+    }
+    if ($scenario -eq 'disabled-service') { Assert ($script:order.IndexOf('enable') -lt $script:order.IndexOf('start')) 'Disabled WinRM must be enabled before starting' }
+    if ($scenario -eq 'starting-service') { Assert ('start' -notin $script:order -and 'wait:Running' -in $script:order) 'Already starting WinRM must be awaited without another start' }
+    if ($scenario -eq 'paused-service') { Assert ('resume' -in $script:order -and 'start' -notin $script:order) 'Paused WinRM must be resumed' }
+    if ($scenario -eq 'success') { Assert ('start' -notin $script:order -and 'enable' -notin $script:order) 'Healthy WinRM must not be restarted or reconfigured' }
+    if ($scenario -eq 'local-only') { Assert ($script:writes -eq 0) 'Local-only diagnosis must not write an empty TrustedHosts list' }
     if ($scenario -eq 'success') {
         Assert ($script:stored -eq 'keep.invalid,POS01,POS02' -and $script:writes -eq 1) 'Existing hosts must be preserved and missing hosts added once'
         Assert ($script:order[$script:order.Count - 1] -eq 'read') 'TrustedHosts must be verified after writing'
     }
     if ($scenario -eq 'already-trusted') { Assert ($script:writes -eq 0) 'Already trusted hosts must not require another write' }
     if ($scenario -eq 'existing-wildcard') { Assert ($script:stored.StartsWith('*.existing.invalid,')) 'Existing wildcard entries must be preserved' }
-    if ($scenario -in @('missing-service', 'stopped-service', 'broken-wsman', 'read-denied', 'invalid-host')) {
+    if ($scenario -in @('missing-service', 'start-denied', 'start-timeout', 'activation-denied', 'broken-wsman', 'read-denied', 'invalid-host')) {
         Assert ($script:writes -eq 0) 'Failed prerequisites must not change TrustedHosts'
+    }
+    if ($scenario -in @('start-denied', 'start-timeout', 'activation-denied')) {
+        Assert ('wsman' -notin $script:order -and $result.Error -match 'Administrator') 'A failed service start must stop preparation with an actionable error'
     }
     if ($scenario -in @('read-denied', 'write-denied', 'policy-override')) {
         Assert ($result.Error -match 'Administrator' -and $result.Error -match 'Gruppenrichtlinie') 'Missing actionable permissions/policy error'

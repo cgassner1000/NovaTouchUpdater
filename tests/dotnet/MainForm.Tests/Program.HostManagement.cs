@@ -38,8 +38,8 @@ internal static partial class Program
             r.Action is "probe" or "scan" && r.Username.Length == 0 && r.Password.Length == 0) && monitor.Requests.IsEmpty,
             "the empty-list fallback checks connection and versions directly without remote credentials or WinRM");
         Assert(Targets(form) is [{ Scanned: true }] && Field<Button>(form, "btnUpdate").Enabled &&
-            !Field<Button>(form, "btnWinRm").Enabled && !Field<Button>(form, "btnTransfer").Enabled && !Field<Button>(form, "btnSendCommand").Enabled,
-            "a successful local check prepares local updates while remote-only actions remain disabled");
+            Field<Button>(form, "btnWinRm").Enabled && !Field<Button>(form, "btnTransfer").Enabled && !Field<Button>(form, "btnSendCommand").Enabled,
+            "a successful local check prepares local updates and local WinRM diagnosis while remote-only actions remain disabled");
         string confirmation = (string)Call(form, "UpdateConfirmation", Targets(form), UpdateComponents.None, false)!;
         Assert(confirmation.StartsWith("Ausführung: Lokal") && confirmation.Contains("Ziele: LOKAL"),
             "the update confirmation identifies the local fallback clearly");

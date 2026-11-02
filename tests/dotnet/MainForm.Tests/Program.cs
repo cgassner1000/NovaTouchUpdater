@@ -189,9 +189,9 @@ internal static partial class Program
         typeof(DataGridView).GetMethod("OnKeyDown", Private)!.Invoke(table, [new KeyEventArgs(Keys.Space)]);
         Application.DoEvents();
         Assert(Targets(form) is [{ IsLocal: true }], "Space toggles the last remote checkbox and restores the local target");
-        Assert(new[] { "btnWinRm", "btnTransfer", "btnSendCommand", "btnUpdate", "btnRetry" }
-            .All(name => !Field<Button>(form, name).Enabled) && Field<Button>(form, "btnScan").Enabled,
-            "without selected remote hosts, remote actions are disabled and local checking is available");
+        Assert(new[] { "btnTransfer", "btnSendCommand", "btnUpdate", "btnRetry" }
+            .All(name => !Field<Button>(form, name).Enabled) && Field<Button>(form, "btnScan").Enabled && Field<Button>(form, "btnWinRm").Enabled,
+            "without selected remote hosts, remote actions are disabled while local checking and WinRM diagnosis remain available");
         Complete((Task)Call(form, "RunScansAsync")!);
         Complete((Task)Call(form, "TransferFilesAsync")!);
         Complete((Task)Call(form, "SendCommandAsync")!);
