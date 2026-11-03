@@ -23,6 +23,7 @@ public sealed partial class MainForm
     private readonly SoftwarePackageCatalog packageCatalog = new();
     private readonly Dictionary<UpdateComponents, MsiPackageRequest> msiPackages = [];
     private readonly Dictionary<UpdateComponents, (Button Button, Label Label)> msiControls = [];
+    private readonly Dictionary<UpdateComponents, Button> removePackageButtons = [];
     private CancellationTokenSource? packageCancellation;
     private bool loadingPackages;
     private ExpandableSection? individualFilesSection;
@@ -131,14 +132,16 @@ public sealed partial class MainForm
                 catch (Exception ex) { ShowIndividualPackageDialog(() => MessageBox.Show(this, ex.Message, "Update-Paket", MessageBoxButtons.OK, MessageBoxIcon.Warning)); }
                 finally { packageCancellation = null; loadingPackages = false; if (!IsDisposed) UpdateButtons(); }
             };
-            rows.Add(PanelRow(button, label));
+            rows.Add(CreateIndividualPackageRow(component, button, label));
         }
         return Stack(rows.ToArray());
     }
 
     private Control CreatePackageSelectionGrid()
     {
-        var services = Stack(PanelRow(btnPayment, lblPayment), PanelRow(btnFiscal, lblFiscal), PanelRow(btnServerSuite, lblServerSuite));
+        var services = Stack(CreateIndividualPackageRow(UpdateComponents.Payment, btnPayment, lblPayment),
+            CreateIndividualPackageRow(UpdateComponents.Fiscal, btnFiscal, lblFiscal),
+            CreateIndividualPackageRow(UpdateComponents.ServerSuite, btnServerSuite, lblServerSuite));
         Control msi = CreateMsiPackageRows();
         var grid = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Dock = DockStyle.Top, Margin = Padding.Empty };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -159,6 +162,31 @@ public sealed partial class MainForm
             grid.ResumeLayout(true);
         };
         return grid;
+    }
+
+    private Control CreateIndividualPackageRow(UpdateComponents component, Button choose, Label version)
+    {
+        var remove = new Button
+        {
+            Name = "remove" + component + "Package", Text = "×", Visible = false,
+            AccessibleName = HostUpdateState.Label(component) + " aus der Auswahl entfernen",
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Font = new Font("Segoe UI", 12F, FontStyle.Bold), Cursor = Cursors.Hand,
+            ForeColor = UiTheme.Danger, BackColor = UiTheme.DangerSoft,
+            FlatStyle = FlatStyle.Flat, Margin = new Padding(6, 4, 0, 4), Padding = new Padding(3, 0, 3, 0),
+            Anchor = AnchorStyles.Right
+        };
+        remove.FlatAppearance.BorderSize = 0;
+        updateToolTip.SetToolTip(remove, "Paket aus der Auswahl entfernen. Die Datei bleibt auf der Festplatte erhalten.");
+        remove.Click += (_, _) => RemoveSelectedPackage(component);
+        removePackageButtons.Add(component, remove);
+        var row = (TableLayoutPanel)PanelRow(choose, version);
+        row.ColumnCount = 3;
+        row.ColumnStyles[1].SizeType = SizeType.AutoSize;
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.SetCellPosition(version, new TableLayoutPanelCellPosition(2, 0));
+        row.Controls.Add(remove, 1, 0);
+        return row;
     }
 
     private void ApplyPackage(SoftwarePackage package)
@@ -193,6 +221,35 @@ public sealed partial class MainForm
             throw new InvalidDataException("MSI-Paketinformationen fehlen.");
         individualPackageSelection = true;
         ApplyPackage(package);
+        RefreshSelectedPackages();
+        UpdateButtons();
+    }
+
+    private void RemoveSelectedPackage(UpdateComponents component)
+    {
+        if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator ||
+            (SelectedUpdateComponents() & component) == UpdateComponents.None) return;
+        switch (component)
+        {
+            case UpdateComponents.Payment:
+                paymentZip = paymentVersion = paymentHash = "";
+                lblPayment.Text = "Payment Target: –";
+                break;
+            case UpdateComponents.Fiscal:
+                fiscalZip = fiscalVersion = fiscalHash = "";
+                lblFiscal.Text = "Fiscal Target: –";
+                break;
+            case UpdateComponents.ServerSuite:
+                serverSuiteZip = serverSuiteVersion = serverSuiteHash = "";
+                lblServerSuite.Text = "Server Suite Target: –";
+                break;
+            default:
+                if (!msiPackages.Remove(component)) return;
+                msiControls[component].Label.Text = component.ToString().ToUpperInvariant() + " Target: –";
+                foreach (HostState host in hosts) if (host.Updates is { } state) state.ResetDatabaseUpload();
+                break;
+        }
+        individualPackageSelection = true;
         RefreshSelectedPackages();
         UpdateButtons();
     }

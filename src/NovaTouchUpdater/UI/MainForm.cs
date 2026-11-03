@@ -2058,6 +2058,13 @@ public sealed partial class MainForm : Form
         executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = readPackages.Enabled = idle;
         useFolderPackages.Enabled = idle && individualPackageSelection && folderPackages.Length > 0;
         foreach (var controls in msiControls.Values) controls.Button.Enabled = idle;
+        UpdateComponents selectedPackages = SelectedUpdateComponents();
+        foreach (var (component, remove) in removePackageButtons)
+        {
+            bool loaded = (selectedPackages & component) != UpdateComponents.None;
+            remove.Visible = loaded;
+            remove.Enabled = idle && loaded;
+        }
     }
 
     private void Log(string host, string msg)

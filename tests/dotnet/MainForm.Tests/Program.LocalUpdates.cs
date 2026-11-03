@@ -176,6 +176,14 @@ internal static partial class Program
         Call(form, "PaintRow", local);
         Assert((string)local.Row!.Cells["pos"].Value! == "2026.4.9800" && (string)local.Row.Cells["ntc"].Value! == "2026.4.9800",
             "POS and NTC table columns retain the three-part installed Windows version while selected packages display all four fields");
+        Call(form, "RemoveSelectedPackage", UpdateComponents.Fiscal);
+        Complete((Task)Call(form, "LoadSoftwarePackagesAsync")!);
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == (folderComponents & ~UpdateComponents.Fiscal) &&
+            Field<string>(form, "fiscalZip").Length == 0 && msiPackages[UpdateComponents.Ntc].PayloadPath == individualMsi && File.Exists(originalFiscal),
+            "rereading the folder preserves removed packages and individual replacements without deleting source files");
+        Call(form, "UseFolderPackages");
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == folderComponents && Field<string>(form, "fiscalZip") == originalFiscal,
+            "explicit folder selection restores a removed package");
         using var individualOnly = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
         Call(individualOnly, "SelectIndividualPackage", replacement);
         Assert((UpdateComponents)Call(individualOnly, "SelectedUpdateComponents")! == UpdateComponents.Ntc,

@@ -129,6 +129,11 @@ internal static partial class Program
                 ClickSection(files);
                 Assert(files.Expanded && files.Text == "Update-Dateien Einzeln  ▲" && files.Parent == form && !settings.Expanded && !hosts.Expanded,
                     "individual update files expand as the original card");
+                var removeButtons = Field<Dictionary<UpdateComponents, Button>>(form, "removePackageButtons");
+                Assert(removeButtons.Values.All(button => button.Enabled && button.Left >= 0 && button.Right <= button.Parent!.ClientSize.Width &&
+                    Math.Abs(button.Left - ((TableLayoutPanel)button.Parent).GetControlFromPosition(0, 0)!.Right - button.Margin.Left) <= 1 &&
+                    button.Right <= ((TableLayoutPanel)button.Parent).GetControlFromPosition(2, 0)!.Left),
+                    $"all seven remove actions sit directly after package selectors and before versions at {width}px / {scale:P0}");
                 if (width == 1710 && scale == 1F)
                 {
                     using var picker = new Form();
@@ -165,6 +170,10 @@ internal static partial class Program
                     ClickSection(files);
                     Assert(!files.Expanded, "clicking the individual-files heading still closes its section");
                     ClickSection(files);
+                    Call(form, "UseFolderPackages");
+                    typeof(Button).GetMethod("OnClick", Private)!.Invoke(removeButtons[UpdateComponents.Payment], [EventArgs.Empty]);
+                    Assert(files.Expanded && (UpdateComponents)Call(form, "SelectedUpdateComponents")! == (UpdateComponents.All & ~UpdateComponents.Payment),
+                        "removing a package keeps the individual-files section open");
                     Call(form, "UseFolderPackages");
                     using var expandedFiles = new Bitmap(files.Width, files.Height);
                     files.DrawToBitmap(expandedFiles, new Rectangle(Point.Empty, expandedFiles.Size));
