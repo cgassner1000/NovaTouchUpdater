@@ -73,8 +73,12 @@ public sealed partial class MainForm : Form
     private readonly Button btnServerSuite = Button("Server-Suite-Paket wählen");
     private readonly Button btnWinRm = Button("Test WinRM");
     private readonly Button btnScan = Button("Prüfen");
-    private readonly Button btnDatabaseCheck = Button("BETA: Database Check");
+    private readonly Button btnDatabaseCheck = Button("Check Database");
     private readonly Button btnUpdate = Button("2. Updates starten");
+    private readonly Button btnServicePacks = new ModernButton { Name = "importServicePacks", Text = "Servicepacks\neinspielen", AutoSize = false,
+        Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty, Visible = false };
+    private BetaFeatureGate? betaFeatures;
+    private Action? showBetaActivated = null;
     private readonly Button btnTransfer = Button("Upload");
     private readonly Button btnSendCommand = Button("Befehl senden");
     private readonly Button btnRetry = Button("Fehler erneut versuchen");
@@ -189,6 +193,7 @@ public sealed partial class MainForm : Form
             releaseHttp.Dispose();
             feedbackHttp.Dispose();
             updateToolTip.Dispose();
+            betaFeatures?.Dispose();
             connectionCancellation?.Cancel();
             connectionRunner.Dispose();
             runner.Dispose();
@@ -371,6 +376,15 @@ public sealed partial class MainForm : Form
         btnAdministrator.Visible = !isProcessElevated();
         var header = new UpdaterHeader(updateNotice, btnFeedback, btnAdministrator);
         main.Controls.Add(header, 0, 0);
+        var activationImage = header.Controls.OfType<AppMark>().Single();
+        activationImage.Name = "appMark";
+        betaFeatures = new BetaFeatureGate(this, activationImage);
+        betaFeatures.Register(btnServicePacks);
+        betaFeatures.Activated += () =>
+        {
+            if (showBetaActivated is { } show) show();
+            else BeginInvoke(() => MessageBox.Show(this, "BETA-Funktionen aktiviert", "BETA", MessageBoxButtons.OK, MessageBoxIcon.Information));
+        };
 
         // Keep package cards in their own column, independent of the menu headers.
         var configuration = new TableLayoutPanel
@@ -561,11 +575,13 @@ public sealed partial class MainForm : Form
         ((ModernButton)btnScan).Role = ButtonRole.Accent;
         ((ModernButton)btnUpdate).Role = ButtonRole.Primary;
         ((ModernButton)btnCancel).Role = ButtonRole.Danger;
-        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
+        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnServicePacks, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
         {
             btn.Margin = new Padding(0, 3, 7, 3);
             bar.Controls.Add(btn);
         }
+        bar.Layout += (_, _) => btnServicePacks.Height = btnUpdate.Height;
+        updateToolTip.SetToolTip(btnServicePacks, "XML-Servicepacks in alle IRIS-Namespaces ohne %-Präfix der ausgewählten Hosts importieren und mit ckbf kompilieren.");
         var filterBar = FlowRow();
         filterBar.Margin = new Padding(0, 9, 0, 12);
         filterBar.Controls.Add(new Label { Text = "Hostübersicht", Font = new Font(Font, FontStyle.Bold), AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 18, 3) });
@@ -748,6 +764,7 @@ public sealed partial class MainForm : Form
             dialog.ShowDialog(this);
         };
         btnUpdate.Click += async (_, _) => await RunUpdatesAsync(false);
+        btnServicePacks.Click += async (_, _) => await ChooseServicePacksAsync();
         btnTransfer.Click += async (_, _) => await TransferFilesAsync();
         btnSendCommand.Click += async (_, _) => await SendCommandAsync();
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
@@ -2055,6 +2072,8 @@ public sealed partial class MainForm : Form
         btnDatabaseCheck.Visible = selected.Length > 0;
         btnDatabaseCheck.Enabled = idle && selected.Length > 0;
         btnUpdate.Enabled = idle && UpdateTargets(false).Length > 0;
+        btnServicePacks.Enabled = idle && selected.Length > 0;
+        betaFeatures?.ApplyVisibility();
         btnTransfer.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnSendCommand.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnRetry.Enabled = idle && selected.Any(h => h.CanRetryUpdate);

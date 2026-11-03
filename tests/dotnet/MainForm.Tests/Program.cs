@@ -13,6 +13,8 @@ internal static partial class Program
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
+            if (args.Contains("--beta")) { BetaFeatureTests(); return 0; }
+            if (args.Contains("--servicepacks")) { BetaFeatureTests(); Complete(ServicePackTests()); return 0; }
             if (args.Contains("--administrator")) { AdministratorTests(); return 0; }
             if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
             if (args.Contains("--feedback")) { FeedbackTests(); return 0; }
@@ -37,6 +39,8 @@ internal static partial class Program
                 TogglePaintingTests();
                 FeedbackTests();
                 AdministratorTests();
+                BetaFeatureTests();
+                Complete(ServicePackTests());
                 ExpandableSectionTests();
                 FormattingTests();
                 SelectionTests();

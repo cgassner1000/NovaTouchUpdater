@@ -220,7 +220,7 @@ function InvokeSoftwareDatabaseChildOperation($Session, [string]$Worker, $Reques
         }
         if ($null -eq $result) { throw 'Keine gültige Rückmeldung des Datenbank-Workers auf dem Zielrechner.' }
         if ($null -ne $result.PSObject.Properties['DatabaseUploadedKinds']) { $script:databaseUploadedKinds = @($result.DatabaseUploadedKinds) }
-        if (-not $result.Success) { throw [string]$result.Error }
+        if (-not $result.Success -and $Request.Action -ne 'import-servicepacks') { throw [string]$result.Error }
         return $result
     } finally { InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareDatabaseChild} -ArgumentList '', $false, $true -ErrorAction SilentlyContinue | Out-Null }
 }

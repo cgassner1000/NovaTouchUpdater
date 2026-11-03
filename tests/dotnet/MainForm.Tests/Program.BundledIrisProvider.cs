@@ -45,6 +45,8 @@ internal static partial class Program
                                 if ($null -eq $provider.ObjectType.GetMethod($method,[type[]]@([string],$signature.GetType()))) { throw "Direct $method API unavailable" }
                             }
                             if ($null -eq $provider.ObjectType.GetMethod('RunClassMethodS',[type[]]@($provider.ConnectionType,[string],[string],$signature.GetType()))) { throw 'Direct class method API unavailable' }
+                            $objectInterface = $provider.ObjectType.Assembly.GetType('InterSystems.Data.IRISTypes.IIRISObject',$true)
+                            if ($null -eq $signature.GetType().GetMethod('Add',[type[]]@($objectInterface,$provider.ConnectionType,[type],[bool]))) { throw 'Native LoadStream object argument binding unavailable' }
                             $signature.SetReturnType($connection,$provider.BinaryStreamType)
                             if ($signature.ReturnValue.ClientType -ne $provider.BinaryStreamType) { throw 'Typed binary stream signature unavailable' }
                         } finally { $signature.Clear() }

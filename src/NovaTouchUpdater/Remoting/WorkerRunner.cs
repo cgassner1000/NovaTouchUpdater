@@ -13,6 +13,7 @@ public sealed class WorkerRequest
     public MsiPackageRequest? MsiPackage { get; set; }
     public MsiPackageRequest[] MsiPackages { get; set; } = [];
     public IrisUploadTarget[] DatabaseTargets { get; set; } = [];
+    public ServicePackFile[] ServicePackFiles { get; set; } = [];
     public string DatabaseProviderDirectory { get; set; } = "";
     public int DatabaseUploadParallelism { get; set; } = 8;
     public bool IrisUseTls { get; set; }
@@ -46,6 +47,24 @@ public sealed class WorkerRequest
     public bool RestartPayment { get; set; }
     public bool RestartFiscal { get; set; }
     public bool StartServerSuite { get; set; }
+}
+
+public sealed class ServicePackFile
+{
+    public string Path { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Sha256 { get; set; } = "";
+    public string[] Items { get; set; } = [];
+}
+
+public sealed class ServicePackNamespaceResult
+{
+    public string Instance { get; set; } = "";
+    public string Namespace { get; set; } = "";
+    public bool Success { get; set; }
+    public bool Compiled { get; set; }
+    public int ImportedFiles { get; set; }
+    public string Error { get; set; } = "";
 }
 
 public sealed class IrisUploadTarget
@@ -115,6 +134,7 @@ public sealed class WorkerEvent
 
 public sealed class WorkerResult
 {
+    public ServicePackNamespaceResult[] ServicePackResults { get; set; } = [];
     public string[] DatabaseUploadedKinds { get; set; } = [];
     public bool? HasIrisInstances { get; set; }
     public string[] CompletedServiceNames { get; set; } = [];
@@ -182,7 +202,7 @@ public sealed class WorkerRunner : IWorkerRunner
         string script = reader.ReadToEnd();
         if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
         {
-            foreach (string helper in new[] { "UpdateSteps", "ServerSuiteSetup", "UploadDirectory", "MsiUpdates", "SoftwareDatabase", "DatabaseStreaming", "RemoteSoftwareDatabase" })
+            foreach (string helper in new[] { "UpdateSteps", "ServerSuiteSetup", "UploadDirectory", "MsiUpdates", "SoftwareDatabase", "DatabaseStreaming", "RemoteSoftwareDatabase", "ServicePacks" })
             {
                 using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream($"NovaTouchUpdater.{helper}.ps1")
                     ?? throw new InvalidOperationException($"Die eingebetteten Schritte {helper} fehlen.");
@@ -255,7 +275,7 @@ public sealed class WorkerRunner : IWorkerRunner
 
         try
         {
-            if (request.Action == "publish-msi-packages")
+            if (request.Action is "publish-msi-packages" or "import-servicepacks")
                 request.DatabaseProviderDirectory = irisProvider.EnsureExtracted();
             if (!process.Start()) throw new InvalidOperationException("Windows PowerShell konnte nicht gestartet werden.");
             process.BeginOutputReadLine();

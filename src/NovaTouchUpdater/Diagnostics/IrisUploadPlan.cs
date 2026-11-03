@@ -4,7 +4,7 @@ internal static class IrisUploadPlan
 {
     internal static IrisInstanceInfo[] UploadInstances(IrisInventoryResult inventory)
     {
-        if (inventory.Warnings.Length > 0) throw new InvalidDataException("IRIS-Instanzen konnten nicht vollständig ermittelt werden. BETA: Database Check prüfen.");
+        if (inventory.Warnings.Length > 0) throw new InvalidDataException("IRIS-Instanzen konnten nicht vollständig ermittelt werden. Check Database prüfen.");
         foreach (IrisInstanceInfo instance in inventory.Instances)
         {
             if (instance.Error.Length > 0) throw new InvalidDataException($"IRIS-Instanz {instance.Name}: {instance.Error}");

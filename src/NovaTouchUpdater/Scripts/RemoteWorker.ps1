@@ -324,6 +324,13 @@ try {
     if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
     $req = $requestLine | ConvertFrom-Json
     $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
+    if ($req.Action -eq 'import-servicepacks') {
+        AssertServicePackFiles @($req.ServicePackFiles)
+        if ($localExecution) {
+            Emit (ImportServicePacks @($req.ServicePackFiles) @($req.DatabaseTargets) ([string]$req.DatabaseProviderDirectory))
+            exit 0
+        }
+    }
     if ($req.Action -in @('database-upload-plan','publish-msi-stream')) {
         if (-not $localExecution) { throw 'Interne Datenbank-Aktion nur auf dem ausführenden Rechner erlaubt.' }
         if ($req.Action -eq 'database-upload-plan') {
@@ -385,6 +392,7 @@ try {
     $remotePackageStage = $null
     try {
         $session = if ($localExecution) { [pscustomobject]@{ NovaTouchLocal=$true } } else { New-PSSession @sessionArgs }
+        if ($req.Action -eq 'import-servicepacks') { Emit (ImportRemoteServicePacks $req $session $PSCommandPath); exit 0 }
         if ($req.Action -eq 'database-inventory') {
             $script = 'function ReadSoftwareIrisRegistrations {' + ${function:ReadSoftwareIrisRegistrations}.ToString() + '}; function ReadSoftwareIrisInventory {' + ${function:ReadSoftwareIrisInventory}.ToString() + '}; ReadSoftwareIrisInventory'
             $instances = @(InvokeWorkerCommand -Session $session -ScriptBlock ([scriptblock]::Create($script)) -ErrorAction Stop)

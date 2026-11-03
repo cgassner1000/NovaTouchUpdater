@@ -14,7 +14,7 @@ internal sealed class DatabaseCheckForm : Form
     {
         this.readInventory = readInventory ?? new IrisDatabaseInventory().ReadAsync;
         SuspendLayout();
-        Text = "Database Check";
+        Text = "Check Database";
         Font = UiTheme.BodyFont();
         ClientSize = new Size(900, 650);
         MinimumSize = new Size(620, 440);
@@ -98,7 +98,7 @@ internal sealed class DatabaseCheckForm : Form
         catch (Exception ex)
         {
             if (IsDisposed) return;
-            status.Text = "Database Check fehlgeschlagen.";
+            status.Text = "Check Database fehlgeschlagen.";
             status.ForeColor = UiTheme.Danger;
             details.Text = ex.Message;
         }

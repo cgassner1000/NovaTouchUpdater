@@ -128,7 +128,7 @@ internal static partial class Program
         Complete(form.RefreshAsync());
         TreeView tree = All(form).OfType<TreeView>().Single();
         TextBox details = All(form).OfType<TextBox>().Single(control => control.Name == "databaseDetails");
-        Assert(form.Text == "Database Check" && tree.Nodes.Count == 3 &&
+        Assert(form.Text == "Check Database" && tree.Nodes.Count == 3 &&
             tree.Nodes[0].Nodes.Cast<TreeNode>().Select(node => node.Text).SequenceEqual(new[] { "APP", "USER" }),
             "the separate local form groups namespaces by instance and never lists percent-prefixed names");
         tree.SelectedNode = tree.Nodes[1];
@@ -171,7 +171,7 @@ internal static partial class Program
         canvas.CreateControl();
         try
         {
-            Assert(button.Text == "BETA: Database Check" && button.Visible && button.Enabled, "BETA: Database Check is available for remote-only targets");
+            Assert(button.Text == "Check Database" && button.Visible && button.Enabled, "Check Database is available for remote-only targets");
             mode.SelectedIndex = (int)UpdateExecutionMode.Local;
             Assert(button.Visible && button.Enabled, "selecting local execution enables Database Check without a preceding scan");
             foreach (Control control in All(canvas)) _ = control.Handle;
