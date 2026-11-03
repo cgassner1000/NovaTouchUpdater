@@ -45,6 +45,9 @@ internal static partial class Program
                 Assert(names.Length == 7 && versions.Length == 7 && names.All(c => c.Left == names[0].Left) &&
                     versions.All(c => c.Left == versions[0].Left) && packageList.Controls.Cast<Control>().All(c => c.Bottom <= packageList.Height && c.Right <= packageList.Width),
                     "all seven packages fit in aligned product and version columns at the current width and scaling");
+                Assert(packageList.Controls.OfType<Button>().Count() == 7 && packageList.Controls.OfType<Button>().All(button =>
+                    Math.Abs(button.Left - packageList.GetControlFromPosition(1, packageList.GetRow(button))!.Right - button.Margin.Left) <= 1),
+                    $"each selected package offers a red remove action directly right of its version at {width}px / {scale:P0}");
                 if (width == 1710 && scale == 1F)
                 {
                     using var collapsed = new Bitmap(form.Width, form.Height);

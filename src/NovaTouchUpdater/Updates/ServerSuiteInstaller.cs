@@ -12,7 +12,9 @@ internal static class ServerSuiteInstaller
     {
         var info = FileVersionInfo.GetVersionInfo(path);
         if (info.FileDescription?.Trim() != ProtocolMarker || info.ProductName?.Trim() != "NovaTouch Server Suite")
-            throw new InvalidDataException("Server-Suite-Setup unterstützt keine gezielten Instanzupdates. Setup mit dem aktualisierten Inno-Skript neu erstellen.");
+            throw new InvalidDataException("Dieses Server-Suite-Setup unterstützt die benötigten Silent-Parameter für gezielte Instanzupdates nicht.\n\n" +
+                "Mehrere Server-Suite-Instanzen können damit nicht zuverlässig aktualisiert werden.\n\n" +
+                "Bitte ein neueres Setup mit dem aktualisierten Inno-Skript oder das passende Server-Suite-ZIP-Paket auswählen.");
         string version = info.ProductVersion?.Trim() ?? "";
         _ = SoftwarePackageCatalog.NumericVersion(version);
         if (UpdatePackageNames.TryServerSuiteVersion(path, out string named) &&

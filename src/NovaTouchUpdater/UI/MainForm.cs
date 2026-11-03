@@ -70,7 +70,7 @@ public sealed partial class MainForm : Form
     private readonly Button btnSaveConfig = Button("Konfiguration speichern");
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
-    private readonly Button btnServerSuite = Button("Server-Suite-Setup wählen");
+    private readonly Button btnServerSuite = Button("Server-Suite-Paket wählen");
     private readonly Button btnWinRm = Button("Test WinRM");
     private readonly Button btnScan = Button("Prüfen");
     private readonly Button btnDatabaseCheck = Button("BETA: Database Check");
@@ -1011,20 +1011,35 @@ public sealed partial class MainForm : Form
 
     private void ChooseServerSuite()
     {
-        using OpenFileDialog dialog = new() { Filter = "Server-Suite-Setup (*.exe)|*.exe|Bisheriges ZIP-Paket (*.zip)|*.zip", Title = "Server-Suite-Update auswählen" };
+        using OpenFileDialog dialog = CreateServerSuiteFileDialog();
         if (ShowIndividualPackageDialog(() => dialog.ShowDialog(this)) != DialogResult.OK) return;
+        TrySelectServerSuitePackage(dialog.FileName);
+    }
+
+    internal static OpenFileDialog CreateServerSuiteFileDialog() => new()
+    {
+        Filter = "Server-Suite-Pakete (*.exe;*.zip)|*.exe;*.zip|Server-Suite-Setup (*.exe)|*.exe|Server-Suite-ZIP (*.zip)|*.zip",
+        Title = "Server-Suite-Update auswählen"
+    };
+
+    private bool TrySelectServerSuitePackage(string path, Action<string>? showWarning = null)
+    {
         try
         {
             string version;
-            if (ServerSuiteInstaller.IsSetup(dialog.FileName)) version = ServerSuiteInstaller.ReadVersion(dialog.FileName);
-            else if (!UpdatePackageNames.TryServerSuiteVersion(dialog.FileName, out version))
+            if (ServerSuiteInstaller.IsSetup(path)) version = ServerSuiteInstaller.ReadVersion(path);
+            else if (!Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase) ||
+                !UpdatePackageNames.TryServerSuiteVersion(path, out version))
                 throw new InvalidDataException("Ungültiger ZIP-Dateiname. Erwartet: nt.server.suite-2026.4.9792.zip");
-            SelectIndividualPackage(new SoftwarePackage(UpdateComponents.ServerSuite, dialog.FileName, version));
+            SelectIndividualPackage(new SoftwarePackage(UpdateComponents.ServerSuite, path, version));
+            return true;
         }
-        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is InvalidDataException or IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
         {
-            ShowIndividualPackageDialog(() => MessageBox.Show(this, ex.Message,
+            if (showWarning is not null) showWarning(ex.Message);
+            else ShowIndividualPackageDialog(() => MessageBox.Show(this, ex.Message,
                 "Server-Suite-Update", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+            return false;
         }
     }
 
@@ -2065,6 +2080,7 @@ public sealed partial class MainForm : Form
             remove.Visible = loaded;
             remove.Enabled = idle && loaded;
         }
+        foreach (Button remove in selectedPackagesTable.Controls.OfType<Button>()) remove.Enabled = idle;
     }
 
     private void Log(string host, string msg)

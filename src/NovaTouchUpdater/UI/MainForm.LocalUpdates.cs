@@ -16,7 +16,7 @@ public sealed partial class MainForm
     private readonly TableLayoutPanel selectedPackagesTable = new()
     {
         Name = "selectedPackagesTable", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        Dock = DockStyle.Top, ColumnCount = 2, Margin = Padding.Empty, Visible = false
+        Dock = DockStyle.Top, ColumnCount = 3, Margin = Padding.Empty, Visible = false
     };
     private SoftwarePackage[] folderPackages = [];
     private bool individualPackageSelection;
@@ -164,11 +164,11 @@ public sealed partial class MainForm
         return grid;
     }
 
-    private Control CreateIndividualPackageRow(UpdateComponents component, Button choose, Label version)
+    private Button CreateRemovePackageButton(UpdateComponents component)
     {
         var remove = new Button
         {
-            Name = "remove" + component + "Package", Text = "×", Visible = false,
+            Name = "remove" + component + "Package", Text = "×", Tag = component,
             AccessibleName = HostUpdateState.Label(component) + " aus der Auswahl entfernen",
             AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Font = new Font("Segoe UI", 12F, FontStyle.Bold), Cursor = Cursors.Hand,
@@ -179,6 +179,13 @@ public sealed partial class MainForm
         remove.FlatAppearance.BorderSize = 0;
         updateToolTip.SetToolTip(remove, "Paket aus der Auswahl entfernen. Die Datei bleibt auf der Festplatte erhalten.");
         remove.Click += (_, _) => RemoveSelectedPackage(component);
+        return remove;
+    }
+
+    private Control CreateIndividualPackageRow(UpdateComponents component, Button choose, Label version)
+    {
+        var remove = CreateRemovePackageButton(component);
+        remove.Visible = false;
         removePackageButtons.Add(component, remove);
         var row = (TableLayoutPanel)PanelRow(choose, version);
         row.ColumnCount = 3;
@@ -281,6 +288,7 @@ public sealed partial class MainForm
             foreach (Control control in selectedPackagesTable.Controls.Cast<Control>().ToArray()) control.Dispose();
             selectedPackagesTable.ColumnStyles.Clear(); selectedPackagesTable.RowStyles.Clear();
             selectedPackagesTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            selectedPackagesTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             selectedPackagesTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             selectedPackagesTable.RowCount = 0;
             foreach (SoftwarePackage package in packages.OrderBy(package => package.Component))
@@ -294,6 +302,11 @@ public sealed partial class MainForm
                 selectedPackagesTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
                 selectedPackagesTable.Controls.Add(new Label { Text=name + ":", AutoSize=true, Anchor=AnchorStyles.Left, Margin=new Padding(0, 2, 14, 2) }, 0, row);
                 selectedPackagesTable.Controls.Add(new Label { Text=package.Version, AutoSize=true, Anchor=AnchorStyles.Left, Margin=new Padding(0, 2, 0, 2), AccessibleDescription=package.Path }, 1, row);
+                var remove = CreateRemovePackageButton(package.Component);
+                remove.Name = "removeSelected" + package.Component + "Package";
+                remove.Anchor = AnchorStyles.Left;
+                remove.Margin = new Padding(6, 2, 0, 2);
+                selectedPackagesTable.Controls.Add(remove, 2, row);
             }
             selectedPackagesList.Visible = packages.Count == 0;
             selectedPackagesTable.Visible = packages.Count > 0;

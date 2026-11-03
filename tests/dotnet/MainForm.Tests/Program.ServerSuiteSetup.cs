@@ -38,8 +38,14 @@ internal static partial class Program
         result = await catalog.ReadAsync(root, null, CancellationToken.None);
         Assert(result.Warnings.Length == 1 && result.Warnings[0].Contains("Inno-Skript"), "unsupported setup is reported without executing or selecting it");
 
-        using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
-        Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.ServerSuite, exe, "2026.4.9999"));
+        var selectionWorker = new FakeRunner();
+        using var form = new MainForm(preview: true, selectionWorker, new FakeRunner());
+        using var picker = MainForm.CreateServerSuiteFileDialog();
+        Assert(picker.FilterIndex == 1 && picker.Filter.Split('|')[1] == "*.exe;*.zip",
+            "the default Server Suite picker shows EXE and ZIP packages together");
+        var warnings = new List<string>();
+        Action<string> warn = warnings.Add;
+        Assert((bool)Call(form, "TrySelectServerSuitePackage", exe, warn)!, "supported EXE is selected through the real UI validation path");
         foreach (bool local in new[] { false, true })
         {
             var host = new HostState { Host = local ? "LOCALHOST" : "fixture.invalid" };
@@ -47,10 +53,31 @@ internal static partial class Program
             Assert(request.ServerSuiteSetup == exe && request.ServerSuiteZip.Length == 0 && request.ServerSuiteVersion == "2026.4.9999",
                 (local ? "local" : "remote") + " request routes setup separately from legacy ZIP without losing target version");
         }
-        Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.ServerSuite, zip, "2026.4.9999"));
+        Assert(!(bool)Call(form, "TrySelectServerSuitePackage", oldSetup, warn)! && warnings.Count == 1 &&
+            warnings[0].Contains("Silent-Parameter") && warnings[0].Contains("Mehrere Server-Suite-Instanzen") && warnings[0].Contains("ZIP") &&
+            Field<string>(form, "serverSuiteZip") == exe && selectionWorker.Requests.IsEmpty,
+            "unsupported old setup gives one warning about multi-instance updates without crashing, replacing the valid selection or starting a worker");
+        Assert(!(bool)Call(form, "TrySelectServerSuitePackage", Path.Combine(root, "invalid-name.zip"), warn)! && warnings.Count == 2 &&
+            Field<string>(form, "serverSuiteZip") == exe, "an invalid ZIP name also warns and preserves the selected setup");
+        Assert(!(bool)Call(form, "TrySelectServerSuitePackage", Path.Combine(root, "missing.exe"), warn)! && warnings.Count == 3 &&
+            Field<string>(form, "serverSuiteZip") == exe, "an unreadable setup warns without changing the current selection");
+        File.Copy(source, wrongName);
+        Assert(!(bool)Call(form, "TrySelectServerSuitePackage", wrongName, warn)! && warnings.Count == 4 &&
+            Field<string>(form, "serverSuiteZip") == exe, "a mismatched setup version warns instead of escaping the UI event handler");
+        Assert((bool)Call(form, "TrySelectServerSuitePackage", zip, warn)!, "ZIP selection remains available after an unsupported EXE warning");
+        foreach (bool local in new[] { false, true })
+        {
+            var zipRequest = (WorkerRequest)Call(form, "Request", "update", new HostState { Host=local ? "LOCALHOST" : "fixture.invalid" }, UpdateComponents.ServerSuite)!;
+            Assert(zipRequest.ServerSuiteZip == zip && zipRequest.ServerSuiteSetup.Length == 0 && zipRequest.ServerSuiteVersion == "2026.4.9999",
+                (local ? "local" : "remote") + " ZIP selection routes to the existing stop/process-check/cleanup/copy/start workflow");
+        }
+        string oldZip = Path.Combine(root, "nt.server.suite-2025.1.1.zip");
+        using (ZipFile.Open(oldZip, ZipArchiveMode.Create)) { }
+        Assert((bool)Call(form, "TrySelectServerSuitePackage", oldZip, warn)! && Field<string>(form, "serverSuiteVersion") == "2025.1.1" && warnings.Count == 4,
+            "older ZIP releases can be selected without requiring EXE silent parameters");
         var legacy = (WorkerRequest)Call(form, "Request", "update", new HostState { Host="fixture.invalid" }, UpdateComponents.ServerSuite)!;
-        Assert(legacy.ServerSuiteZip == zip && legacy.ServerSuiteSetup.Length == 0, "explicit legacy ZIP selection keeps existing deployment path");
-        Assert(Field<Button>(form, "btnServerSuite").Text == "Server-Suite-Setup wählen", "manual selector advertises the setup workflow");
+        Assert(legacy.ServerSuiteZip == oldZip && legacy.ServerSuiteSetup.Length == 0, "explicit legacy ZIP selection keeps existing deployment path");
+        Assert(Field<Button>(form, "btnServerSuite").Text == "Server-Suite-Paket wählen", "manual selector advertises both package formats");
         Assert(!JsonSerializer.Serialize(legacy).Contains("UPDATER=1"), "command lines are constructed only inside worker from validated instance data");
 
         var worker = new UpdateRunner();
