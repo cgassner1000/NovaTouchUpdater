@@ -305,7 +305,11 @@ public sealed partial class MainForm
                 var remove = CreateRemovePackageButton(package.Component);
                 remove.Name = "removeSelected" + package.Component + "Package";
                 remove.Anchor = AnchorStyles.Left;
-                remove.Margin = new Padding(6, 2, 0, 2);
+                remove.AutoSize = false;
+                remove.Padding = Padding.Empty;
+                int removeSize = (int)Math.Round(22 * DeviceDpi / 96F);
+                remove.Size = new Size(removeSize, removeSize);
+                remove.Margin = new Padding(6, 0, 0, 0);
                 selectedPackagesTable.Controls.Add(remove, 2, row);
             }
             selectedPackagesList.Visible = packages.Count == 0;
