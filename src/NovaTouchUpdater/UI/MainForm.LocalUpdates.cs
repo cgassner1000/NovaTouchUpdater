@@ -164,9 +164,9 @@ public sealed partial class MainForm
         return grid;
     }
 
-    private Button CreateRemovePackageButton(UpdateComponents component)
+    private PackageRemoveButton CreateRemovePackageButton(UpdateComponents component)
     {
-        var remove = new Button
+        var remove = new PackageRemoveButton
         {
             Name = "remove" + component + "Package", Text = "×", Tag = component,
             AccessibleName = HostUpdateState.Label(component) + " aus der Auswahl entfernen",
@@ -305,11 +305,11 @@ public sealed partial class MainForm
                 var remove = CreateRemovePackageButton(package.Component);
                 remove.Name = "removeSelected" + package.Component + "Package";
                 remove.Anchor = AnchorStyles.Left;
+                remove.Compact = true;
                 remove.AutoSize = false;
                 remove.Padding = Padding.Empty;
-                int removeSize = (int)Math.Round(22 * DeviceDpi / 96F);
-                remove.Size = new Size(removeSize, removeSize);
-                remove.Margin = new Padding(6, 0, 0, 0);
+                remove.Size = Size.Round(new SizeF(22 * DeviceDpi / 96F, 12 * DeviceDpi / 96F));
+                remove.Margin = new Padding(6, 2, 0, 2);
                 selectedPackagesTable.Controls.Add(remove, 2, row);
             }
             selectedPackagesList.Visible = packages.Count == 0;
