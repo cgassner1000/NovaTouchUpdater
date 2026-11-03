@@ -144,24 +144,37 @@ internal static partial class Program
     {
         foreach (float scale in new[] { 1F, 2F })
         foreach (int width in new[] { 600, 1000, 1710 })
+        foreach (bool elevated in new[] { false, true })
         {
             using var notice = new LinkLabel { Text = "Neue Version verfügbar", Visible = true };
             using var feedback = new ModernButton { Text = "Report issue", AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
-            using var header = new UpdaterHeader(notice, feedback);
+            using var administrator = new AdministratorButton { Visible = !elevated };
+            using var header = new UpdaterHeader(notice, feedback, administrator);
             var fonts = All(header).ToDictionary(control => control, control => control.Font);
             header.Scale(new SizeF(scale, scale));
             foreach (var (control, font) in fonts) control.Font = new Font(font.FontFamily, font.SizeInPoints * scale, font.Style);
-            using var canvas = new Panel { Size = new Size((int)(width * scale), (int)(250 * scale)) };
+            using var canvas = new Panel { Size = new Size((int)(width * scale), (int)(300 * scale)) };
             canvas.Controls.Add(header); canvas.CreateControl();
             foreach (Control control in All(canvas)) _ = control.Handle;
             for (int pass = 0; pass < 5; pass++) Layout(canvas);
-            Assert(feedback.Right <= header.ClientSize.Width && feedback.Left >= 0 && !feedback.Bounds.IntersectsWith(notice.Bounds),
+            Rectangle feedbackBounds = header.RectangleToClient(feedback.RectangleToScreen(feedback.ClientRectangle));
+            Assert(feedbackBounds.Right <= header.ClientSize.Width && feedbackBounds.Left >= 0 && !feedbackBounds.IntersectsWith(notice.Bounds),
                 $"feedback is right-aligned without overlap with the release notice at width {width} / {scale:P0}");
+            Assert(administrator.Visible == !elevated, "the administrator action is hidden only in an elevated header");
+            if (!elevated)
+            {
+                Rectangle administratorBounds = header.RectangleToClient(administrator.RectangleToScreen(administrator.ClientRectangle));
+                Assert(administratorBounds.Left >= 0 && administratorBounds.Right <= feedbackBounds.Left &&
+                    !administratorBounds.IntersectsWith(notice.Bounds) &&
+                    header.Controls.OfType<Label>().Where(label => label is not LinkLabel)
+                        .All(label => !administratorBounds.IntersectsWith(label.Bounds) && !feedbackBounds.IntersectsWith(label.Bounds)),
+                    $"the shield action fits left of Report issue without overlapping title, subtitle or release notice at width {width} / {scale:P0}");
+            }
             if (width == 1710 && scale == 1F)
             {
                 using var bitmap = new Bitmap(width, header.Height);
                 header.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-                bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "feedback-header.png"));
+                bitmap.Save(Path.Combine(TestWorkspace.Artifacts, elevated ? "feedback-header.png" : "administrator-header.png"));
             }
         }
     }

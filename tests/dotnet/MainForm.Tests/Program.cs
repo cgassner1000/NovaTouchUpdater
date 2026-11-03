@@ -13,6 +13,7 @@ internal static partial class Program
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
+            if (args.Contains("--administrator")) { AdministratorTests(); return 0; }
             if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
             if (args.Contains("--feedback")) { FeedbackTests(); return 0; }
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
@@ -34,6 +35,7 @@ internal static partial class Program
             {
                 TogglePaintingTests();
                 FeedbackTests();
+                AdministratorTests();
                 ExpandableSectionTests();
                 FormattingTests();
                 SelectionTests();

@@ -36,6 +36,9 @@ public sealed partial class MainForm : Form
     private readonly System.Windows.Forms.Timer releaseTimer = new() { Interval = 30 * 60 * 1000 };
     private readonly LinkLabel updateNotice = new() { Name = "updateNotice", Text = "Neue Version verfügbar", Visible = false, LinkColor = Color.FromArgb(22, 125, 65) };
     private readonly Button btnFeedback = Button("Report issue");
+    private readonly Button btnAdministrator = new AdministratorButton();
+    private Func<bool> restartAsAdministrator = AppElevation.Restart;
+    private bool restartingAsAdministrator;
     private readonly ToolTip updateToolTip = new();
 
     private readonly DataGridView table = new();
@@ -142,6 +145,9 @@ public sealed partial class MainForm : Form
             using var dialog = new FeedbackDialog(new FeedbackClient(feedbackHttp, new EmbeddedFeedbackCredentials()));
             dialog.ShowDialog(this);
         };
+        btnAdministrator.Click += (_, _) => RestartAsAdministrator();
+        updateToolTip.SetToolTip(btnAdministrator,
+            "Startet den Updater mit Administratorrechten neu. Nicht gespeicherte Einstellungen gehen beim Neustart verloren.");
         txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
         txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
         DpiChanged += (_, _) => BeginInvoke((Action)ApplyColumnWidths);
@@ -362,7 +368,8 @@ public sealed partial class MainForm : Form
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        var header = new UpdaterHeader(updateNotice, btnFeedback);
+        btnAdministrator.Visible = !isLocalAdministrator();
+        var header = new UpdaterHeader(updateNotice, btnFeedback, btnAdministrator);
         main.Controls.Add(header, 0, 0);
 
         // Keep package cards in their own column, independent of the menu headers.
@@ -1995,10 +2002,33 @@ public sealed partial class MainForm : Form
         }
     }
 
+    private void RestartAsAdministrator()
+    {
+        if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator || isLocalAdministrator()) return;
+        restartingAsAdministrator = true;
+        UpdateButtons();
+        try
+        {
+            if (restartAsAdministrator()) Close();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Der Updater konnte nicht als Administrator gestartet werden.\n\n" + ex.Message,
+                "Administratorstart", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            restartingAsAdministrator = false;
+            if (!IsDisposed) UpdateButtons();
+        }
+    }
+
     private void UpdateButtons()
     {
-        bool idle = !busy && !selfUpdating && !loadingPackages && !preparingDatabaseUpload;
+        bool idle = !busy && !selfUpdating && !loadingPackages && !preparingDatabaseUpload && !restartingAsAdministrator;
         HostState[] selected = SelectedHosts();
+        btnAdministrator.Visible = !isLocalAdministrator();
+        btnAdministrator.Enabled = idle;
         updateNotice.Enabled = idle;
         btnImport.Enabled = btnEditHosts.Enabled = idle && Mode != UpdateExecutionMode.Local; btnSaveConfig.Enabled = idle;
         btnPayment.Enabled = idle; btnFiscal.Enabled = idle; btnServerSuite.Enabled = idle;

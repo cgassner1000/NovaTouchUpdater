@@ -1,14 +1,8 @@
-using System.Security.Principal;
-
 namespace NovaTouchUpdater;
 
 public sealed partial class MainForm
 {
-    private Func<bool> isLocalAdministrator = () =>
-    {
-        using var identity = WindowsIdentity.GetCurrent();
-        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
-    };
+    private Func<bool> isLocalAdministrator = AppElevation.IsAdministrator;
     private Action<string>? showLocalAdministratorNotice = null;
 
     private bool MatchesSelectedSoftware(HostState host)
@@ -44,7 +38,7 @@ public sealed partial class MainForm
             (ComponentsForUpdate(host, onlyFailed) & (host.InstalledComponents ?? UpdateComponents.All)) != UpdateComponents.None);
         if (!installsLocally || isLocalAdministrator()) return true;
         const string message = "Für lokale Installationen sind Administratorrechte erforderlich.\n\n" +
-            "Bitte NovaTouch Updater schließen und mit Rechtsklick auf die EXE → ‚Als Administrator ausführen‘ neu starten.\n\n" +
+            "Bitte im Header links von ‚Report issue‘ auf ‚NovaTouchUpdater als Administrator starten‘ klicken.\n\n" +
             "Es wurden noch keine Update-Dateien kopiert und keine Installationen gestartet.";
         if (showLocalAdministratorNotice is { } show) show(message);
         else MessageBox.Show(this, message, "NovaTouch Updater als Administrator neu starten", MessageBoxButtons.OK, MessageBoxIcon.Information);

@@ -5,13 +5,12 @@ internal sealed class UpdaterHeader : TableLayoutPanel
     private readonly Label subtitle;
     private readonly Label title;
     private readonly LinkLabel notice;
-    private readonly Button feedback;
+    private readonly FlowLayoutPanel actions;
     private bool arranging;
 
-    internal UpdaterHeader(LinkLabel notice, Button feedback)
+    internal UpdaterHeader(LinkLabel notice, Button feedback, Button administrator)
     {
         this.notice = notice;
-        this.feedback = feedback;
         Name = "updaterHeader";
         feedback.Name = "reportFeedback";
         Dock = DockStyle.Top;
@@ -36,9 +35,18 @@ internal sealed class UpdaterHeader : TableLayoutPanel
             AutoSize = true, Dock = DockStyle.Fill, Margin = Padding.Empty
         };
         Controls.Add(title, 1, 0);
-        feedback.Anchor = AnchorStyles.Right;
+        actions = new FlowLayoutPanel
+        {
+            Name = "headerActions", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Anchor = AnchorStyles.Right, WrapContents = false, Margin = new Padding(16, 0, 0, 0)
+        };
+        administrator.Anchor = AnchorStyles.None;
+        administrator.Margin = Padding.Empty;
+        feedback.Anchor = AnchorStyles.None;
         feedback.Margin = new Padding(16, 0, 0, 0);
-        Controls.Add(feedback, 2, 0);
+        actions.Controls.Add(administrator);
+        actions.Controls.Add(feedback);
+        Controls.Add(actions, 2, 0);
         subtitle = new Label
         {
             Text = "ZIP- und MSI-Updates    ·    lokal und remote",
@@ -62,10 +70,12 @@ internal sealed class UpdaterHeader : TableLayoutPanel
             try
             {
                 int markWidth = Controls[0].Width + Controls[0].Margin.Horizontal;
-                int feedbackWidth = feedback.GetPreferredSize(Size.Empty).Width + feedback.Margin.Horizontal;
+                int feedbackWidth = actions.Controls.Cast<Control>().Where(control => control.Visible)
+                    .Sum(control => control.GetPreferredSize(Size.Empty).Width + control.Margin.Horizontal) + actions.Margin.Horizontal;
                 bool separateFeedback = ClientSize.Width - markWidth < TextRenderer.MeasureText(title.Text, title.Font).Width + feedbackWidth;
-                SetCellPosition(feedback, separateFeedback ? new TableLayoutPanelCellPosition(1, 2) : new TableLayoutPanelCellPosition(2, 0));
-                SetColumnSpan(feedback, separateFeedback ? 2 : 1);
+                actions.MaximumSize = new Size(Math.Max(1, ClientSize.Width - markWidth - actions.Margin.Horizontal), 0);
+                SetCellPosition(actions, separateFeedback ? new TableLayoutPanelCellPosition(1, 2) : new TableLayoutPanelCellPosition(2, 0));
+                SetColumnSpan(actions, separateFeedback ? 2 : 1);
                 SetColumnSpan(title, separateFeedback ? 2 : 1);
                 title.MaximumSize = new Size(Math.Max(1, ClientSize.Width - markWidth - (separateFeedback ? 0 : feedbackWidth)), 0);
                 int noticeWidth = notice.GetPreferredSize(Size.Empty).Width + notice.Margin.Horizontal;
