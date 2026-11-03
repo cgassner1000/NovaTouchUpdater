@@ -2,7 +2,7 @@ namespace NovaTouchUpdater;
 
 public sealed partial class MainForm
 {
-    private Func<bool> isLocalAdministrator = AppElevation.IsAdministrator;
+    private Func<bool> isProcessElevated = AppElevation.IsProcessElevated;
     private Action<string>? showLocalAdministratorNotice = null;
 
     private bool MatchesSelectedSoftware(HostState host)
@@ -36,8 +36,8 @@ public sealed partial class MainForm
     {
         bool installsLocally = selected.Any(host => host.IsLocal &&
             (ComponentsForUpdate(host, onlyFailed) & (host.InstalledComponents ?? UpdateComponents.All)) != UpdateComponents.None);
-        if (!installsLocally || isLocalAdministrator()) return true;
-        const string message = "Für lokale Installationen sind Administratorrechte erforderlich.\n\n" +
+        if (!installsLocally || isProcessElevated()) return true;
+        const string message = "Für lokale Installationen muss der Updater mit erhöhten Rechten laufen, auch bei einem Administratorkonto.\n\n" +
             "Bitte im Header links von ‚Report issue‘ auf ‚NovaTouchUpdater als Administrator starten‘ klicken.\n\n" +
             "Es wurden noch keine Update-Dateien kopiert und keine Installationen gestartet.";
         if (showLocalAdministratorNotice is { } show) show(message);

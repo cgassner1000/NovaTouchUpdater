@@ -1,11 +1,15 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
 using NovaTouchUpdater;
 
 internal static partial class Program
 {
     private static void AdministratorTests()
     {
+        ProcessElevationTests();
         var start = AppElevation.CreateStartInfo();
         Assert(start.FileName == Environment.ProcessPath && start.UseShellExecute && start.Verb == "runas" &&
             start.WorkingDirectory == AppContext.BaseDirectory &&
@@ -19,15 +23,18 @@ internal static partial class Program
         Assert(AppElevation.Restart(_ => Process.GetCurrentProcess()), "a successful launch allows the original window to close");
 
         var form = new MainForm(preview: true);
+        using var canvas = new Panel { Size = form.ClientSize };
         try
         {
             Populate(form);
+            Control content = form.Controls[0];
+            canvas.Controls.Add(content);
+            canvas.CreateControl();
             var button = Field<Button>(form, "btnAdministrator");
-            SetField(form, "isLocalAdministrator", new Func<bool>(() => false));
+            SetField(form, "isProcessElevated", new Func<bool>(() => false));
             Call(form, "UpdateButtons");
-            // The preview form stays hidden; a parent hidden by Windows makes Visible false.
-            Assert(button.Parent!.Controls.Contains(button) && button.Enabled && button.Image is not null,
-                "the header offers an enabled Windows shield action without administrator rights");
+            Assert(button.Visible && button.Enabled && button.Image is not null,
+                "the header shows an enabled Windows shield action whenever the process is not elevated");
             int launches = 0;
             SetField(form, "restartAsAdministrator", new Func<bool>(() =>
             {
@@ -49,11 +56,15 @@ internal static partial class Program
             Call(form, "RestartAsAdministrator");
             Assert(launches == 1 && !form.IsDisposed && button.Enabled,
                 "cancelled elevation leaves the existing updater usable and blocks duplicate launches");
-            SetField(form, "isLocalAdministrator", new Func<bool>(() => true));
+            SetField(form, "isProcessElevated", new Func<bool>(() => true));
             Call(form, "UpdateButtons");
+            Assert(!button.Visible, "only actual process elevation hides the header action");
             Call(form, "RestartAsAdministrator");
             Assert(launches == 1, "an elevated updater never requests elevation again");
-            SetField(form, "isLocalAdministrator", new Func<bool>(() => false));
+            SetField(form, "isProcessElevated", new Func<bool>(() => false));
+            Call(form, "UpdateButtons");
+            Assert(button.Visible, "the header offers elevation again when the process is not elevated");
+            form.Controls.Add(content);
             SetField(form, "restartAsAdministrator", new Func<bool>(() => true));
             Call(form, "RestartAsAdministrator");
             Assert(form.IsDisposed, "the original updater closes after the administrator launch succeeds");
@@ -61,4 +72,46 @@ internal static partial class Program
         finally { if (!form.IsDisposed) form.Dispose(); }
         FeedbackHeaderTests();
     }
+
+    private static void ProcessElevationTests()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        Assert(AppElevation.IsProcessElevated() == AppElevation.IsTokenElevated(identity.AccessToken),
+            "the running process reports the elevation state of its Windows token");
+
+        const int tokenElevationType = 18, tokenLinkedToken = 19;
+        if (!ReadElevationType(identity.AccessToken, tokenElevationType, out int type, sizeof(int), out _))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (type == 1)
+        {
+            Console.WriteLine("SKIP split administrator token: this Windows account has no linked UAC token");
+            return;
+        }
+        if (!ReadLinkedToken(identity.AccessToken, tokenLinkedToken, out IntPtr linked, IntPtr.Size, out _))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        using var linkedToken = new SafeAccessTokenHandle(linked);
+        SafeAccessTokenHandle standardToken = type == 2 ? linkedToken : identity.AccessToken;
+        SafeAccessTokenHandle elevatedToken = type == 2 ? identity.AccessToken : linkedToken;
+        using var standardIdentity = new WindowsIdentity(standardToken.DangerousGetHandle());
+        using var elevatedIdentity = new WindowsIdentity(elevatedToken.DangerousGetHandle());
+        Assert(standardIdentity.User == elevatedIdentity.User &&
+            new WindowsPrincipal(elevatedIdentity).IsInRole(WindowsBuiltInRole.Administrator) &&
+            !AppElevation.IsTokenElevated(standardToken),
+            "a Windows administrator's standard UAC token is correctly detected as NOT elevated");
+        Assert(AppElevation.IsTokenElevated(elevatedToken),
+            "the same administrator's elevated UAC token is detected as elevated");
+        bool threadResult = WindowsIdentity.RunImpersonated(standardToken, AppElevation.IsProcessElevated);
+        Assert(threadResult == AppElevation.IsProcessElevated(),
+            "thread impersonation does not change the process elevation used by the header and its workers");
+    }
+
+    [DllImport("advapi32.dll", EntryPoint = "GetTokenInformation", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ReadElevationType(SafeAccessTokenHandle token, int informationClass,
+        out int information, int informationLength, out int returnLength);
+
+    [DllImport("advapi32.dll", EntryPoint = "GetTokenInformation", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ReadLinkedToken(SafeAccessTokenHandle token, int informationClass,
+        out IntPtr information, int informationLength, out int returnLength);
 }

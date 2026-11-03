@@ -147,7 +147,7 @@ public sealed partial class MainForm : Form
         };
         btnAdministrator.Click += (_, _) => RestartAsAdministrator();
         updateToolTip.SetToolTip(btnAdministrator,
-            "Startet den Updater mit Administratorrechten neu. Nicht gespeicherte Einstellungen gehen beim Neustart verloren.");
+            "Startet den Updater per Windows-UAC mit erhöhten Rechten neu, auch bei einem Administratorkonto. Nicht gespeicherte Einstellungen gehen beim Neustart verloren.");
         txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
         txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
         DpiChanged += (_, _) => BeginInvoke((Action)ApplyColumnWidths);
@@ -368,7 +368,7 @@ public sealed partial class MainForm : Form
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        btnAdministrator.Visible = !isLocalAdministrator();
+        btnAdministrator.Visible = !isProcessElevated();
         var header = new UpdaterHeader(updateNotice, btnFeedback, btnAdministrator);
         main.Controls.Add(header, 0, 0);
 
@@ -495,7 +495,7 @@ public sealed partial class MainForm : Form
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts. LOKAL wird direkt geprüft; Remote-Hosts über WinRM.");
         tips.SetToolTip(btnScan, "Nur Verbindung und installierte Versionen prüfen. Es werden keine Update-Dateien kopiert und keine Programme installiert.");
-        tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen und bei Bedarf starten, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Ohne Remote-Auswahl wird nur lokal getestet. Für Dienststart und TrustedHosts sind Administratorrechte erforderlich.");
+        tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen und bei Bedarf starten, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Ohne Remote-Auswahl wird nur lokal getestet. Für Dienststart und TrustedHosts den Updater über das Schutzschild im Header mit erhöhten Rechten starten, auch bei einem Administratorkonto.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
         tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, lokale und beide Remote-Paketoptionen, Benutzer, Passwort, HTTPS, IRIS-TLS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
@@ -1962,9 +1962,7 @@ public sealed partial class MainForm : Form
         if (MessageBox.Show(this,
             $"NovaTouch Updater {AppReleaseClient.DisplayVersion(release.Version)} ist verfügbar.\n" +
             $"Aktuelle Version: {AppReleaseClient.DisplayVersion(AppReleaseClient.CurrentVersion)}\n\n" +
-            "Neue Version von GitHub herunterladen und jetzt verwenden?\n" +
-            "Der Updater wird geschlossen und die neue Version im selben Ordner als NovaTouchUpdater.exe geöffnet. Die bisherige EXE wird ersetzt.\n\n" +
-            "Die gespeicherte config.json bleibt erhalten. Nicht gespeicherte Änderungen gehen beim Neustart verloren.",
+            "Soll die neue Version von NovaTouchUpdater heruntergeladen und installiert werden?",
             "Neue Version verfügbar", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
 
         selfUpdating = true;
@@ -2004,7 +2002,7 @@ public sealed partial class MainForm : Form
 
     private void RestartAsAdministrator()
     {
-        if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator || isLocalAdministrator()) return;
+        if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator || isProcessElevated()) return;
         restartingAsAdministrator = true;
         UpdateButtons();
         try
@@ -2027,7 +2025,7 @@ public sealed partial class MainForm : Form
     {
         bool idle = !busy && !selfUpdating && !loadingPackages && !preparingDatabaseUpload && !restartingAsAdministrator;
         HostState[] selected = SelectedHosts();
-        btnAdministrator.Visible = !isLocalAdministrator();
+        btnAdministrator.Visible = !isProcessElevated();
         btnAdministrator.Enabled = idle;
         updateNotice.Enabled = idle;
         btnImport.Enabled = btnEditHosts.Enabled = idle && Mode != UpdateExecutionMode.Local; btnSaveConfig.Enabled = idle;

@@ -66,7 +66,7 @@ internal static partial class Program
         Assert(!Updates(form, false).Contains(databaseServer), "service-only updates do not connect to an unrelated IRIS server");
 
         string notice="";
-        SetField(form, "isLocalAdministrator", new Func<bool>(() => false));
+        SetField(form, "isProcessElevated", new Func<bool>(() => false));
         SetField(form, "showLocalAdministratorNotice", new Action<string>(text => notice=text));
         var local = new HostState { Host="LOCALHOST", InstalledComponents=UpdateComponents.Payment };
         worker.Requests.Clear();
@@ -76,7 +76,7 @@ internal static partial class Program
         notice="";
         Assert((bool)Call(form, "EnsureLocalInstallationAccess", remote, false)! && notice.Length == 0,
             "remote updates do not require local administrator rights");
-        SetField(form, "isLocalAdministrator", new Func<bool>(() => true));
+        SetField(form, "isProcessElevated", new Func<bool>(() => true));
         Assert((bool)Call(form, "EnsureLocalInstallationAccess", new[] { local }, false)!, "already elevated local installation proceeds");
         var startup=Field<CheckBox>(form, "chkScanOnStartup");
         Assert(startup.Text == "Version beim Programmstart prüfen" && ((TableLayoutPanel)startup.Parent!).GetRow(startup) == 1 &&
