@@ -1,4 +1,4 @@
-# No installer, service or zzzSoftware operations. Only explicitly selected code
+# No installer, service or zzzSoftware operations. Only explicitly selected XML
 # exports are loaded through the existing connection's native IRIS status API.
 function ReadServicePackItems([string]$Path) {
     $settings = [Xml.XmlReaderSettings]::new(); $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit; $settings.XmlResolver = $null
@@ -8,20 +8,23 @@ function ReadServicePackItems([string]$Path) {
         if ($reader.MoveToContent() -ne [Xml.XmlNodeType]::Element -or $reader.LocalName -cne 'Export') { throw 'Kein InterSystems-XML-Export.' }
         while ($reader.Read()) {
             if ($reader.NodeType -ne [Xml.XmlNodeType]::Element -or $reader.Depth -ne 1) { continue }
-            if ($reader.LocalName -cnotin @('Class','Routine')) { throw 'Servicepacks dürfen nur Klassen und Routinen enthalten.' }
+            if ($reader.LocalName -cnotin @('Class','Routine','Global')) { throw 'Servicepacks dürfen nur Klassen, Routinen und Globals enthalten.' }
+            $isGlobal = $reader.LocalName -ceq 'Global'
             $name = $reader.GetAttribute('name')
-            if (-not $name -or $name -match '[^\p{L}\p{N}%._]') { throw 'Ungültiger Klassen-/Routinenname im Servicepack.' }
-            if ($reader.LocalName -ceq 'Class') { if ($name -notmatch '(?i)\.cls$') { $name += '.cls' } }
+            if ($isGlobal -and $name -and $name.StartsWith('^')) { $name = $name.Substring(1) }
+            if (-not $name -or $name -match '[^\p{L}\p{N}%._]') { throw 'Ungültiger Klassen-/Routinen-/Globalname im Servicepack.' }
+            if ($isGlobal) { $name = '^' + $name }
+            elseif ($reader.LocalName -ceq 'Class') { if ($name -notmatch '(?i)\.cls$') { $name += '.cls' } }
             elseif ($name -notmatch '(?i)\.(mac|int|inc|bas)$') {
                 $type = $reader.GetAttribute('type'); if (-not $type) { $type = 'MAC' }
                 if ($type -notin @('MAC','INT','INC','BAS')) { throw 'Unbekannter Routinentyp.' }
                 $name += '.' + $type.ToLowerInvariant()
             }
-            if ($items -contains $name) { throw 'Objekt mehrfach in derselben XML-Datei.' }
+            if (($isGlobal -and $items -ccontains $name) -or (-not $isGlobal -and $items -contains $name)) { throw 'Objekt mehrfach in derselben XML-Datei.' }
             $items.Add($name)
         }
     } finally { $reader.Dispose() }
-    if ($items.Count -eq 0) { throw 'Keine Klassen oder Routinen im Servicepack.' }
+    if ($items.Count -eq 0) { throw 'Keine Klassen, Routinen oder Globals im Servicepack.' }
     $items.ToArray()
 }
 
@@ -30,9 +33,9 @@ function AssertServicePackFiles([object[]]$Files) {
     foreach ($file in $Files) {
         if ([IO.Path]::GetExtension([string]$file.Path) -ine '.xml' -or -not (Test-Path -LiteralPath $file.Path -PathType Leaf)) { throw 'XML-Servicepack fehlt.' }
         if ([string]$file.Sha256 -notmatch '^[a-fA-F0-9]{64}$' -or (Get-FileHash -LiteralPath $file.Path -Algorithm SHA256).Hash -ine $file.Sha256) { throw ('Servicepack-Prüfsumme stimmt nicht: ' + $file.Name) }
-        $actual = @(ReadServicePackItems $file.Path | Sort-Object -Unique)
-        $expected = @($file.Items | Sort-Object -Unique)
-        if ($expected.Count -eq 0 -or @(Compare-Object $actual $expected).Count -gt 0) { throw 'Servicepack-Inhalt entspricht nicht der bestätigten Auswahl.' }
+        $actual = @(ReadServicePackItems $file.Path | Sort-Object -Unique -CaseSensitive)
+        $expected = @($file.Items | Sort-Object -Unique -CaseSensitive)
+        if ($expected.Count -eq 0 -or @(Compare-Object $actual $expected -CaseSensitive).Count -gt 0) { throw 'Servicepack-Inhalt entspricht nicht der bestätigten Auswahl.' }
     }
 }
 

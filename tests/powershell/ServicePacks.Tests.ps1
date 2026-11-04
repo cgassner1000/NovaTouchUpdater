@@ -61,7 +61,27 @@ Assert (-not $result.Success -and $result.Error -match 'Server closed communicat
     @([ServicePackFixture.Database]::Events | Where-Object { $_ -like 'POS|compile|*' }).Count -eq 0) 'connection loss is preserved without retries or further files in that namespace, while independent namespaces finish'
 
 [ServicePackFixture.Database]::Reset()
-$bad=Join-Path $root 'bad.xml'; [IO.File]::WriteAllText($bad,'<Export><Global name="not-code"/></Export>')
+$globalFiles=@()
+foreach ($entry in @(
+    @('globals.xml','<Export><Global name="^ServicePack.Data"><Node><Subscript>1</Subscript><Data>global data</Data></Node></Global><Global name="ServicePack.data"><Node><Data>case-sensitive</Data></Node></Global></Export>',@('^ServicePack.Data','^ServicePack.data')),
+    @('mixed.xml','<Export><Class name="User.ServicePack"/><Routine name="ServicePack" type="MAC"/><Global name="^ServicePack.mac"><Node><Data>mixed data</Data></Node></Global></Export>',@('User.ServicePack.cls','ServicePack.mac','^ServicePack.mac')))) {
+    $path=Join-Path $root $entry[0]; [IO.File]::WriteAllText($path,$entry[1],[Text.UTF8Encoding]::new($false))
+    $globalFiles += [pscustomobject]@{ Path=$path; Name=$entry[0]; Sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash; Items=@($entry[2]) }
+}
+$result=ImportServicePacks $globalFiles $targets 'fake-provider'
+Assert ($result.Success -and $result.ServicePackResults.Count -eq 3 -and
+    @($result.ServicePackResults | Where-Object { $_.ImportedFiles -ne 2 }).Count -eq 0 -and
+    [ServicePackFixture.Database]::LoadPaths.Count -eq 6) 'global-only and mixed XMLs are passed unchanged to Load with fck/display=none in every eligible namespace'
+$invalidCases=@('<Export><Project name="unsupported"/></Export>', '<Export><Global name="^"/></Export>',
+    '<Export><Global name="^^Invalid"/></Export>', '<Export><Global name="Data"/><Global name="^Data"/></Export>')
+foreach ($xml in $invalidCases) {
+    $invalid=Join-Path $root 'invalid-global.xml'; [IO.File]::WriteAllText($invalid,$xml)
+    [ServicePackFixture.Database]::Reset()
+    $invalidFile=[pscustomobject]@{ Path=$invalid; Name='invalid-global.xml'; Sha256=(Get-FileHash -LiteralPath $invalid -Algorithm SHA256).Hash; Items=@('^Data') }
+    $rejected=$false; try { $null=ImportServicePacks @($invalidFile) $targets 'fake-provider' } catch { $rejected=$true }
+    Assert ($rejected -and [ServicePackFixture.Database]::Events.Count -eq 0) 'unsupported exports and invalid or duplicate globals fail before database access'
+}
+$bad=Join-Path $root 'bad.xml'; [IO.File]::WriteAllText($bad,'<Export><Project name="not-supported"/></Export>')
 $badFile=[pscustomobject]@{ Path=$bad; Name='bad.xml'; Sha256=(Get-FileHash $bad -Algorithm SHA256).Hash; Items=@('not-code') }
 $rejected=$false; try { $null=ImportServicePacks @($badFile) $targets 'fake-provider' } catch { $rejected=$true }
 Assert ($rejected -and [ServicePackFixture.Database]::Events.Count -eq 0) 'unsupported XML contents fail before any namespace is touched'
@@ -131,4 +151,9 @@ $remoteResult=ImportRemoteServicePacks $request 'simulated-session' $worker
 Assert ($remoteResult.Success -and @([ServicePackFixture.Database]::LoadPaths | Sort-Object -Unique).Count -eq 2 -and
     [IO.File]::ReadAllText((Join-Path $remote 'classes.xml')) -eq $classXml -and
     [IO.File]::ReadAllText((Join-Path $remote 'classes-2.xml')) -match '<Routine ') 'same-named XML selections use distinct destination files without overwriting each other'
+$request.ServicePackFiles=$globalFiles
+[ServicePackFixture.Database]::Reset()
+$remoteResult=ImportRemoteServicePacks $request 'simulated-session' $worker
+Assert ($remoteResult.Success -and [ServicePackFixture.Database]::LoadPaths.Count -eq 6 -and
+    @($globalFiles | Where-Object { (Get-FileHash -LiteralPath (Join-Path $remote $_.Name) -Algorithm SHA256).Hash -ne $_.Sha256 }).Count -eq 0) 'remote global-only and mixed servicepacks are uploaded byte-for-byte and loaded from the configured destination'
 Write-Output 'Servicepack tests passed. No real IRIS connections, remoting or imports were executed.'

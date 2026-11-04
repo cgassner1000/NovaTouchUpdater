@@ -45,7 +45,8 @@ internal sealed class ServicePackSelection : IDisposable
 
     private static string[] ReadItems(Stream source, CancellationToken ct)
     {
-        var items = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var items = new List<string>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
         using var reader = XmlReader.Create(source, ReaderSettings());
         if (reader.MoveToContent() != XmlNodeType.Element || reader.LocalName != "Export")
             throw new InvalidDataException("Die XML-Datei ist kein InterSystems-Export.");
@@ -53,21 +54,25 @@ internal sealed class ServicePackSelection : IDisposable
         {
             ct.ThrowIfCancellationRequested();
             if (reader.NodeType != XmlNodeType.Element || reader.Depth != 1) continue;
-            if (reader.LocalName is not ("Class" or "Routine"))
-                throw new InvalidDataException("Servicepacks dürfen ausschließlich Klassen und Routinen enthalten: " + reader.LocalName);
+            if (reader.LocalName is not ("Class" or "Routine" or "Global"))
+                throw new InvalidDataException("Servicepacks dürfen ausschließlich Klassen, Routinen und Globals enthalten: " + reader.LocalName);
+            bool isGlobal = reader.LocalName == "Global";
             string name = reader.GetAttribute("name") ?? "";
+            if (isGlobal && name.StartsWith('^')) name = name[1..];
             if (name.Length == 0 || name.Any(character => !(char.IsLetterOrDigit(character) || character is '%' or '.' or '_')))
-                throw new InvalidDataException("Ungültiger Klassen-/Routinenname im Servicepack: " + name);
-            if (reader.LocalName == "Class") name += name.EndsWith(".cls", StringComparison.OrdinalIgnoreCase) ? "" : ".cls";
+                throw new InvalidDataException("Ungültiger Klassen-/Routinen-/Globalname im Servicepack: " + name);
+            if (isGlobal) name = "^" + name;
+            else if (reader.LocalName == "Class") name += name.EndsWith(".cls", StringComparison.OrdinalIgnoreCase) ? "" : ".cls";
             else if (!new[] { ".mac", ".int", ".inc", ".bas" }.Any(extension => name.EndsWith(extension, StringComparison.OrdinalIgnoreCase)))
             {
                 string type = (reader.GetAttribute("type") ?? "MAC").ToLowerInvariant();
                 if (type is not ("mac" or "int" or "inc" or "bas")) throw new InvalidDataException("Unbekannter Routinentyp: " + type);
                 name += "." + type;
             }
-            if (!items.Add(name)) throw new InvalidDataException("Objekt mehrfach in derselben XML-Datei: " + name);
+            if (!names.Add(isGlobal ? name : name.ToUpperInvariant())) throw new InvalidDataException("Objekt mehrfach in derselben XML-Datei: " + name);
+            items.Add(name);
         }
-        if (items.Count == 0) throw new InvalidDataException("Die XML-Datei enthält keine Klassen oder Routinen.");
+        if (items.Count == 0) throw new InvalidDataException("Die XML-Datei enthält keine Klassen, Routinen oder Globals.");
         return items.ToArray();
     }
 

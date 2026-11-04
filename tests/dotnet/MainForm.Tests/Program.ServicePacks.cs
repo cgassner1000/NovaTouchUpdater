@@ -100,14 +100,30 @@ internal static partial class Program
                 "servicepack snapshots are protected by SHA256");
         }
         Assert(!File.Exists(snapshot), "only the temporary servicepack snapshots are removed afterwards");
-        foreach (string bad in new[] { "<Export><Global name=\"unsafe\" /></Export>", "<Export/>", "<Export><Class name=\"User.*\" /></Export>",
+        string globals = Path.Combine(root, "globals.xml"), mixed = Path.Combine(root, "mixed.xml");
+        File.WriteAllText(globals, "<Export><Global name=\"^ServicePack.Data\"><Node><Subscript>1</Subscript><Data>Grüße 🎉</Data></Node></Global>" +
+            "<Global name=\"ServicePack.data\"><Node><Data>case-sensitive</Data></Node></Global></Export>");
+        File.WriteAllText(mixed, "<Export><Class name=\"User.ServicePack\"/><Routine name=\"ServicePack\" type=\"MAC\"/>" +
+            "<Global name=\"^ServicePack.mac\"><Node><Data>global and routine names stay distinct</Data></Node></Global></Export>");
+        using (var selection = await ServicePackSelection.CreateAsync([globals, mixed], CancellationToken.None))
+        {
+            Assert(selection.Files[0].Items.SequenceEqual(["^ServicePack.Data", "^ServicePack.data"]) &&
+                selection.Files[1].Items.SequenceEqual(["User.ServicePack.cls", "ServicePack.mac", "^ServicePack.mac"]),
+                "global-only and mixed XMLs accept global names with or without a caret and preserve case-sensitive global identities");
+            Assert(selection.LocalFiles.Select(file => file.Path).SequenceEqual([globals, mixed]) &&
+                selection.Files.All(file => File.ReadAllBytes(file.Path).SequenceEqual(File.ReadAllBytes(Path.Combine(root, file.Name)))),
+                "global data and XML bytes stay unchanged for local imports and remote uploads");
+        }
+        foreach (string bad in new[] { "<Export><Project name=\"unsupported\" /></Export>", "<Export/>", "<Export><Class name=\"User.*\" /></Export>",
+            "<Export><Global name=\"^\"/></Export>", "<Export><Global name=\"^^Invalid\"/></Export>",
+            "<Export><Global name=\"Data\"/><Global name=\"^Data\"/></Export>",
             "<!DOCTYPE Export [<!ENTITY x SYSTEM 'file:///C:/missing'>]><Export><Class name=\"User.Bad\">&x;</Class></Export>", "<Export><Routine" })
         {
             string path = Path.Combine(root, "invalid.xml"); File.WriteAllText(path, bad);
             bool rejected = false;
             try { using var ignored = await ServicePackSelection.CreateAsync([path], CancellationToken.None); }
             catch (Exception ex) when (ex is InvalidDataException or XmlException) { rejected = true; }
-            Assert(rejected, "malformed, empty, non-code and external-entity XML is rejected before database access");
+            Assert(rejected, "malformed, empty, unsupported, duplicate and external-entity XML is rejected before database access");
         }
         using var picker = MainForm.CreateServicePackFileDialog();
         Assert(picker.Multiselect && picker.Filter.Contains("*.xml"), "any number of XML servicepacks can be selected together");
