@@ -1,68 +1,48 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
+using System.IO;
 
 namespace ServicePackFixture
 {
-    public enum ClientType { tStatus }
-    public sealed class Status {
-        public string Error = "";
-        public bool IsOK { get { return Error.Length == 0; } }
-        public void ThrowException() { throw new Exception(Error); }
-    }
-    public sealed class ResultValue { public object ValueObject; public object Value { get { return ValueObject; } set { ValueObject = value; } } }
-    public sealed class Signature {
-        public ResultValue ReturnValue = new ResultValue();
-        public List<object> Arguments = new List<object>();
-        public void SetReturnType(Connection connection, ClientType type) { }
-        public void Add(string value, bool byReference) { Arguments.Add(value); }
-        public void Add(ProxyObject value, Connection connection, Type type, bool byReference) {
-            if (type != typeof(ProxyObject)) throw new Exception("Wrong object binding");
-            Arguments.Add(value);
-        }
-        public void Clear() { Arguments.Clear(); ReturnValue.Value = null; }
-    }
     public static class Database {
         public static List<string> Events = new List<string>();
-        public static string FailCompile = "", FailLoad = "";
-        public static int Disposed, Cleared, Closed;
-        public static void Reset() { Events.Clear(); FailCompile = FailLoad = ""; Disposed = Cleared = Closed = 0; }
+        public static List<string> LoadPaths = new List<string>();
+        public static string FailCompile = "", FailLoad = "", ThrowLoad = "", DisconnectLoad = "";
+        public static int Disposed;
+        public static void Reset() {
+            Events.Clear(); LoadPaths.Clear();
+            FailCompile = FailLoad = ThrowLoad = DisconnectLoad = "";
+            Disposed = 0;
+        }
     }
     public sealed class Connection : IDisposable {
         public string Namespace;
-        public Connection(string ns) { Namespace = ns; }
-        public Signature GetMtdSignature() { return new Signature(); }
+        public NativeMethods NativeAPI { get; private set; }
+        public Connection(string ns) { Namespace = ns; NativeAPI = new NativeMethods(this); }
+        public object GetMtdSignature() { throw new Exception("Servicepacks must use the native status API, not object bindings"); }
         public void Dispose() { Database.Disposed++; }
     }
-    public sealed class ProxyObject {
+    public sealed class NativeMethods {
         private readonly Connection connection;
-        private readonly StringBuilder contents = new StringBuilder();
-        public ProxyObject(Connection connection, string name, object[] arguments) {
-            if (name != "%Stream.GlobalCharacter") throw new Exception("Unexpected class " + name);
-            this.connection = connection;
-        }
-        public void RunMethodS(string method, Signature signature) {
-            if (method == "Write") contents.Append((string)signature.Arguments[0]);
-            else if (method == "Clear") { contents.Clear(); Database.Cleared++; }
-            else if (method != "Rewind") throw new Exception("Unexpected stream method " + method);
-            signature.ReturnValue.Value = new Status();
-        }
-        public static void RunClassMethodS(Connection connection, string name, string method, Signature signature) {
+        public NativeMethods(Connection connection) { this.connection = connection; }
+        public void ClassMethodStatusCode(string name, string method, params object[] arguments) {
+            foreach (var argument in arguments) {
+                if (!(argument is string)) throw new Exception("Only scalar arguments may cross this class-method boundary");
+            }
             if (name != "%SYSTEM.OBJ") throw new Exception("Unexpected class " + name);
-            var status = new Status();
-            if (method == "LoadStream") {
-                var stream = signature.Arguments[0] as ProxyObject;
-                if (stream == null || !object.ReferenceEquals(stream.connection, connection)) throw new Exception("Stream must use native object binding");
-                if ((string)signature.Arguments[1] != "/compile=0") throw new Exception("Import must precede compilation");
-                Database.Events.Add(connection.Namespace + "|load|" + stream.contents.ToString());
-                if (connection.Namespace == Database.FailLoad) status.Error = "simulated XML import error; Password=synthetic-secret";
-            } else if (method == "CompileList") {
-                if ((string)signature.Arguments[1] != "ckbf") throw new Exception("Compiler flags changed");
-                Database.Events.Add(connection.Namespace + "|compile|" + signature.Arguments[0] + "|ckbf");
-                if (connection.Namespace == Database.FailCompile) status.Error = "simulated compiler error";
+            if (arguments.Length != 2) throw new Exception("The method needs a path/list and compiler qualifiers");
+            if (method == "Load") {
+                string path = (string)arguments[0];
+                if (!Path.IsPathRooted(path) || !File.Exists(path)) throw new Exception("Load needs the existing XML on this host");
+                if ((string)arguments[1] != "fck/display=none") throw new Exception("Load must use fck and suppress terminal output with display=none, never display=0");
+                Database.LoadPaths.Add(path);
+                Database.Events.Add(connection.Namespace + "|load|" + File.ReadAllText(path));
+                if (connection.Namespace == Database.ThrowLoad) throw new Exception("Exception thrown on server (code = 1217) : <THROW>");
+                if (connection.Namespace == Database.DisconnectLoad) throw new Exception("Communication error: Server closed communication device <TCP>");
+                if (connection.Namespace == Database.FailLoad) throw new Exception("ERROR #5002: simulated XML import error; Password=synthetic-secret");
+                if (connection.Namespace == Database.FailCompile) throw new Exception("ERROR #5002: simulated compiler error");
+                Database.Events.Add(connection.Namespace + "|compile|" + Path.GetFileName(path) + "|fck");
             } else throw new Exception("Unexpected method " + method);
-            signature.ReturnValue.Value = status;
         }
-        public void Close() { Database.Closed++; }
     }
 }

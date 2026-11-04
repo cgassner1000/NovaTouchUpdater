@@ -56,7 +56,7 @@ public sealed partial class MainForm : Form
     private readonly NumericUpDown nUpdate = new();
     private readonly NumericUpDown nHttpsPort = new();
     private readonly CheckBox chkSsl = new ModernToggleSwitch();
-    private readonly CheckBox chkIrisTls = new ModernToggleSwitch { Name = "irisUseTls", Text = "BETA: IRIS-Verbindung mit TLS", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkIrisTls = new ModernToggleSwitch { Name = "irisUseTls", Text = "IRIS-Verbindung mit TLS", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkUploadToZzzSoftware = new ModernToggleSwitch { Name = "uploadToZzzSoftware", Text = "Installationspakete in Datenbank hochladen", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkRestartPosAfterUpdate = new ModernToggleSwitch { Name = "restartPosAfterUpdate", Text = "NovaTouch POS nach Datenbank-upload neu starten", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkForceUpdate = new ModernToggleSwitch();
@@ -380,6 +380,7 @@ public sealed partial class MainForm : Form
         activationImage.Name = "appMark";
         betaFeatures = new BetaFeatureGate(this, activationImage);
         betaFeatures.Register(btnServicePacks);
+        betaFeatures.Register(chkIrisTls);
         betaFeatures.Activated += () =>
         {
             if (showBetaActivated is { } show) show();

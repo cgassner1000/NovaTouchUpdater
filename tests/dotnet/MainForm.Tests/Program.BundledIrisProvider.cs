@@ -39,6 +39,8 @@ internal static partial class Program
                         if ($null -eq $provider.BinaryStreamType.GetMethod('Write',[type[]]@([byte[]],[int],[int]))) { throw 'Binary stream Write API unavailable' }
                         $connection.GeneratedAssembly = $provider.ObjectType.Assembly
                         if ($connection.GeneratedAssembly -ne $provider.ObjectType.Assembly) { throw 'Binding assembly projection unavailable' }
+                        $native = $provider.ConnectionType.GetProperty('NativeAPI')
+                        if ($null -eq $native -or $null -eq $native.PropertyType.GetMethod('ClassMethodStatusCode',[type[]]@([string],[string],[object[]]))) { throw 'Native status API for servicepack import unavailable' }
                         $signature = [Activator]::CreateInstance($provider.ObjectType.Assembly.GetType('InterSystems.Data.IRISTypes.IRISMethodSignature',$true))
                         try {
                             foreach ($method in @('SetPropertyS','GetPropertyS','RunMethodS')) {
@@ -46,7 +48,11 @@ internal static partial class Program
                             }
                             if ($null -eq $provider.ObjectType.GetMethod('RunClassMethodS',[type[]]@($provider.ConnectionType,[string],[string],$signature.GetType()))) { throw 'Direct class method API unavailable' }
                             $objectInterface = $provider.ObjectType.Assembly.GetType('InterSystems.Data.IRISTypes.IIRISObject',$true)
-                            if ($null -eq $signature.GetType().GetMethod('Add',[type[]]@($objectInterface,$provider.ConnectionType,[type],[bool]))) { throw 'Native LoadStream object argument binding unavailable' }
+                            if ($null -eq $signature.GetType().GetMethod('Add',[type[]]@($objectInterface,$provider.ConnectionType,[type],[bool]))) { throw 'Native object argument binding unavailable' }
+                            if ($null -eq $signature.GetType().GetMethod('Add',[type[]]@([string],[bool]))) { throw 'Scalar file import argument binding unavailable' }
+                            foreach ($type in @('tString','tBool','tStatus')) {
+                                $signature.SetReturnType($connection,[Enum]::Parse($provider.ClientType,$type))
+                            }
                             $signature.SetReturnType($connection,$provider.BinaryStreamType)
                             if ($signature.ReturnValue.ClientType -ne $provider.BinaryStreamType) { throw 'Typed binary stream signature unavailable' }
                         } finally { $signature.Clear() }

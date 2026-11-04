@@ -1,5 +1,5 @@
 # No installer, service or zzzSoftware operations. Only explicitly selected code
-# exports are loaded through the existing IRIS bindings connection.
+# exports are loaded through the existing connection's native IRIS status API.
 function ReadServicePackItems([string]$Path) {
     $settings = [Xml.XmlReaderSettings]::new(); $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit; $settings.XmlResolver = $null
     $reader = [Xml.XmlReader]::Create($Path, $settings)
@@ -36,57 +36,21 @@ function AssertServicePackFiles([object[]]$Files) {
     }
 }
 
-function LoadServicePackXml($Provider, $Connection, $File) {
-    $stream = $null; $reader = $null; $source = $null
+function LoadServicePackXml($Connection, $File) {
+    $operation = 'XML-Datei prüfen'
     try {
-        $source = [IO.File]::Open($File.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
-        $hasher = [Security.Cryptography.SHA256]::Create()
-        try { $actualHash = [BitConverter]::ToString($hasher.ComputeHash($source)).Replace('-','') } finally { $hasher.Dispose() }
-        if ($actualHash -ine $File.Sha256) { throw 'Servicepack wurde nach der Vorbereitung verändert.' }
-        $source.Position = 0
-        $reader = [IO.StreamReader]::new($source, [Text.UTF8Encoding]::new($false,$true), $true)
-        $stream = NewSoftwareDatabaseObject $Provider $Connection '%Stream.GlobalCharacter'
-        $buffer = New-Object char[] 8193
-        while (($read = $reader.Read($buffer,0,8192)) -gt 0) {
-            if ([char]::IsHighSurrogate($buffer[$read-1])) { $next=$reader.Read(); if ($next -ge 0) { $buffer[$read]=[char]$next; $read++ } }
-            InvokeSoftwareObjectMethod $Provider $Connection $stream 'Write' 'tStatus' @([string]::new($buffer,0,$read))
-        }
-        InvokeSoftwareObjectMethod $Provider $Connection $stream 'Rewind' 'tStatus'
-        $signature = $Connection.GetMtdSignature()
-        try {
-            $signature.SetReturnType($Connection, [Enum]::Parse($Provider.ClientType,'tStatus'))
-            $signature.Add($stream,$Connection,$Provider.ObjectType,$false)
-            $signature.Add('/compile=0',$false)
-            $objectType = $Provider.ObjectType
-            $objectType::RunClassMethodS($Connection,'%SYSTEM.OBJ','LoadStream',$signature)
-            AssertSoftwareDatabaseStatus $signature.ReturnValue.Value 'XML-Import'
-        } finally { $signature.Clear() }
-    } finally {
-        if ($null -ne $stream) {
-            try { InvokeSoftwareObjectMethod $Provider $Connection $stream 'Clear' 'tStatus' } catch { }
-            $stream.Close()
-        }
-        if ($null -ne $reader) { $reader.Dispose() }
-        elseif ($null -ne $source) { $source.Dispose() }
-    }
-}
-
-function CompileServicePackItems($Provider, $Connection, [string[]]$Items) {
-    $batches = [Collections.Generic.List[string]]::new(); $batch = ''
-    foreach ($item in @($Items | Sort-Object -Unique)) {
-        if ($batch.Length -gt 0 -and $batch.Length + $item.Length + 1 -gt 16000) { $batches.Add($batch); $batch='' }
-        $batch += $(if ($batch) { ',' } else { '' }) + $item
-    }
-    if ($batch) { $batches.Add($batch) }
-    foreach ($list in $batches) {
-        $signature = $Connection.GetMtdSignature()
-        try {
-            $signature.SetReturnType($Connection,[Enum]::Parse($Provider.ClientType,'tStatus'))
-            $signature.Add($list,$true); $signature.Add('ckbf',$false)
-            $objectType = $Provider.ObjectType
-            $objectType::RunClassMethodS($Connection,'%SYSTEM.OBJ','CompileList',$signature)
-            AssertSoftwareDatabaseStatus $signature.ReturnValue.Value 'Kompilieren (ckbf)'
-        } finally { $signature.Clear() }
+        $path = [IO.Path]::GetFullPath([string]$File.Path)
+        if ((Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash -ine $File.Sha256) { throw 'Servicepack wurde nach der Vorbereitung verändert.' }
+        $operation = 'XML-Datei in IRIS laden'
+        # Match the working terminal call: load and compile this file with fck.
+        # Use the existing connection's native status API. Object bindings also
+        # query changed objects after a method call, which this code import does
+        # not need. ClassMethodStatusCode throws with the IRIS error on failure.
+        # Native calls cannot write to the terminal. IRIS 2022.1 requires the
+        # enum value "none" here; /display=0 can recurse into %qcr until FRAMESTACK.
+        $Connection.NativeAPI.ClassMethodStatusCode('%SYSTEM.OBJ','Load',[object[]]@($path,'fck/display=none'))
+    } catch {
+        throw ("${operation}: " + $_.Exception.Message)
     }
 }
 
@@ -99,7 +63,6 @@ function ImportServicePacks([object[]]$Files, [object[]]$Targets, [string]$Provi
     if (@($destinations.Key | Sort-Object -Unique).Count -ne $destinations.Count) { throw 'IRIS-Ziele mehrfach vorhanden.' }
     $provider = InitializeSoftwareDatabaseProvider @($ProviderDirectory) @('IRIS')
     $results = [Collections.Generic.List[object]]::new(); $completed=0
-    $items = @($Files | ForEach-Object Items | Sort-Object -Unique)
     foreach ($destination in $destinations) {
         $connection=$null; $loaded=0; $fileName=''; $compiled=$false; $errorText=''
         try {
@@ -107,13 +70,11 @@ function ImportServicePacks([object[]]$Files, [object[]]$Targets, [string]$Provi
             $connection = OpenSoftwareDatabase $provider $destination.Definition $destination.Namespace
             foreach ($file in $Files) {
                 $fileName = [string]$file.Name
-                Progress 'Servicepack importieren' ($destination.Key + ' · ' + $fileName)
-                LoadServicePackXml $provider $connection $file
+                Progress 'Servicepack importieren' ($destination.Key + ' · ' + $fileName + ' · ' + $file.Path + ' · fck')
+                LoadServicePackXml $connection $file
                 $loaded++
             }
             $fileName=''
-            Progress 'Servicepacks kompilieren' ($destination.Key + ' · ckbf')
-            CompileServicePackItems $provider $connection $items
             $compiled=$true
         } catch {
             $errorText = GetSoftwareDatabaseError $_ @($destination.Definition.User,$destination.Definition.Password)
@@ -127,24 +88,36 @@ function ImportServicePacks([object[]]$Files, [object[]]$Targets, [string]$Provi
     }
     $failed = @($results | Where-Object { -not $_.Success })
     return @{ Event='result'; Success=($failed.Count -eq 0); Changed=(@($results | Where-Object { $_.ImportedFiles -gt 0 }).Count -gt 0);
-        Message=('{0} Namespace(s) erfolgreich, {1} fehlgeschlagen; Compilerflags ckbf.' -f ($results.Count-$failed.Count),$failed.Count);
+        Message=('{0} Namespace(s) erfolgreich, {1} fehlgeschlagen; Compilerflags fck.' -f ($results.Count-$failed.Count),$failed.Count);
         Error=(($failed | ForEach-Object { $_.Instance + '/' + $_.Namespace + ': ' + $_.Error }) -join ' | '); ServicePackResults=@($results.ToArray()) }
 }
 
 function ImportRemoteServicePacks($Request, $Session, [string]$WorkerPath) {
     AssertServicePackFiles @($Request.ServicePackFiles)
+    $destination = InvokeWorkerCommand -Session $Session -ArgumentList ([string]$Request.RemoteInstallPath) -ErrorAction Stop -ScriptBlock {
+        param([string]$path)
+        if ($path -notmatch '^[A-Za-z]:\\') { throw 'Ungültiger absoluter Windows-Zielpfad für Servicepacks.' }
+        $full = [IO.Path]::GetFullPath($path)
+        [void][IO.Directory]::CreateDirectory($full)
+        $full
+    }
     $stage = NewRemotePackageStage $Session
     try {
         foreach ($name in @('InterSystems.Data.IRISClient.dll','InterSystems.Data.Bindings.dll','IRISClient.LICENSE.txt','Bindings.LICENSE.txt')) {
             $source=Join-Path $Request.DatabaseProviderDirectory $name
-            CopySoftwareDatabaseFile $Session $source (Join-Path $stage.Path $name) (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+            CopySoftwareDatabaseFile $Session $source (Join-Path $stage.Path $name) (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash 'Servicepacks'
         }
         $remoteWorker=Join-Path $stage.Path 'Worker.ps1'
-        CopySoftwareDatabaseFile $Session $WorkerPath $remoteWorker (Get-FileHash -LiteralPath $WorkerPath -Algorithm SHA256).Hash
-        $files=@(); $index=0
+        CopySoftwareDatabaseFile $Session $WorkerPath $remoteWorker (Get-FileHash -LiteralPath $WorkerPath -Algorithm SHA256).Hash 'Servicepacks'
+        $files=@(); $names=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($source in $Request.ServicePackFiles) {
-            $path=Join-Path $stage.Path ($index.ToString()+'.xml'); $index++
-            CopySoftwareDatabaseFile $Session $source.Path $path $source.Sha256
+            $name=[string]$source.Name
+            if ($name -ne [IO.Path]::GetFileName($name) -or [IO.Path]::GetExtension($name) -ine '.xml') { throw 'Ungültiger Servicepack-Dateiname.' }
+            $base=[IO.Path]::GetFileNameWithoutExtension($name); $suffix=1
+            while (-not $names.Add($name)) { $suffix++; $name=$base+'-'+$suffix+'.xml' }
+            $path=Join-Path $destination $name
+            Progress 'Servicepack hochladen' $path
+            CopySoftwareDatabaseFile $Session $source.Path $path $source.Sha256 'Servicepacks'
             $files += [pscustomobject]@{ Path=$path; Name=$source.Name; Sha256=$source.Sha256; Items=@($source.Items) }
         }
         $childRequest = @{ Action='import-servicepacks'; LocalExecution=$true; ServicePackFiles=$files; DatabaseTargets=@($Request.DatabaseTargets); DatabaseProviderDirectory=$stage.Path }

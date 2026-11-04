@@ -82,7 +82,7 @@ internal static partial class Program
         Assert(startup.Text == "Version beim Programmstart prüfen" && ((TableLayoutPanel)startup.Parent!).GetRow(startup) == 1 &&
             startup.Parent.Controls["allgemeinSettingsDivider"] is not null,
             "startup version switch is the first option below the general settings divider");
-        Assert(Field<CheckBox>(form, "chkIrisTls").Text == "BETA: IRIS-Verbindung mit TLS", "TLS option carries its BETA caption");
+        Assert(Field<CheckBox>(form, "chkIrisTls").Text == "IRIS-Verbindung mit TLS", "TLS option uses its regular caption behind beta activation");
     }
 
     private sealed class TargetingRunner : IWorkerRunner

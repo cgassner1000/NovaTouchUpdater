@@ -225,8 +225,8 @@ function InvokeSoftwareDatabaseChildOperation($Session, [string]$Worker, $Reques
     } finally { InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareDatabaseChild} -ArgumentList '', $false, $true -ErrorAction SilentlyContinue | Out-Null }
 }
 
-function CopySoftwareDatabaseFile($Session, [string]$Source, [string]$Target, [string]$Hash) {
-    CopyRemoteFileWithProgress $Session $Source $Target ('zzzSoftware · ' + [IO.Path]::GetFileName($Target))
+function CopySoftwareDatabaseFile($Session, [string]$Source, [string]$Target, [string]$Hash, [string]$Label = 'zzzSoftware') {
+    CopyRemoteFileWithProgress $Session $Source $Target ($Label + ' · ' + [IO.Path]::GetFileName($Target))
     $actual = InvokeWorkerCommand -Session $Session -ScriptBlock { param($path) (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash } -ArgumentList $Target -ErrorAction Stop
     if ($actual -ine $Hash) { throw 'Prüfsumme der Datenbank-Uploaddatei stimmt nach der Übertragung nicht.' }
 }

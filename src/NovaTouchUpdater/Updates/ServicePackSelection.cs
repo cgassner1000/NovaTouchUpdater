@@ -1,14 +1,14 @@
-using System.Text;
 using System.Xml;
 
 namespace NovaTouchUpdater;
 
-// Keep immutable UTF-8 snapshots until every host finishes. The source files are
-// opened read-only and never changed; XML encodings are normalized by XmlReader.
+// Local imports use the selected originals. Keep byte-for-byte snapshots for
+// remote uploads until every host finishes; never rewrite the XML export.
 internal sealed class ServicePackSelection : IDisposable
 {
     private readonly string directory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "NovaTouchUpdater", "servicepacks-" + Guid.NewGuid().ToString("N"));
     internal ServicePackFile[] Files { get; private set; } = [];
+    internal ServicePackFile[] LocalFiles { get; private set; } = [];
 
     internal static async Task<ServicePackSelection> CreateAsync(IEnumerable<string> paths, CancellationToken ct)
     {
@@ -17,6 +17,7 @@ internal sealed class ServicePackSelection : IDisposable
         try
         {
             var files = new List<ServicePackFile>();
+            var localFiles = new List<ServicePackFile>();
             foreach (string path in paths.Select(System.IO.Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 ct.ThrowIfCancellationRequested();
@@ -25,19 +26,16 @@ internal sealed class ServicePackSelection : IDisposable
                 string[] items = ReadItems(source, ct);
                 source.Position = 0;
                 string snapshot = System.IO.Path.Combine(selection.directory, files.Count + ".xml");
-                using (var reader = XmlReader.Create(source, ReaderSettings()))
-                using (var writer = XmlWriter.Create(snapshot, new XmlWriterSettings { Encoding = new UTF8Encoding(false) }))
-                {
-                    reader.MoveToContent();
-                    writer.WriteStartDocument();
-                    writer.WriteNode(reader, true);
-                    writer.WriteEndDocument();
-                }
+                await using (var target = new FileStream(snapshot, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    await source.CopyToAsync(target, ct).ConfigureAwait(false);
+                string hash = await WorkerRunner.Sha256Async(snapshot, ct).ConfigureAwait(false);
                 files.Add(new ServicePackFile { Path = snapshot, Name = System.IO.Path.GetFileName(path), Items = items,
-                    Sha256 = await WorkerRunner.Sha256Async(snapshot, ct).ConfigureAwait(false) });
+                    Sha256 = hash });
+                localFiles.Add(new ServicePackFile { Path = path, Name = System.IO.Path.GetFileName(path), Items = items, Sha256 = hash });
             }
             if (files.Count == 0) throw new InvalidDataException("Mindestens ein XML-Servicepack auswählen.");
             selection.Files = files.ToArray();
+            selection.LocalFiles = localFiles.ToArray();
             return selection;
         }
         catch { selection.Dispose(); throw; }

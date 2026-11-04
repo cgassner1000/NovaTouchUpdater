@@ -14,20 +14,25 @@ internal static partial class Program
         var image = All(canvas).OfType<AppMark>().Single();
         var button = Field<Button>(form, "btnServicePacks");
         var check = Field<Button>(form, "btnDatabaseCheck");
+        var tls = Field<CheckBox>(form, "chkIrisTls");
+        var tlsParent = (TableLayoutPanel)tls.Parent!;
+        var tlsCell = tlsParent.GetCellPosition(tls);
+        canvas.Controls.Add(tls);
         int popups = 0;
         SetField(form, "showBetaActivated", new Action(() => popups++));
         using var before = new Bitmap(image.Width, image.Height);
         image.DrawToBitmap(before, image.ClientRectangle);
         Cursor cursor = image.Cursor;
-        Assert(!gate.Enabled && !button.Visible && check.Text == "Check Database" && check.Visible,
-            "servicepacks are hidden initially while Check Database remains a regular function");
+        Assert(!gate.Enabled && !button.Visible && !tls.Visible && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
+            "servicepacks and IRIS TLS are hidden initially while Check Database remains a regular function");
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         gate.RegisterClick(check, true);
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         Assert(!gate.Enabled && popups == 0 && !button.Visible, "another control resets the five consecutive logo clicks");
         var fifth = Message.Create(image.Handle, 0x0203, IntPtr.Zero, IntPtr.Zero);
-        Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && button.Visible,
-            "the fifth logo click, including native double-click messages, activates beta once without consuming the click");
+        Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && button.Visible && tls.Visible,
+            "the fifth logo click activates both servicepacks and IRIS TLS without consuming the click");
+        tlsParent.Controls.Add(tls, tlsCell.Column, tlsCell.Row);
         for (int click = 0; click < 8; click++) gate.RegisterClick(image, true);
         Assert(popups == 1, "further logo clicks do not repeat the activation popup");
         using var future = new Button();
@@ -86,8 +91,11 @@ internal static partial class Program
                 selection.Files[1].Items.SequenceEqual(["ServicePack.mac"]), "XML selection accepts classes and routines and removes duplicate file selections");
             using var document = XmlReader.Create(snapshot);
             var xml = new XmlDocument(); xml.Load(document);
-            Assert(xml.InnerText.Contains("Grüße 🎉") && File.ReadAllBytes(classes).SequenceEqual(original),
-                "UTF-16 XML is normalized without changing Unicode content or source files");
+            Assert(xml.InnerText.Contains("Grüße 🎉") && File.ReadAllBytes(snapshot).SequenceEqual(original) && File.ReadAllBytes(classes).SequenceEqual(original),
+                "remote snapshots preserve every original XML byte, including encoding, whitespace and Unicode");
+            Assert(selection.LocalFiles[0].Path == classes && selection.LocalFiles[1].Path == routines &&
+                selection.LocalFiles[0].Sha256 == selection.Files[0].Sha256,
+                "local servicepacks use the original selected paths with the same checksums as their remote snapshots");
             Assert(await WorkerRunner.Sha256Async(snapshot, CancellationToken.None) == selection.Files[0].Sha256,
                 "servicepack snapshots are protected by SHA256");
         }
@@ -108,14 +116,13 @@ internal static partial class Program
         using var form = new MainForm(preview: true, worker, new FakeRunner());
         HostState[] selected = Populate(form);
         Field<ComboBox>(form, "executionMode").SelectedIndex = 1;
+        Field<TextBox>(form, "txtRemotePath").Text = @"D:\Servicepacks Ziel";
         SetField(form, "readIrisInventory", new Func<CancellationToken, Task<IrisInventoryResult>>(_ => Task.FromResult(
             new IrisInventoryResult([new("LOCAL", "C:\\IRIS", "", "", ["USER", "%SYS", "APP"], SuperServerPort: 1972)], []))));
         SetField(form, "showBetaActivated", new Action(() => { }));
         var gate = Field<BetaFeatureGate>(form, "betaFeatures");
         var logo = All(form).OfType<AppMark>().Single();
-        ServicePackHostResult[]? report = null;
         string? warning = null;
-        SetField(form, "showServicePackResults", new Action<ServicePackHostResult[]>(results => report = results));
         SetField(form, "showServicePackWarning", new Action<string>(text => warning = text));
         bool confirm = false;
         SetField(form, "confirmServicePackImport", new Func<ServicePackHostPlan[], int, bool>((plans, files) =>
@@ -131,16 +138,25 @@ internal static partial class Program
         Assert(worker.Requests.All(request => request.Action == "database-inventory"), "declining confirmation imports no code");
         worker.Requests.Clear(); confirm = true;
         await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
-        Assert(warning is null && report?.Length == 4 && worker.Requests.Count(request => request.Action == "import-servicepacks") == 4,
-            "confirmed servicepacks run on local and all selected remote hosts and report each host");
+        Assert(warning is null && worker.Requests.Count(request => request.Action == "import-servicepacks") == 4 &&
+            Targets(form).Count(host => host.Log.Any(line => line.Contains("Servicepacks: importiert und kompiliert"))) == 4,
+            "confirmed servicepacks finish on local and all selected remote hosts with results in the log and no result dialog");
         Assert(worker.Requests.Where(request => request.Action == "import-servicepacks").All(request => request.ServicePackFiles.Length == 2 &&
             request.DatabaseTargets.All(target => target.Namespaces.All(ns => !ns.StartsWith('%'))) && request.MsiPackages.Length == 0),
             "servicepack requests contain only the selected XMLs and filtered IRIS targets, without MSI operations");
+        Assert(worker.Requests.Where(request => request.Action == "import-servicepacks")
+            .All(request => request.RemoteInstallPath == (request.LocalExecution ? "" : @"D:\Servicepacks Ziel")),
+            "remote servicepacks use the configured destination while local imports use their existing XML paths");
+        Assert(worker.Requests.Where(request => request.Action == "import-servicepacks").All(request =>
+            request.LocalExecution ? request.ServicePackFiles.Select(file => file.Path).SequenceEqual([classes, routines]) :
+                request.ServicePackFiles.All(file => !new[] { classes, routines }.Contains(file.Path))),
+            "only remote hosts receive snapshots; local requests load the original selection directly");
         Assert(File.ReadAllBytes(classes).SequenceEqual(original), "UI imports leave source files unchanged");
         worker.Requests.Clear();
         worker.OnImport = () => Field<CancellationTokenSource>(form, "cancellation").Cancel();
         await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
-        Assert(worker.Requests.Count(request => request.Action == "import-servicepacks") == 1 && report!.Count(item => !item.Result.Success) == 3,
+        Assert(worker.Requests.Count(request => request.Action == "import-servicepacks") == 1 &&
+            Targets(form).Count(host => host.Log.Any(line => line.Contains("Servicepacks: Abgebrochen; Host wurde nicht gestartet."))) == 3,
             "cancellation completes the accepted host and prevents all remaining host imports");
         using var actualWorker = new WorkerRunner();
         WorkerResult rejectedRequest = await actualWorker.RunAsync(new WorkerRequest { Action = "import-servicepacks", LocalExecution = true }, _ => { }, CancellationToken.None);
@@ -158,7 +174,7 @@ internal static partial class Program
             if (request.Action == "database-inventory") return Task.FromResult(new WorkerResult { Success = true,
                 IrisInstances = [new() { Name = "REMOTE", Directory = "C:\\IRIS", SuperServerPort = 1972, Namespaces = ["USER", "%SYS", "APP"] }] });
             Assert(request.Action == "import-servicepacks" && !ct.CanBeCanceled && request.ServicePackFiles.All(file => File.Exists(file.Path)),
-                "an accepted host finishes with immutable snapshots and without forced cancellation");
+                "an accepted host uses existing XML paths and finishes without forced cancellation");
             OnImport?.Invoke();
             return Task.FromResult(new WorkerResult { Success = true, Message = "importiert und kompiliert", ServicePackResults =
                 request.DatabaseTargets.SelectMany(target => target.Namespaces.Select(ns => new ServicePackNamespaceResult {

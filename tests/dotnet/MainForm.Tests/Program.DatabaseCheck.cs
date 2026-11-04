@@ -84,7 +84,7 @@ internal static partial class Program
         _ = form.Handle;
         var tls = Field<CheckBox>(form, "chkIrisTls");
         Control settings = All(form).Single(control => control.Name == "settingsCard");
-        Assert(tls.Text == "BETA: IRIS-Verbindung mit TLS" && All(settings).Contains(tls), "the IRIS TLS switch belongs to Einstellungen and is labeled BETA");
+        Assert(tls.Text == "IRIS-Verbindung mit TLS" && All(settings).Contains(tls), "the IRIS TLS beta switch belongs to Einstellungen with its regular caption");
         SetField(form, "readIrisInventory", new Func<CancellationToken, Task<IrisInventoryResult>>(_ => Task.FromResult(inventory)));
         string path = Path.Combine(TestWorkspace.Artifacts, "iris-options-" + Guid.NewGuid().ToString("N") + ".json");
         try

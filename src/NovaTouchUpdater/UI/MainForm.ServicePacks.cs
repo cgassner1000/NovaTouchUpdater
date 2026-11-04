@@ -1,14 +1,10 @@
-using System.Text;
-
 namespace NovaTouchUpdater;
 
 internal sealed record ServicePackHostPlan(HostState Host, IrisUploadTarget[] Targets);
-internal sealed record ServicePackHostResult(string Host, WorkerResult Result);
 
 public sealed partial class MainForm
 {
     private Func<ServicePackHostPlan[], int, bool>? confirmServicePackImport = null;
-    private Action<ServicePackHostResult[]>? showServicePackResults = null;
     private Action<string>? showServicePackWarning = null;
 
     internal static OpenFileDialog CreateServicePackFileDialog() => new()
@@ -71,13 +67,10 @@ public sealed partial class MainForm
             int namespaces = plans.Sum(plan => plan.Targets.Sum(target => target.Namespaces.Length));
             if (namespaces == 0) throw new InvalidDataException("Keine IRIS-Namespaces ohne %-Präfix auf den ausgewählten Hosts gefunden. Check Database prüfen.");
             bool confirmed = confirmServicePackImport?.Invoke(plans, selection.Files.Length) ??
-                MessageBox.Show(this, $"{selection.Files.Length} XML-Datei(en) auf {plans.Count(plan => plan.Targets.Length > 0)} Host(s) in {namespaces} Namespace(s) importieren?\n\n" +
-                    "Alle Namespaces ohne %-Präfix werden berücksichtigt. Bestehende Klassen und Routinen werden ersetzt und mit ckbf kompiliert.\n\n" +
-                    "Bei Fehlern sind Teilimporte möglich; es gibt keinen automatischen Rollback. Abbrechen stoppt weitere Hosts, der laufende Host wird abgeschlossen.",
+                MessageBox.Show(this, $"{selection.Files.Length} ServicePack(s) auf {plans.Count(plan => plan.Targets.Length > 0)} Host(s) in {namespaces} Namespace(s) importieren?\n\n",
                     "Servicepacks einspielen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
             if (!confirmed) return;
             CaptureCredentials();
-            var results = new List<ServicePackHostResult>();
             await InBatchAsync(selected, async ct =>
             {
                 foreach (ServicePackHostPlan plan in plans)
@@ -90,7 +83,9 @@ public sealed partial class MainForm
                         var request = new WorkerRequest { Action = "import-servicepacks", Host = plan.Host.Host, LocalExecution = plan.Host.IsLocal,
                             Username = plan.Host.IsLocal ? "" : activeUser, Password = plan.Host.IsLocal ? "" : activePassword,
                             UseSsl = !plan.Host.IsLocal && activeSsl, HttpsPort = activeHttpsPort,
-                            ServicePackFiles = selection.Files, DatabaseTargets = plan.Targets, IrisUseTls = activeIrisUseTls };
+                            RemoteInstallPath = plan.Host.IsLocal ? "" : activeRemoteInstallPath,
+                            ServicePackFiles = plan.Host.IsLocal ? selection.LocalFiles : selection.Files,
+                            DatabaseTargets = plan.Targets, IrisUseTls = activeIrisUseTls };
                         // Like installed-component updates, an accepted host finishes.
                         // Cancellation prevents the next host from starting.
                         result = await runner.RunAsync(request, progress =>
@@ -99,16 +94,10 @@ public sealed partial class MainForm
                             Mark(plan.Host, host => { host.Phase = progress.Phase + ": " + DisplayText.Clean(progress.Message); });
                         }, CancellationToken.None);
                     }
-                    results.Add(new(plan.Host.DisplayName, result));
                     Log(plan.Host.Host, "Servicepacks: " + result.Message + (result.Error.Length > 0 ? " | " + result.Error : ""));
                     CountCompleted();
                 }
             });
-            if (!IsDisposed)
-            {
-                if (showServicePackResults is { } show) show(results.ToArray());
-                else ShowServicePackReport(results.ToArray());
-            }
         }
         catch (OperationCanceledException) { Log("SYSTEM", "Servicepack-Vorbereitung abgebrochen."); }
         catch (Exception ex)
@@ -124,24 +113,4 @@ public sealed partial class MainForm
         }
     }
 
-    private void ShowServicePackReport(ServicePackHostResult[] results)
-    {
-        var report = new StringBuilder("Compilerflags: ckbf\r\nBei Import-/Compilerfehlern können Teilimporte vorhanden sein.\r\n");
-        foreach (var host in results)
-        {
-            report.AppendLine().AppendLine(host.Host + ": " + host.Result.Message);
-            foreach (var item in host.Result.ServicePackResults)
-                report.AppendLine($"  {item.Instance} / {item.Namespace}: {item.ImportedFiles} XML-Datei(en), " +
-                    (item.Compiled ? "kompiliert (ckbf)" : "FEHLER: " + item.Error));
-            if (host.Result.Error.Length > 0 && host.Result.ServicePackResults.Length == 0) report.AppendLine(host.Result.Error);
-        }
-        using var dialog = new Form { Text = "Servicepack-Ergebnisse", ClientSize = new Size(900, 560), MinimumSize = new Size(560, 320),
-            StartPosition = FormStartPosition.CenterParent, Font = UiTheme.BodyFont(), Padding = new Padding(16) };
-        var text = new TextBox { Name = "servicePackReport", Text = report.ToString(), Multiline = true, ReadOnly = true,
-            ScrollBars = ScrollBars.Both, WordWrap = false, Dock = DockStyle.Fill };
-        var close = new ModernButton { Text = "OK", DialogResult = DialogResult.OK, Dock = DockStyle.Bottom };
-        dialog.Controls.Add(text); dialog.Controls.Add(close); dialog.AcceptButton = close; dialog.CancelButton = close;
-        WindowLayout.CompleteInitialization(dialog);
-        dialog.ShowDialog(this);
-    }
 }
