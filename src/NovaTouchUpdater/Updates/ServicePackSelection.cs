@@ -23,7 +23,9 @@ internal sealed class ServicePackSelection : IDisposable
                 ct.ThrowIfCancellationRequested();
                 if (!System.IO.Path.GetExtension(path).Equals(".xml", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Nur XML-Servicepacks auswählen.");
                 using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                string[] items = ReadItems(source, ct);
+                string[] items;
+                try { items = ReadItems(source, ct); }
+                catch (InvalidDataException ex) { throw new InvalidDataException(System.IO.Path.GetFileName(path) + ": " + ex.Message, ex); }
                 source.Position = 0;
                 string snapshot = System.IO.Path.Combine(selection.directory, files.Count + ".xml");
                 await using (var target = new FileStream(snapshot, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -57,23 +59,50 @@ internal sealed class ServicePackSelection : IDisposable
             if (reader.LocalName is not ("Class" or "Routine" or "Global"))
                 throw new InvalidDataException("Servicepacks dürfen ausschließlich Klassen, Routinen und Globals enthalten: " + reader.LocalName);
             bool isGlobal = reader.LocalName == "Global";
-            string name = reader.GetAttribute("name") ?? "";
-            if (isGlobal && name.StartsWith('^')) name = name[1..];
-            if (name.Length == 0 || name.Any(character => !(char.IsLetterOrDigit(character) || character is '%' or '.' or '_')))
-                throw new InvalidDataException("Ungültiger Klassen-/Routinen-/Globalname im Servicepack: " + name);
-            if (isGlobal) name = "^" + name;
-            else if (reader.LocalName == "Class") name += name.EndsWith(".cls", StringComparison.OrdinalIgnoreCase) ? "" : ".cls";
-            else if (!new[] { ".mac", ".int", ".inc", ".bas" }.Any(extension => name.EndsWith(extension, StringComparison.OrdinalIgnoreCase)))
+            string attributeName = reader.GetAttribute("name") ?? "";
+            string[] objectNames = isGlobal && attributeName.Length == 0 ? ReadGlobalNames(reader, ct) : [attributeName];
+            foreach (string objectName in objectNames)
             {
-                string type = (reader.GetAttribute("type") ?? "MAC").ToLowerInvariant();
-                if (type is not ("mac" or "int" or "inc" or "bas")) throw new InvalidDataException("Unbekannter Routinentyp: " + type);
-                name += "." + type;
+                string name = isGlobal && objectName.StartsWith('^') ? objectName[1..] : objectName;
+                if (name.Length == 0 || name.Any(character => !(char.IsLetterOrDigit(character) || character is '%' or '.' or '_')))
+                    throw new InvalidDataException("Ungültiger Klassen-/Routinen-/Globalname im Servicepack: " + (name.Length == 0 ? "<fehlt>" : name));
+                if (isGlobal) name = "^" + name;
+                else if (reader.LocalName == "Class") name += name.EndsWith(".cls", StringComparison.OrdinalIgnoreCase) ? "" : ".cls";
+                else if (!new[] { ".mac", ".int", ".inc", ".bas" }.Any(extension => name.EndsWith(extension, StringComparison.OrdinalIgnoreCase)))
+                {
+                    string type = (reader.GetAttribute("type") ?? "MAC").ToLowerInvariant();
+                    if (type is not ("mac" or "int" or "inc" or "bas")) throw new InvalidDataException("Unbekannter Routinentyp: " + type);
+                    name += "." + type;
+                }
+                if (!names.Add(isGlobal ? name : name.ToUpperInvariant())) throw new InvalidDataException("Objekt mehrfach in derselben XML-Datei: " + name);
+                items.Add(name);
             }
-            if (!names.Add(isGlobal ? name : name.ToUpperInvariant())) throw new InvalidDataException("Objekt mehrfach in derselben XML-Datei: " + name);
-            items.Add(name);
         }
         if (items.Count == 0) throw new InvalidDataException("Die XML-Datei enthält keine Klassen, Routinen oder Globals.");
         return items.ToArray();
+    }
+
+    private static string[] ReadGlobalNames(XmlReader reader, CancellationToken ct)
+    {
+        // IRIS exports globals as <Global><Node><Sub>^Name</Sub>...</Node></Global>.
+        // Only root Sub elements identify globals; nested Subs are data subscripts.
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        using var global = reader.ReadSubtree();
+        while (global.Read())
+        {
+            ct.ThrowIfCancellationRequested();
+            if (global.NodeType != XmlNodeType.Element || global.Depth != 1 || global.LocalName != "Node") continue;
+            using var node = global.ReadSubtree();
+            while (node.Read())
+            {
+                ct.ThrowIfCancellationRequested();
+                if (node.NodeType != XmlNodeType.Element || node.Depth != 1 || node.LocalName != "Sub") continue;
+                names.Add(node.ReadElementContentAsString());
+                break;
+            }
+        }
+        if (names.Count == 0) throw new InvalidDataException("Global-Export enthält keinen Globalnamen unter Node/Sub.");
+        return names.ToArray();
     }
 
     public void Dispose()

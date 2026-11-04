@@ -114,9 +114,28 @@ internal static partial class Program
                 selection.Files.All(file => File.ReadAllBytes(file.Path).SequenceEqual(File.ReadAllBytes(Path.Combine(root, file.Name)))),
                 "global data and XML bytes stay unchanged for local imports and remote uploads");
         }
+        string standardGlobals = Path.Combine(root, "standard-globals.xml"), standardMixed = Path.Combine(root, "standard-mixed.xml");
+        string globalNodes = "<Global><Node><Sub>^ServicePack.Data</Sub><Node><Sub>key with spaces &amp; punctuation!</Sub>" +
+            "<Data>Grüße 🎉</Data><Node><Sub>^not another global</Sub><Data>nested</Data></Node></Node>" +
+            "<Node><Sub>second branch</Sub><Data>more data</Data></Node></Node></Global>" +
+            "<Global><Node><Sub>^ServicePack.data</Sub><Data>case-sensitive</Data></Node></Global>";
+        File.WriteAllText(standardGlobals, "<Export generator=\"IRIS\" version=\"26\">" + globalNodes + "</Export>");
+        File.WriteAllText(standardMixed, "<Export><Routine name=\"BeforeGlobal\" type=\"MAC\"/>" + globalNodes +
+            "<Class name=\"AfterGlobal\"/></Export>");
+        using (var selection = await ServicePackSelection.CreateAsync([standardGlobals, standardMixed], CancellationToken.None))
+        {
+            Assert(selection.Files[0].Items.SequenceEqual(["^ServicePack.Data", "^ServicePack.data"]) &&
+                selection.Files[1].Items.SequenceEqual(["BeforeGlobal.mac", "^ServicePack.Data", "^ServicePack.data", "AfterGlobal.cls"]),
+                "standard IRIS Global/Node/Sub exports need no name attribute and only root Subs identify globals, including multiple Global blocks");
+            Assert(selection.Files.All(file => File.ReadAllBytes(file.Path).SequenceEqual(File.ReadAllBytes(Path.Combine(root, file.Name)))) &&
+                selection.LocalFiles.Select(file => file.Path).SequenceEqual([standardGlobals, standardMixed]),
+                "standard global exports preserve all XML bytes and following code items for local and remote imports");
+        }
         foreach (string bad in new[] { "<Export><Project name=\"unsupported\" /></Export>", "<Export/>", "<Export><Class name=\"User.*\" /></Export>",
             "<Export><Global name=\"^\"/></Export>", "<Export><Global name=\"^^Invalid\"/></Export>",
             "<Export><Global name=\"Data\"/><Global name=\"^Data\"/></Export>",
+            "<Export><Global/></Export>", "<Export><Global><Node><Node><Sub>nested only</Sub></Node></Node></Global></Export>",
+            "<Export><Global><Node><Sub/></Node></Global></Export>",
             "<!DOCTYPE Export [<!ENTITY x SYSTEM 'file:///C:/missing'>]><Export><Class name=\"User.Bad\">&x;</Class></Export>", "<Export><Routine" })
         {
             string path = Path.Combine(root, "invalid.xml"); File.WriteAllText(path, bad);

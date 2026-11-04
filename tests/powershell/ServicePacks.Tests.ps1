@@ -62,18 +62,28 @@ Assert (-not $result.Success -and $result.Error -match 'Server closed communicat
 
 [ServicePackFixture.Database]::Reset()
 $globalFiles=@()
+$globalNodes='<Global><Node><Sub>^ServicePack.Data</Sub><Node><Sub>key with spaces &amp; punctuation!</Sub><Data>global data</Data><Node><Sub>^not another global</Sub><Data>nested</Data></Node></Node><Node><Sub>second branch</Sub><Data>more data</Data></Node></Node></Global><Global><Node><Sub>^ServicePack.data</Sub><Data>case-sensitive</Data></Node></Global>'
 foreach ($entry in @(
-    @('globals.xml','<Export><Global name="^ServicePack.Data"><Node><Subscript>1</Subscript><Data>global data</Data></Node></Global><Global name="ServicePack.data"><Node><Data>case-sensitive</Data></Node></Global></Export>',@('^ServicePack.Data','^ServicePack.data')),
-    @('mixed.xml','<Export><Class name="User.ServicePack"/><Routine name="ServicePack" type="MAC"/><Global name="^ServicePack.mac"><Node><Data>mixed data</Data></Node></Global></Export>',@('User.ServicePack.cls','ServicePack.mac','^ServicePack.mac')))) {
+    @('globals.xml',('<Export generator="IRIS" version="26">'+$globalNodes+'</Export>'),@('^ServicePack.Data','^ServicePack.data')),
+    @('mixed.xml',('<Export><Routine name="BeforeGlobal" type="MAC"/>'+$globalNodes+'<Class name="AfterGlobal"/></Export>'),@('BeforeGlobal.mac','^ServicePack.Data','^ServicePack.data','AfterGlobal.cls')))) {
     $path=Join-Path $root $entry[0]; [IO.File]::WriteAllText($path,$entry[1],[Text.UTF8Encoding]::new($false))
     $globalFiles += [pscustomobject]@{ Path=$path; Name=$entry[0]; Sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash; Items=@($entry[2]) }
 }
+foreach ($file in $globalFiles) {
+    $actual=@(ReadServicePackItems $file.Path)
+    Assert (@(Compare-Object $actual $file.Items -CaseSensitive).Count -eq 0) 'standard Global/Node/Sub exports without name attributes read only root global names and preserve following classes and routines'
+}
+$named=Join-Path $root 'named-globals.xml'
+[IO.File]::WriteAllText($named,'<Export><Global name="^ServicePack.Data"/><Global name="ServicePack.data"/></Export>')
+Assert (@(Compare-Object @(ReadServicePackItems $named) @('^ServicePack.Data','^ServicePack.data') -CaseSensitive).Count -eq 0) 'named global exports remain compatible, with optional caret and case-sensitive names'
 $result=ImportServicePacks $globalFiles $targets 'fake-provider'
 Assert ($result.Success -and $result.ServicePackResults.Count -eq 3 -and
     @($result.ServicePackResults | Where-Object { $_.ImportedFiles -ne 2 }).Count -eq 0 -and
     [ServicePackFixture.Database]::LoadPaths.Count -eq 6) 'global-only and mixed XMLs are passed unchanged to Load with fck/display=none in every eligible namespace'
 $invalidCases=@('<Export><Project name="unsupported"/></Export>', '<Export><Global name="^"/></Export>',
-    '<Export><Global name="^^Invalid"/></Export>', '<Export><Global name="Data"/><Global name="^Data"/></Export>')
+    '<Export><Global name="^^Invalid"/></Export>', '<Export><Global name="Data"/><Global name="^Data"/></Export>',
+    '<Export><Global/></Export>', '<Export><Global><Node><Node><Sub>nested only</Sub></Node></Node></Global></Export>',
+    '<Export><Global><Node><Sub/></Node></Global></Export>')
 foreach ($xml in $invalidCases) {
     $invalid=Join-Path $root 'invalid-global.xml'; [IO.File]::WriteAllText($invalid,$xml)
     [ServicePackFixture.Database]::Reset()

@@ -1,5 +1,27 @@
 # No installer, service or zzzSoftware operations. Only explicitly selected XML
 # exports are loaded through the existing connection's native IRIS status API.
+function ReadServicePackGlobalNames($Reader) {
+    # A standard IRIS Global element has no name attribute. Names are root Node/Sub
+    # values; nested Sub values are data subscripts, not additional globals.
+    $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $global = $Reader.ReadSubtree()
+    try {
+        while ($global.Read()) {
+            if ($global.NodeType -ne [Xml.XmlNodeType]::Element -or $global.Depth -ne 1 -or $global.LocalName -cne 'Node') { continue }
+            $node = $global.ReadSubtree()
+            try {
+                while ($node.Read()) {
+                    if ($node.NodeType -ne [Xml.XmlNodeType]::Element -or $node.Depth -ne 1 -or $node.LocalName -cne 'Sub') { continue }
+                    [void]$names.Add($node.ReadElementContentAsString())
+                    break
+                }
+            } finally { $node.Dispose() }
+        }
+    } finally { $global.Dispose() }
+    if ($names.Count -eq 0) { throw 'Global-Export enthält keinen Globalnamen unter Node/Sub.' }
+    foreach ($name in $names) { $name }
+}
+
 function ReadServicePackItems([string]$Path) {
     $settings = [Xml.XmlReaderSettings]::new(); $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit; $settings.XmlResolver = $null
     $reader = [Xml.XmlReader]::Create($Path, $settings)
@@ -10,18 +32,22 @@ function ReadServicePackItems([string]$Path) {
             if ($reader.NodeType -ne [Xml.XmlNodeType]::Element -or $reader.Depth -ne 1) { continue }
             if ($reader.LocalName -cnotin @('Class','Routine','Global')) { throw 'Servicepacks dürfen nur Klassen, Routinen und Globals enthalten.' }
             $isGlobal = $reader.LocalName -ceq 'Global'
-            $name = $reader.GetAttribute('name')
-            if ($isGlobal -and $name -and $name.StartsWith('^')) { $name = $name.Substring(1) }
-            if (-not $name -or $name -match '[^\p{L}\p{N}%._]') { throw 'Ungültiger Klassen-/Routinen-/Globalname im Servicepack.' }
-            if ($isGlobal) { $name = '^' + $name }
-            elseif ($reader.LocalName -ceq 'Class') { if ($name -notmatch '(?i)\.cls$') { $name += '.cls' } }
-            elseif ($name -notmatch '(?i)\.(mac|int|inc|bas)$') {
-                $type = $reader.GetAttribute('type'); if (-not $type) { $type = 'MAC' }
-                if ($type -notin @('MAC','INT','INC','BAS')) { throw 'Unbekannter Routinentyp.' }
-                $name += '.' + $type.ToLowerInvariant()
+            $attributeName = $reader.GetAttribute('name')
+            $objectNames = if ($isGlobal -and -not $attributeName) { @(ReadServicePackGlobalNames $reader) } else { @($attributeName) }
+            foreach ($objectName in $objectNames) {
+                $name = [string]$objectName
+                if ($isGlobal -and $name.StartsWith('^')) { $name = $name.Substring(1) }
+                if (-not $name -or $name -match '[^\p{L}\p{N}%._]') { throw ('Ungültiger Klassen-/Routinen-/Globalname im Servicepack: ' + $(if ($name) { $name } else { '<fehlt>' })) }
+                if ($isGlobal) { $name = '^' + $name }
+                elseif ($reader.LocalName -ceq 'Class') { if ($name -notmatch '(?i)\.cls$') { $name += '.cls' } }
+                elseif ($name -notmatch '(?i)\.(mac|int|inc|bas)$') {
+                    $type = $reader.GetAttribute('type'); if (-not $type) { $type = 'MAC' }
+                    if ($type -notin @('MAC','INT','INC','BAS')) { throw 'Unbekannter Routinentyp.' }
+                    $name += '.' + $type.ToLowerInvariant()
+                }
+                if (($isGlobal -and $items -ccontains $name) -or (-not $isGlobal -and $items -contains $name)) { throw 'Objekt mehrfach in derselben XML-Datei.' }
+                $items.Add($name)
             }
-            if (($isGlobal -and $items -ccontains $name) -or (-not $isGlobal -and $items -contains $name)) { throw 'Objekt mehrfach in derselben XML-Datei.' }
-            $items.Add($name)
         }
     } finally { $reader.Dispose() }
     if ($items.Count -eq 0) { throw 'Keine Klassen, Routinen oder Globals im Servicepack.' }
