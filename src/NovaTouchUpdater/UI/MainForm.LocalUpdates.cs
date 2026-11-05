@@ -4,6 +4,11 @@ public sealed partial class MainForm
 {
     private readonly ComboBox executionMode = new() { Name = "executionMode", DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly TextBox softwarePath = new() { Name = "softwarePath", Dock = DockStyle.Fill, PlaceholderText = "Paketordner (inkl. Unterordner)" };
+    private readonly ComboBox useBuild = new() { Name = "useBuild", AccessibleName = "use Build", DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
+    private bool applyingBuildPreference;
+    private Task buildPreferenceRefresh = Task.CompletedTask;
+    private string? loadedPackageFolder;
+    private string? loadedBuildChannel;
     private readonly Label packageStatus = new() { Name = "packageStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Pakete einlesen. Lokale Paketablage erst mit Updates starten." };
     private readonly Button browseSoftware = Button("Durchsuchen");
     private readonly Button readPackages = Button("Pakete einlesen");
@@ -320,26 +325,40 @@ public sealed partial class MainForm
 
     private async Task LoadSoftwarePackagesAsync()
     {
-        if (busy || selfUpdating || loadingPackages || string.IsNullOrWhiteSpace(softwarePath.Text)) return;
+        if (Disposing || IsDisposed || busy || selfUpdating || loadingPackages || string.IsNullOrWhiteSpace(softwarePath.Text)) return;
         loadingPackages = true;
         using var ct = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
         packageCancellation = ct; UpdateButtons();
         try
         {
-            packageStatus.Text = "Softwarepakete werden gelesen …";
-            string folder = softwarePath.Text.Trim();
-            SoftwareCatalogResult catalog = await Task.Run(() => packageCatalog.ReadAsync(folder, null, ct.Token), ct.Token);
+            string folder = Path.GetFullPath(softwarePath.Text.Trim());
+            string channel = BuildChannels.Normalize(useBuild.SelectedItem as string);
+            bool builds = SoftwarePackageCatalog.IsBuildsDirectory(folder);
+            if (builds && (loadedBuildChannel != channel || !folder.Equals(loadedPackageFolder, StringComparison.OrdinalIgnoreCase)))
+            {
+                // A different build source must not leave packages from the old
+                // channel selected if discovery fails or is cancelled.
+                folderPackages = [];
+                ClearPackageSelection();
+                individualPackageSelection = false;
+                RefreshSelectedPackages();
+            }
+            packageStatus.Text = "Softwarepakete werden gelesen" + (builds ? " · use " + channel : "") + " …";
+            SoftwareCatalogResult catalog = await Task.Run(() => packageCatalog.ReadAsync(folder, null, ct.Token, channel), ct.Token);
             ct.Token.ThrowIfCancellationRequested();
             folderPackages = catalog.Packages;
+            loadedPackageFolder = folder;
+            loadedBuildChannel = builds ? channel : null;
             if (!individualPackageSelection) UseFolderPackages();
             packageStatus.Text = $"{catalog.Packages.Length} Komponenten gefunden · " +
+                (builds ? "use " + channel + " · " : "") +
                 (individualPackageSelection ? "Einzelauswahl hat Vorrang" : "Lokale Paketablage mit Updates starten") +
                 (catalog.Warnings.Length == 0 ? "." : $" · {catalog.Warnings.Length} Pakete nicht lesbar (Details im Protokoll).");
             foreach (string warning in catalog.Warnings) Log("SYSTEM", "PAKETE: " + warning);
         }
         catch (OperationCanceledException) { packageStatus.Text = "Paketsuche abgebrochen."; }
         catch (Exception ex) { packageStatus.Text = "Pakete konnten nicht gelesen werden: " + ex.Message; Log("SYSTEM", packageStatus.Text); }
-        finally { packageCancellation = null; loadingPackages = false; if (!IsDisposed) UpdateButtons(); }
+        finally { packageCancellation = null; loadingPackages = false; if (!Disposing && !IsDisposed) UpdateButtons(); }
     }
 
     private void UpdateExecutionSelection()

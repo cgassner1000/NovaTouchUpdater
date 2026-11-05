@@ -22,6 +22,7 @@ internal sealed class UpdaterConfig
     public int HttpsPort { get; set; } = 5986;
     public string ExecutionMode { get; set; } = "Remote";
     public string? SoftwarePath { get; set; }
+    public string UseBuild { get; set; } = BuildChannels.Default;
     public string? PasswordProtectionScope { get; set; }
     public string? EncryptedPassword { get; set; }
 
@@ -73,7 +74,7 @@ internal static class AppConfigStore
             Username = settings.Username, UseSsl = settings.UseSsl, HttpsPort = settings.HttpsPort,
             IrisUseTls = settings.IrisUseTls,
             UploadToZzzSoftware = settings.UploadToZzzSoftware, RestartPosAfterUpdate = settings.RestartPosAfterUpdate,
-            ExecutionMode = settings.ExecutionMode, SoftwarePath = settings.SoftwarePath,
+            ExecutionMode = settings.ExecutionMode, SoftwarePath = settings.SoftwarePath, UseBuild = settings.UseBuild,
             ScanOnStartup = settings.ScanOnStartup,
             SkipLocalPackageCopy = settings.SkipLocalPackageCopy, SkipRemotePackageCopy = settings.SkipRemotePackageCopy, SkipZipTransfer = settings.SkipZipTransfer,
             PasswordProtectionScope = nameof(DataProtectionScope.LocalMachine),
@@ -105,6 +106,8 @@ internal static class AppConfigStore
     {
         if (settings.HttpsPort is < 1 or > 65535) throw new JsonException("HttpsPort muss zwischen 1 und 65535 liegen.");
         if (settings.ExecutionMode is not ("Local" or "LocalAndRemote" or "Remote")) throw new JsonException("Ungültiger Ausführungsmodus in config.json.");
+        try { settings.UseBuild = BuildChannels.Normalize(settings.UseBuild); }
+        catch (ArgumentException ex) { throw new JsonException("Ungültige use Build-Einstellung in config.json: ALPHA, BETA oder STABLE erwartet.", ex); }
     }
 
     private static string[] NormalizeHosts(string[]? hosts) => (hosts ?? [])

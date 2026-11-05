@@ -59,7 +59,7 @@ try
     {
         Hosts=[" KASSE-01 ","kasse-01","KASSE-02","# comment",";comment"," ","invalid host","192.0.2.1"],
         RemotePath=@"D:\upload\Novacom", Username=@"DOMAIN\support", UseSsl=true, HttpsPort=443,
-        SoftwarePath=@"D:\software packages", ExecutionMode="LocalAndRemote", ScanOnStartup=true,
+        SoftwarePath=@"D:\software packages", UseBuild="BETA", ExecutionMode="LocalAndRemote", ScanOnStartup=true,
         SkipLocalPackageCopy=true, SkipRemotePackageCopy=true, SkipZipTransfer=true, IrisUseTls=true,
         UploadToZzzSoftware=false, RestartPosAfterUpdate=true,
         LegacyPassword="A legacy field must never be saved"
@@ -77,6 +77,18 @@ try
         finally { CryptographicOperations.ZeroMemory(decoded); }
     }
     var loaded=AppConfigStore.Load(path);
+    Assert(loaded.Settings.UseBuild=="BETA", "the selected build channel survives saving and loading");
+    foreach (string channel in new[] { "ALPHA", "stable", " BETA " })
+    {
+        settings.UseBuild=channel;
+        AppConfigStore.Save(path,settings,password);
+        Assert(AppConfigStore.Load(path).Settings.UseBuild==channel.Trim().ToUpperInvariant(), "build preferences are persisted and normalized: " + channel);
+    }
+    settings.UseBuild="invalid";
+    string validConfig=File.ReadAllText(path);
+    Rejects(() => AppConfigStore.Save(path,settings,password), "an invalid build channel cannot be saved");
+    Assert(File.ReadAllText(path)==validConfig, "an invalid build preference leaves the saved config intact");
+    settings.UseBuild="BETA";
     Assert(loaded.Settings.ScanOnStartup, "enabled startup scanning survives saving and loading");
     Assert(loaded.Settings.SkipLocalPackageCopy && loaded.Settings.SkipZipTransfer, "both independent package-copy settings survive saving and loading");
     Assert(loaded.Settings.SkipRemotePackageCopy, "remote direct-package mode survives saving and loading");
@@ -102,6 +114,7 @@ try
     string legacy=Path.Combine(fixture,"legacy.json");
     File.WriteAllText(legacy,JsonSerializer.Serialize(new { Hosts=new[] {"OLD-HOST"}, Username="support", Password=password }));
     var old=AppConfigStore.Load(legacy);
+    Assert(old.Settings.UseBuild=="STABLE", "configs without a build preference default to STABLE");
     Assert(old.Settings.ScanOnStartup, "configs without a startup setting enable automatic scanning by default");
     Assert(old.Settings.UploadToZzzSoftware && !old.Settings.RestartPosAfterUpdate, "older configs enable database upload and leave POS restart disabled");
     Assert(!old.Settings.IrisUseTls, "older configs use IRIS without TLS by default");

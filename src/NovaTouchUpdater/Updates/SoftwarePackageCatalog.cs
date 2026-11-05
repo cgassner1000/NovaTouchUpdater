@@ -11,13 +11,19 @@ internal sealed class SoftwarePackageCatalog : IDisposable
     private static readonly Regex ServiceZip = new(@"^nt\.(payment|fiscal)_(\d+(?:\.\d+){1,3}).*\.zip$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private readonly string cache = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "NovaTouchUpdater", "Packages-" + Guid.NewGuid().ToString("N"));
 
-    internal async Task<SoftwareCatalogResult> ReadAsync(string folder, IProgress<string>? progress, CancellationToken ct)
+    internal static bool IsBuildsDirectory(string folder) =>
+        System.IO.Path.GetFileName(System.IO.Path.TrimEndingDirectorySeparator(folder.Trim())).Equals("builds", StringComparison.OrdinalIgnoreCase);
+
+    internal async Task<SoftwareCatalogResult> ReadAsync(string folder, IProgress<string>? progress, CancellationToken ct, string useBuild = BuildChannels.Default)
     {
         folder = System.IO.Path.GetFullPath(folder);
         if (!Directory.Exists(folder)) throw new DirectoryNotFoundException("Softwareordner nicht gefunden: " + folder);
+        string channel = BuildChannels.Normalize(useBuild);
         var candidates = new List<SoftwarePackage>();
         var warnings = new List<string>();
-        foreach (string file in Directory.EnumerateFiles(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false }))
+        IEnumerable<string> files = IsBuildsDirectory(folder) ? EnumerateBuildFiles(folder, channel, ct) :
+            Directory.EnumerateFiles(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false });
+        foreach (string file in files)
         {
             ct.ThrowIfCancellationRequested();
             string extension = System.IO.Path.GetExtension(file);
@@ -31,6 +37,28 @@ internal sealed class SoftwarePackageCatalog : IDisposable
         return new(candidates.GroupBy(p => p.Component).Select(group => group.OrderByDescending(p => NumericVersion(p.Version))
             .ThenByDescending(p => p.Component == UpdateComponents.ServerSuite && ServerSuiteInstaller.IsSetup(p.Path))
             .ThenByDescending(p => File.GetLastWriteTimeUtc(p.Path)).ThenBy(p => p.Path, StringComparer.OrdinalIgnoreCase).First()).ToArray(), warnings.ToArray());
+    }
+
+    private static IEnumerable<string> EnumerateBuildFiles(string folder, string channel, CancellationToken ct)
+    {
+        var directories = new Stack<(DirectoryInfo Directory, bool InChannel)>();
+        directories.Push((new DirectoryInfo(folder), false));
+        var options = new EnumerationOptions { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false };
+        while (directories.TryPop(out var current))
+        {
+            ct.ThrowIfCancellationRequested();
+            foreach (FileSystemInfo entry in current.Directory.EnumerateFileSystemInfos("*", options))
+            {
+                ct.ThrowIfCancellationRequested();
+                if ((entry.Attributes & FileAttributes.Directory) != 0)
+                {
+                    bool isChannel = BuildChannels.IsChannel(entry.Name);
+                    if (isChannel && !entry.Name.Equals(channel, StringComparison.OrdinalIgnoreCase)) continue;
+                    directories.Push(((DirectoryInfo)entry, current.InChannel || isChannel));
+                }
+                else if (current.InChannel) yield return entry.FullName;
+            }
+        }
     }
 
     internal async Task<SoftwarePackage[]> ReadFileAsync(string path, CancellationToken ct)

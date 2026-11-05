@@ -14,6 +14,8 @@ Für alle Nutzer derselben EXE wird ein gemeinsamer, **von GitHub erzeugter** Pe
 
 Fünf aufeinanderfolgende Linksklicks auf das PNG links von **NovaTouch Updater** aktivieren die BETA-Funktionen für die laufende Programmsitzung. Ein Klick auf ein anderes Steuerelement oder ein Fensterwechsel unterbricht die Folge. Nach dem fünften Klick erscheint **BETA-Funktionen aktiviert**, bestätigt mit **OK**. Bild, Rahmen und Mauszeiger werden dabei nicht verändert. Nach einem Neustart sind BETA-Funktionen wieder ausgeblendet. Neue BETA-Steuerelemente werden zentral über `BetaFeatureGate.Register` registriert.
 
+Unter **Einstellungen → ALLGEMEIN** erscheint nach der BETA-Aktivierung das Dropdown **use Build** mit **ALPHA**, **BETA** und **STABLE** (Standard). Endet der unter **Installations-Pakete** gewählte Pfad auf den Verzeichnisnamen **builds**, werden ausschließlich Pakete aus dem gewählten Kanal eingelesen, beispielsweise `builds\Payment\beta\…` und `builds\Control\beta\…`. Auch `builds\beta\Produkt\…` wird unterstützt. Pakete außerhalb eines Kanalordners und in den beiden anderen Kanälen bleiben unberücksichtigt. Normale Quellordner werden weiterhin vollständig rekursiv durchsucht. Ein Kanalwechsel liest einen gewählten builds-Ordner neu ein und ersetzt die bisherige Paketauswahl; fehlt ein Produkt im neuen Kanal, bleibt es abgewählt. Die Statuszeile nennt den verwendeten Kanal. **Konfiguration speichern** sichert `UseBuild` für spätere Abfragen und Programmstarts; die gespeicherte Auswahl gilt auch, solange die BETA-Steuerelemente nach einem Neustart noch ausgeblendet sind. Zusätzliche Kanalbuttons unter der Pfadeingabe gibt es nicht.
+
 Nach der Aktivierung steht **Servicepacks einspielen** als zweizeiliger Button direkt rechts von **2. Updates starten**, mit derselben Buttonhöhe. Die Dateiauswahl unterstützt mehrere XMLs. Importiert wird auf den ausgewählten lokalen beziehungsweise Remote-Hosts in alle erkannten IRIS-Namespaces ohne Präfix `%`, einschließlich `USER`; die vorhandenen IRIS-Zugangsdaten und die eingestellte TLS-Option werden verwendet. **Check Database** bleibt unabhängig von BETA sichtbar und zeigt diese Instanzen und Namespaces an.
 
 Servicepacks müssen InterSystems-XML-Exporte mit Klassen, Routinen und/oder Globals enthalten; auch reine Global-Exporte sind zulässig. Lokal wird die ausgewählte Originaldatei verwendet. Für Remote-Uploads werden geprüfte, bytegenaue Kopien mit SHA256 vorbereitet; XML-Deklaration, Zeichencodierung, CDATA und Zeilenumbrüche bleiben erhalten. Remote werden die XMLs zuerst ins eingestellte Zielverzeichnis hochgeladen (bei leerem Feld `C:\install\Novacom`) und von dort geladen; sie bleiben anschließend dort liegen. Gleichnamige XMLs aus verschiedenen Quellordnern erhalten unterschiedliche Zieldateinamen. Nur der Remote-Worker und sein Provider werden temporär bereitgestellt und danach entfernt.
@@ -54,6 +56,7 @@ Das Passwort wird beim Speichern mit **Windows DPAPI / LocalMachine** verschlüs
   "HttpsPort": 5986,
   "ExecutionMode": "Remote",
   "SoftwarePath": "",
+  "UseBuild": "STABLE",
   "Hosts": ["POS01", "POS02"]
 }
 ```

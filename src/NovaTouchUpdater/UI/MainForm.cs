@@ -238,6 +238,9 @@ public sealed partial class MainForm : Form
         chkSkipRemotePackageCopy.Checked = config.SkipRemotePackageCopy;
         chkSkipZipTransfer.Checked = config.SkipZipTransfer;
         nHttpsPort.Value = config.HttpsPort;
+        applyingBuildPreference = true;
+        try { useBuild.SelectedItem = BuildChannels.Normalize(config.UseBuild); }
+        finally { applyingBuildPreference = false; }
         softwarePath.Text = config.SoftwarePath ?? "";
         txtPassword.Text = loaded.Password;
         string[] configuredHosts = config.Hosts ?? [];
@@ -265,7 +268,7 @@ public sealed partial class MainForm : Form
         Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
         IrisUseTls = chkIrisTls.Checked,
         UploadToZzzSoftware = chkUploadToZzzSoftware.Checked, RestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked,
-        SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(),
+        SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(), UseBuild = BuildChannels.Normalize(useBuild.SelectedItem as string),
         ScanOnStartup = chkScanOnStartup.Checked,
         SkipLocalPackageCopy = chkSkipLocalPackageCopy.Checked, SkipRemotePackageCopy = chkSkipRemotePackageCopy.Checked, SkipZipTransfer = chkSkipZipTransfer.Checked
     };
@@ -514,7 +517,7 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen und bei Bedarf starten, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Ohne Remote-Auswahl wird nur lokal getestet. Für Dienststart und TrustedHosts den Updater über das Schutzschild im Header mit erhöhten Rechten starten, auch bei einem Administratorkonto.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
-        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, Ausführungsmodus, Zielpfad, lokale und beide Remote-Paketoptionen, Benutzer, Passwort, HTTPS, IRIS-TLS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
+        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, use Build, Ausführungsmodus, Zielpfad, lokale und beide Remote-Paketoptionen, Benutzer, Passwort, HTTPS, IRIS-TLS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
         tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Ablage für Update-Pakete. Leer: LOKAL verwendet die gewählten Quellen direkt; Remote-Hosts verwenden C:\\install\\Novacom. Mit dem lokalen Kopierschalter wird dieser Pfad für lokale Updates nicht verwendet.");
@@ -522,14 +525,29 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(chkSkipZipTransfer, "REMOTE: ZIP- und MSI-Pakete müssen bereits im Zielpfad des Clients liegen. Dateiname und SHA256 müssen zur gewählten Quelle passen. Die Einstellung betrifft keine lokalen Updates.");
         tips.SetToolTip(chkSkipRemotePackageCopy, "REMOTE: Pakete für die Installation nur temporär auf dem Client bereitstellen und danach entfernen. Der eingestellte Zielordner wird weder befüllt noch bereinigt. MSI-Pakete für zzzSoftware werden über WinRM gestreamt. Hat Vorrang vor der Verwendung vorhandener Update-Dateien.");
         tips.SetToolTip(chkIrisTls, "TLS für den MSI-Upload zu erkannten IRIS-Instanzen auf lokalen und entfernten Hosts verwenden. Mit 'Konfiguration speichern' für den nächsten Start merken.");
+        tips.SetToolTip(useBuild, "Bei einem Softwareordner mit dem Namen builds nur ALPHA, BETA oder STABLE einlesen. Mit 'Konfiguration speichern' für zukünftige Abfragen und den nächsten Start merken.");
         tips.SetToolTip(chkUploadToZzzSoftware, "Ausgewählte MSI-Pakete nach den Updates in zzzSoftware hochladen. Standard: eingeschaltet. In der Konfiguration speicherbar.");
         tips.SetToolTip(chkRestartPosAfterUpdate, "Nur ältere Remote-POS nach einem neu gespeicherten POS-MSI in zzzSoftware starten / neu starten. Kein Neustart ohne POS-Paket, bei gleicher/neuerer POS-Version oder wenn das POS-MSI bereits in zzzSoftware vorhanden ist. LOKAL wird ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
         executionMode.SelectedIndex = (int)UpdateExecutionMode.Remote;
+        useBuild.Items.AddRange(BuildChannels.Names);
+        useBuild.SelectedItem = BuildChannels.Default;
+        useBuild.SelectedIndexChanged += async (_, _) =>
+        {
+            if (!applyingBuildPreference && !Disposing && !IsDisposed && !useBuild.Disposing && !useBuild.IsDisposed &&
+                SoftwarePackageCatalog.IsBuildsDirectory(softwarePath.Text))
+            {
+                buildPreferenceRefresh = LoadSoftwarePackagesAsync();
+                await buildPreferenceRefresh;
+            }
+        };
+        var buildPreference = FlowRow(new Label { Text = "use Build:", AutoSize = true, Anchor = AnchorStyles.Left }, useBuild);
+        buildPreference.Name = "buildPreference";
+        betaFeatures.Register(buildPreference);
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(SettingsDivider("ALLGEMEIN"), chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkForceUpdate, chkRestartPosAfterUpdate, targetPath,
+            buildPreference, login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkForceUpdate, chkRestartPosAfterUpdate, targetPath,
             SettingsDivider("LOKAL"), chkSkipLocalPackageCopy,
             SettingsDivider("REMOTE"), chkSkipRemotePackageCopy, chkSkipZipTransfer, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);
@@ -2090,6 +2108,7 @@ public sealed partial class MainForm : Form
         chkSkipLocalPackageCopy.Enabled = idle;
         chkSkipRemotePackageCopy.Enabled = idle;
         chkIrisTls.Enabled = idle;
+        useBuild.Enabled = idle;
         chkUploadToZzzSoftware.Enabled = idle;
         chkRestartPosAfterUpdate.Enabled = idle;
         txtUser.Enabled = txtPassword.Enabled = idle; statusFilter.Enabled = idle;
