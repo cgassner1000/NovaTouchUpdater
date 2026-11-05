@@ -391,6 +391,8 @@ function InstallUpdatePackages {
     $copiedTargets = @{}
     foreach ($plan in $allPlans) { $totalFiles += $plan.Files.Count }
     $copyProgress = [pscustomobject]@{ Total=$totalFiles; Completed=0; LastPercent=-1; Timer=[Diagnostics.Stopwatch]::StartNew() }
+    $startEventLog = $false
+    $eventLogReady = $true
     try {
         # Stop every selected service before the first file or directory change.
         foreach ($svc in $stopServices) {
@@ -404,6 +406,17 @@ function InstallUpdatePackages {
             UpdateProgress 'Dienste stoppen' ("Dienst '$($svc.Name)' ist gestoppt ($stoppedCount/$($stopServices.Count))") ([int][Math]::Floor(50.0 * $stoppedCount / $stopServices.Count))
         }
         if ($suiteNames.Count -gt 0) { StopServerSuiteProcesses }
+        if ($suiteNames.Count -gt 0) {
+            # Keep EventLog stopped while replacing suite/Python files. Register
+            # recovery before stopping so partial stop failures also restore it.
+            $startEventLog = $true
+            $eventLogReady = $false
+            UpdateProgress 'Windows EventLog stoppen' 'Stoppe Windows EventLog vor der Server-Suite-Installation'
+            $eventLog = Get-Service -Name EventLog -ErrorAction Stop
+            if ($eventLog.Status -ne 'Stopped') { Stop-Service -Name EventLog -ErrorAction Stop }
+            $eventLog.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
+            UpdateProgress 'Windows EventLog stoppen' 'Windows EventLog ist gestoppt; Server Suite wird installiert'
+        }
         foreach ($plan in $allPlans) {
             $component = switch ($plan.Kind) {
                 'payment' { 'nt.payment' }
@@ -432,7 +445,17 @@ function InstallUpdatePackages {
     }
     catch { $operationError = $_.Exception.Message }
     finally {
-        foreach ($name in $startNames) {
+        if ($startEventLog) {
+            try {
+                UpdateProgress 'Windows EventLog starten' 'Starte Windows EventLog vor den Server-Suite-Diensten'
+                Start-Service -Name EventLog -ErrorAction Stop
+                (Get-Service -Name EventLog -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+                $eventLogReady = $true
+                UpdateProgress 'Windows EventLog starten' 'Windows EventLog läuft; Suite-Dienste werden gestartet'
+            }
+            catch { $restartErrors += "Windows EventLog konnte nicht gestartet werden: $($_.Exception.Message). Die Anwendungsdienste bleiben gestoppt." }
+        }
+        foreach ($name in $(if ($eventLogReady) { $startNames })) {
             try {
                 UpdateProgress 'Dienste starten' ("Starte Dienst '$name'") (50 + [int][Math]::Floor(50.0 * $startedCount / $startNames.Count))
                 Start-Service -Name ([WildcardPattern]::Escape($name)) -ErrorAction Stop

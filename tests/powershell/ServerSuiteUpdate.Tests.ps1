@@ -43,7 +43,7 @@ function Get-Item {
 }
 function Get-Service {
     [CmdletBinding()] param([string]$Name)
-    if ($Name -eq 'EventLog') { throw 'Windows EventLog must not be accessed by the updater' }
+    if ($Name -eq 'EventLog') { $script:events.Add('get:EventLog'); return $script:eventLogService }
     if (-not $Name) {
         if ($script:changedServiceSet) { return }
         return @($script:serviceStates.Values)
@@ -54,7 +54,7 @@ function Get-Service {
 }
 function Stop-Service {
     [CmdletBinding()] param([string]$Name, [switch]$Force)
-    AssertLivePhase 'Dienste stoppen'
+    AssertLivePhase $(if ($Name -eq 'EventLog') { 'Windows EventLog stoppen' } else { 'Dienste stoppen' })
     $service = Get-Service -Name $Name
     $script:events.Add('stop:' + $service.Name)
     if ($script:stopFailure -eq $service.Name) { throw 'Simulated stop failure' }
@@ -62,7 +62,7 @@ function Stop-Service {
 }
 function Start-Service {
     [CmdletBinding()] param([string]$Name)
-    AssertLivePhase 'Dienste starten'
+    AssertLivePhase $(if ($Name -eq 'EventLog') { 'Windows EventLog starten' } else { 'Dienste starten' })
     $service = Get-Service -Name $Name
     $script:events.Add('start:' + $service.Name)
     if ($script:startFailure -eq $service.Name) { throw 'Simulated start failure' }
@@ -70,7 +70,7 @@ function Start-Service {
 }
 function Restart-Service {
     [CmdletBinding()] param([string]$Name)
-    throw 'Restart-Service must not be used; Windows EventLog must remain unchanged'
+    throw 'Restart-Service must not be used; EventLog stop and start must surround installation'
 }
 function Remove-Item {
     [CmdletBinding()] param([string]$LiteralPath, [switch]$Recurse, [switch]$Force)
@@ -81,6 +81,7 @@ function Remove-Item {
             if ($checked.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -and
                 [IO.Path]::GetFileName($checked) -notmatch '^\.novatouch-updater-stage-[a-f0-9]{32}$') {
                 AssertLivePhase 'Python bereinigen'
+                Assert ($script:eventLogService.Status -eq 'Stopped') 'Python cleanup requires Windows EventLog to be stopped'
                 $protected = if ([IO.Directory]::Exists($checked)) {
                     @(Get-ChildItem -LiteralPath $checked -Recurse -Force -File | Where-Object { $_.Name -ilike 'nt3_server_suite*.exe' })
                 } else { @($checked | Where-Object { [IO.Path]::GetFileName($_) -ilike 'nt3_server_suite*.exe' }) }
@@ -97,6 +98,9 @@ function Copy-Item {
     if ($null -eq $ToSession) { AssertLivePhase 'Update installieren' }
     if ($null -eq $ToSession -and $script:request.ServerSuiteZip) {
         Assert (@($script:suiteProcesses | Where-Object ProcessName -Like 'nt3_server_suite*').Count -eq 0) 'Suite files cannot change while a matching process survives'
+    }
+    if ($null -eq $ToSession -and $script:events.Contains('get:EventLog')) {
+        Assert ($script:eventLogService.Status -eq 'Stopped') 'Installation must finish before Windows EventLog restarts'
     }
     $source = FixturePath $LiteralPath
     $target = FixturePath $Destination
@@ -170,10 +174,12 @@ function ResetCase([string]$name) {
     $script:serviceStates = @{}; $script:installed = @(); $script:pythonRoots=@()
     ResetSuiteProcessFixture $script:events $script:serviceStates
     $script:stopFailure=''; $script:startFailure=''; $script:copyFailure=''; $script:reparsePath=''
-    $script:deleteFailure=''
+    $script:deleteFailure=''; $script:eventLogWaitFailure=''
     $script:eventLogService = [pscustomobject]@{ Name='EventLog'; Status='Running' }
     $script:eventLogService | Add-Member -MemberType ScriptMethod -Name WaitForStatus -Value {
         param($status, $timeout)
+        $script:events.Add('wait:EventLog:' + $status)
+        if ($script:eventLogWaitFailure -eq $status) { throw 'Simulated EventLog wait failure' }
         Assert ($this.Status -eq $status) ('Windows EventLog did not reach ' + $status)
     }
     $script:staleAfter=''; $script:stoppedAfter=''; $script:missingAfter=''
@@ -258,14 +264,26 @@ function RunWorker([bool]$success=$true, [string]$errorPattern='') {
     Assert ($results.Count -eq 1) "Expected exactly one result: $($writer.ToString())"
     $result = $results[0]
     Assert ($result.Success -eq $success) "Unexpected result: $($result | ConvertTo-Json -Compress -Depth 5)"
-    AssertEventLogUnchanged
+    AssertEventLogSequence
     if ($errorPattern) { Assert ($result.Error -match $errorPattern) "Wrong error: $($result.Error)" }
     Assert ($script:sessionRemoved -eq $(if ($script:request.LocalExecution) { 0 } else { 1 })) 'Only remote sessions must be closed'
     Assert (@(Get-ChildItem -LiteralPath $script:case -Filter '.novatouch-updater-stage-*' -Directory -Recurse).Count -eq 0) 'Staging must be removed after success or failure'
     $result
 }
-function AssertEventLogUnchanged {
-    Assert (@($script:events | Where-Object { $_ -match '^(stop|start|restart):EventLog$' }).Count -eq 0) 'No update may stop, start or restart Windows EventLog'
+function AssertEventLogSequence {
+    if (-not $script:events.Contains('get:EventLog')) { return }
+    $stopped = $script:events.IndexOf('wait:EventLog:Stopped')
+    $restart = $script:events.IndexOf('start:EventLog')
+    $ready = $script:events.IndexOf('wait:EventLog:Running')
+    foreach ($stop in @($script:events | Where-Object { $_ -like 'stop:nt3_server_suite*' })) {
+        Assert ($script:events.IndexOf($stop) -lt $script:events.IndexOf('get:EventLog')) 'All suite services must stop before EventLog is accessed'
+    }
+    foreach ($copy in @($script:events | Where-Object { $_ -like 'copy:*' })) {
+        Assert ($stopped -ge 0 -and $script:events.IndexOf($copy) -gt $stopped -and $restart -gt $script:events.IndexOf($copy)) 'Every file is installed while EventLog is stopped'
+    }
+    foreach ($start in @($script:events | Where-Object { $_ -like 'start:nt3_server_suite*' })) {
+        Assert ($ready -ge 0 -and $script:events.IndexOf($start) -gt $ready) 'EventLog must reach Running before any suite restart'
+    }
 }
 function NoServiceOrTargetChanges {
     Assert (@($script:events | Where-Object { $_ -match '^(stop|start|restart|copy|taskkill):' -or ($_ -match '^delete:' -and $_ -notmatch '\.novatouch-updater-stage-' -and $_ -notmatch '\\\.ntu-[a-f0-9]{32}$') }).Count -eq 0) 'Invalid payload must not stop services, kill processes or change installed files'
@@ -565,8 +583,10 @@ try {
                     }
                 }
             }
+            if ($selectedKind -eq 'serversuite') { $expectedEvents += 'stop:EventLog','start:EventLog' }
+            else { Assert ('get:EventLog' -notin $script:events) 'Payment and Fiscal updates must not access EventLog' }
             $actualEvents = @($script:events | Where-Object { $_ -match '^(stop|start):' })
-            Assert ($actualEvents.Count -eq $expectedEvents.Count -and @($actualEvents | Where-Object { $_ -notin $expectedEvents }).Count -eq 0) 'Only the selected component services may stop or start'
+            Assert ($actualEvents.Count -eq $expectedEvents.Count -and @($actualEvents | Where-Object { $_ -notin $expectedEvents }).Count -eq 0) 'Only selected component services and EventLog for suite ZIPs may stop or start'
             Assert (@($script:events | Where-Object { $_ -like 'transfer:*' }).Count -eq 1) 'Only the selected ZIP may be transferred'
             foreach ($instance in @('one','two')) {
                 $pythonRoot = Join-Path $script:case ($instance + '\portable_python')
@@ -674,7 +694,7 @@ try {
         if ($fault -eq 'copy') { $script:copyFailure=Join-Path $script:case 'one\apps\nt3-server-suite' }
         if ($fault -eq 'start') { $script:startFailure='nt3_server_suite_a' }
         $null = RunWorker $false ('Simulated ' + $fault + ' failure')
-        AssertEventLogUnchanged
+        AssertEventLogSequence
         Assert ('start:nt3_server_suite_a' -in $script:events -and 'start:nt3_server_suite_b' -in $script:events) 'Every service must receive a restart attempt even after failure'
         if ($fault -eq 'stop') { Assert (@($script:events | Where-Object { $_ -like 'copy:*' -or $_ -match '^delete:.*\\(nt3-server-suite|portable_python)$' }).Count -eq 0) 'Failed stop must prevent all installation changes' }
         Passed ('failure is reported and all restarts are attempted: ' + $fault)
@@ -701,28 +721,40 @@ try {
         foreach ($start in @($script:events | Where-Object { $_ -like 'start:nt3_server_suite*' })) {
             Assert ($script:events.IndexOf($start) -gt $script:events.LastIndexOf($lastCopy)) 'Suite services start only after every installation finishes'
         }
-        Passed ('suite stop -> install all instances -> suite start; EventLog unchanged, local=' + $local)
+        Assert (@($script:events | Where-Object { $_ -eq 'stop:EventLog' }).Count -eq 1 -and
+            @($script:events | Where-Object { $_ -eq 'start:EventLog' }).Count -eq 1) 'A suite ZIP update stops and restarts EventLog once for all instances'
+        Passed ('suite stop -> EventLog stop -> install all instances -> EventLog start -> suite start, local=' + $local)
     }
     ResetCase 'eventlog-already-stopped'; Service 'a' 'one'; Package
     $script:eventLogService.Status='Stopped'
     $null=RunWorker
-    Assert ($script:eventLogService.Status -eq 'Stopped' -and 'start:nt3_server_suite_a' -in $script:events) 'Initially stopped EventLog is left unchanged while the suite is updated'
-    Passed 'an initially stopped EventLog remains unchanged'
+    Assert ($script:eventLogService.Status -eq 'Running' -and 'stop:EventLog' -notin $script:events -and 'start:nt3_server_suite_a' -in $script:events) 'Initially stopped EventLog is started before the suite services'
+    Passed 'an initially stopped EventLog is started after ZIP installation'
     ResetCase 'eventlog-stop-failure'; Service 'a' 'one'; Package
     $script:stopFailure='EventLog'
-    $result=RunWorker
-    Assert ($result.Changed -and 'start:nt3_server_suite_a' -in $script:events) 'An EventLog stop restriction cannot prevent installation'
-    Passed 'EventLog stop restrictions do not affect installation'
+    $null=RunWorker $false 'Simulated stop failure'
+    Assert (@($script:events | Where-Object { $_ -like 'copy:*' }).Count -eq 0 -and 'start:EventLog' -in $script:events -and 'start:nt3_server_suite_a' -in $script:events) 'An EventLog stop failure prevents file changes and attempts recovery before restarting the suite'
+    Passed 'EventLog stop failures abort installation and restore service operation'
+    ResetCase 'eventlog-stop-wait-failure'; Service 'a' 'one'; Package
+    $script:eventLogWaitFailure='Stopped'
+    $null=RunWorker $false 'Simulated EventLog wait failure'
+    Assert (@($script:events | Where-Object { $_ -like 'copy:*' }).Count -eq 0 -and $script:eventLogService.Status -eq 'Running' -and 'start:nt3_server_suite_a' -in $script:events) 'A stop timeout prevents file changes and restores EventLog before suite recovery'
+    Passed 'EventLog stop timeout restores EventLog and suite services without installing files'
     ResetCase 'eventlog-start-failure'; Service 'a' 'one'; Package
     $script:startFailure='EventLog'
-    $result=RunWorker
-    Assert ($result.Changed -and $script:serviceStates.nt3_server_suite_a.Status -eq 'Running') 'An EventLog start restriction cannot prevent suite recovery'
-    Passed 'EventLog start restrictions do not affect suite recovery'
+    $result=RunWorker $false 'Windows EventLog konnte nicht gestartet werden.*Simulated start failure'
+    Assert ($script:eventLogService.Status -eq 'Stopped' -and 'start:nt3_server_suite_a' -notin $script:events -and $result.CompletedServiceNames.Count -eq 0) 'A failed EventLog start keeps suite services stopped and instances pending for retry'
+    Passed 'EventLog must recover successfully before suite services restart'
+    ResetCase 'eventlog-start-wait-failure'; Service 'a' 'one'; Package
+    $script:eventLogWaitFailure='Running'
+    $null=RunWorker $false 'Windows EventLog konnte nicht gestartet werden.*Simulated EventLog wait failure'
+    Assert ('start:nt3_server_suite_a' -notin $script:events) 'A start timeout must not start suite services before EventLog readiness is confirmed'
+    Passed 'EventLog start timeout keeps application services stopped and reports the failed readiness check'
     ResetCase 'copy-and-eventlog-start-failure'; Service 'a' 'one'; Package
     $script:copyFailure=Join-Path $script:case 'one\apps\nt3-server-suite'; $script:startFailure='EventLog'
-    $null=RunWorker $false 'Simulated copy failure'
-    Assert ('start:nt3_server_suite_a' -in $script:events) 'A copy failure still restores the suite without accessing EventLog'
-    Passed 'copy errors remain visible without unrelated EventLog errors'
+    $null=RunWorker $false 'Simulated copy failure.*Windows EventLog konnte nicht gestartet werden.*Simulated start failure'
+    Assert ('start:EventLog' -in $script:events -and 'start:nt3_server_suite_a' -notin $script:events) 'A copy failure still attempts EventLog recovery and preserves both errors'
+    Passed 'copy errors and EventLog restart errors remain visible together'
     foreach ($kind in @('payment','fiscal')) {
         ResetCase ('no-eventlog-recovery-' + $kind); Component $kind; Package @{ 'component.exe'='1.2.3.4'; 'nested/updated.txt'='new' } $kind
         $script:copyFailure=$script:installed[0].InstallDir
