@@ -377,8 +377,9 @@ public sealed partial class MainForm
         if ((needed & UpdateComponents.ZipServices) != 0)
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Payment/Fiscal: zusätzliche Client-Dateien bleiben erhalten.");
         if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen. " +
-            (ServerSuiteInstaller.IsSetup(serverSuiteZip) ? "Setup je Instanz still mit explizitem Dienstnamen und Installationspfad ausführen. Kein automatischer Windows-Neustart. " : "Bisheriges ZIP-Verfahren. ") +
-            "Nach dem Dienststopp werden verbliebene nt3_server_suite*-Prozesse zwangsweise beendet. Vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. Konfiguration und Dienstkonten bleiben erhalten. Windows EventLog bleibt unverändert. Deaktivierte Dienste bleiben deaktiviert.");
+            (ServerSuiteInstaller.IsSetup(serverSuiteZip)
+                ? $"Das Inno-Setup führt je Instanz das reguläre Update mit explizitem Dienstnamen und Installationspfad durch, einschließlich Dienstinstallation und Dienststart. Maximal {nUpdate.Value} Instanz-Setups parallel je Host; gemeinsame Installationsordner nacheinander. Kein automatischer Windows-Neustart."
+                : "ZIP-Verfahren: Dienste stoppen, verbliebene nt3_server_suite*-Prozesse beenden, Windows EventLog stoppen, Dateien einspielen, EventLog starten und anschließend die Dienste starten. Vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. Konfiguration und Dienstkonten bleiben erhalten. Deaktivierte Suite-Dienste bleiben deaktiviert."));
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
         if (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0)
         {

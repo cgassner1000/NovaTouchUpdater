@@ -103,6 +103,7 @@ public sealed partial class MainForm : Form
     private bool activeSsl;
     private int activeHttpsPort = 5986;
     private bool activeForceUpdate;
+    private int activeUpdateParallelism = 8;
     private const string DefaultRemoteInstallPath = @"C:\install\Novacom";
     private string activeRemoteInstallPath = DefaultRemoteInstallPath;
     private string activeLocalInstallPath = DefaultRemoteInstallPath;
@@ -1318,7 +1319,8 @@ public sealed partial class MainForm : Form
         activeSkipZipTransfer = chkSkipZipTransfer.Checked;
         activeSkipLocalPackageCopy = UseLocalPackageSources;
         activeSkipRemotePackageCopy = chkSkipRemotePackageCopy.Checked;
-        activeDatabaseUploadParallelism = (int)nUpdate.Value;
+        activeUpdateParallelism = (int)nUpdate.Value;
+        activeDatabaseUploadParallelism = activeUpdateParallelism;
         activeIrisUseTls = chkIrisTls.Checked;
         activeUploadToZzzSoftware = chkUploadToZzzSoftware.Checked;
         activeRestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked;
@@ -1332,6 +1334,7 @@ public sealed partial class MainForm : Form
         {
         Action = action, Host = host.Host,
         LocalExecution = host.IsLocal,
+        Parallelism = activeUpdateParallelism,
         Username = host.IsLocal ? "" : activeUser, Password = host.IsLocal ? "" : activePassword, UseSsl = !host.IsLocal && activeSsl, HttpsPort = activeHttpsPort, ForceUpdate = activeForceUpdate,
         RemoteInstallPath = host.IsLocal ? activeLocalInstallPath : activeRemoteInstallPath,
         SkipZipTransfer = !host.IsLocal && activeSkipZipTransfer, SkipLocalPackageCopy = host.IsLocal && activeSkipLocalPackageCopy,

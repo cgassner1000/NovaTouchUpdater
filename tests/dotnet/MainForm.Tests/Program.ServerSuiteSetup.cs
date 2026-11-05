@@ -10,6 +10,10 @@ internal static partial class Program
         if (!File.Exists(manifest)) throw new InvalidOperationException("Run tests/powershell/ServerSuiteSetup.Tests.ps1 first to compile the fixture, without executing it.");
         string source = JsonSerializer.Deserialize<string>(File.ReadAllText(manifest))!;
         Assert(ServerSuiteInstaller.ReadVersion(source) == "2026.4.9999", "Inno metadata identifies supported setup and target version");
+        string v2Setup = Path.Combine(Path.GetDirectoryName(source)!, "compat-v2.exe");
+        string markerlessSetup = Path.Combine(Path.GetDirectoryName(source)!, "legacy-no-marker.exe");
+        Assert(ServerSuiteInstaller.ReadVersion(v2Setup) == "2026.4.9999",
+            "existing v1 and v2 Server Suite setups are accepted without requiring installer changes");
         string root = Path.Combine(TestWorkspace.Artifacts, "setup-catalog-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "Unterordner"));
         string exe = Path.Combine(root, "Unterordner", Path.GetFileName(source));
@@ -33,10 +37,10 @@ internal static partial class Program
         string unrelated = Path.Combine(root, "unrelated.exe");
         File.Copy(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"), unrelated);
         Assert((await catalog.ReadFileAsync(unrelated, CancellationToken.None)).Length == 0, "unrelated EXEs in software tree are ignored");
-        string oldSetup = Path.Combine(root, "nt.server.suite-2026.4.9999.exe");
-        File.Copy(unrelated, oldSetup);
+        string invalidSetup = Path.Combine(root, "nt.server.suite-2026.4.9999.exe");
+        File.Copy(unrelated, invalidSetup);
         result = await catalog.ReadAsync(root, null, CancellationToken.None);
-        Assert(result.Warnings.Length == 1 && result.Warnings[0].Contains("Inno-Skript"), "unsupported setup is reported without executing or selecting it");
+        Assert(result.Warnings.Length == 1 && result.Warnings[0].Contains("kein NovaTouch"), "an unrelated renamed EXE is reported without executing or selecting it");
 
         var selectionWorker = new FakeRunner();
         using var form = new MainForm(preview: true, selectionWorker, new FakeRunner());
@@ -45,18 +49,28 @@ internal static partial class Program
             "the default Server Suite picker shows EXE and ZIP packages together");
         var warnings = new List<string>();
         Action<string> warn = warnings.Add;
+        Assert((bool)Call(form, "TrySelectServerSuitePackage", v2Setup, warn)! && warnings.Count == 0 && selectionWorker.Requests.IsEmpty,
+            "compatibility selection accepts v2 without a warning, rebuild requirement or worker execution");
         Assert((bool)Call(form, "TrySelectServerSuitePackage", exe, warn)!, "supported EXE is selected through the real UI validation path");
+        Assert(!(bool)Call(form, "TrySelectServerSuitePackage", markerlessSetup, warn)! && warnings.Count == 1 &&
+            warnings[0].Contains("ab v1") && warnings[0].Contains("ZIP") &&
+            Field<string>(form, "serverSuiteZip") == exe && selectionWorker.Requests.IsEmpty,
+            "an older setup warns that ZIP is required, preserves the valid selection and starts no worker");
+        warnings.Clear();
+        Field<NumericUpDown>(form, "nUpdate").Value = 3;
+        Call(form, "CaptureCredentials");
+        Field<NumericUpDown>(form, "nUpdate").Value = 7;
         foreach (bool local in new[] { false, true })
         {
             var host = new HostState { Host = local ? "LOCALHOST" : "fixture.invalid" };
             var request = (WorkerRequest)Call(form, "Request", "update", host, UpdateComponents.ServerSuite)!;
-            Assert(request.ServerSuiteSetup == exe && request.ServerSuiteZip.Length == 0 && request.ServerSuiteVersion == "2026.4.9999",
-                (local ? "local" : "remote") + " request routes setup separately from legacy ZIP without losing target version");
+            Assert(request.ServerSuiteSetup == exe && request.ServerSuiteZip.Length == 0 && request.ServerSuiteVersion == "2026.4.9999" && request.Parallelism == 3,
+                (local ? "local" : "remote") + " setup request includes target version and the update parallelism captured before starting work");
         }
-        Assert(!(bool)Call(form, "TrySelectServerSuitePackage", oldSetup, warn)! && warnings.Count == 1 &&
-            warnings[0].Contains("Silent-Parameter") && warnings[0].Contains("Mehrere Server-Suite-Instanzen") && warnings[0].Contains("ZIP") &&
+        Assert(!(bool)Call(form, "TrySelectServerSuitePackage", invalidSetup, warn)! && warnings.Count == 1 &&
+            warnings[0].Contains("kein NovaTouch") &&
             Field<string>(form, "serverSuiteZip") == exe && selectionWorker.Requests.IsEmpty,
-            "unsupported old setup gives one warning about multi-instance updates without crashing, replacing the valid selection or starting a worker");
+            "an unrelated EXE gives one warning without crashing, replacing the valid selection or starting a worker");
         Assert(!(bool)Call(form, "TrySelectServerSuitePackage", Path.Combine(root, "invalid-name.zip"), warn)! && warnings.Count == 2 &&
             Field<string>(form, "serverSuiteZip") == exe, "an invalid ZIP name also warns and preserves the selected setup");
         Assert(!(bool)Call(form, "TrySelectServerSuitePackage", Path.Combine(root, "missing.exe"), warn)! && warnings.Count == 3 &&

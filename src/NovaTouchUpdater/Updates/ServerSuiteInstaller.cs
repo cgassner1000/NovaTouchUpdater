@@ -1,20 +1,22 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace NovaTouchUpdater;
 
 internal static class ServerSuiteInstaller
 {
-    // Older setups ignore /SERVICENAME and can select the wrong instance.
-    internal const string ProtocolMarker = "NovaTouch Server Suite Updater v1";
     internal static bool IsSetup(string path) => Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase);
 
     internal static string ReadVersion(string path)
     {
         var info = FileVersionInfo.GetVersionInfo(path);
-        if (info.FileDescription?.Trim() != ProtocolMarker || info.ProductName?.Trim() != "NovaTouch Server Suite")
-            throw new InvalidDataException("Dieses Server-Suite-Setup unterstützt die benötigten Silent-Parameter für gezielte Instanzupdates nicht.\n\n" +
-                "Mehrere Server-Suite-Instanzen können damit nicht zuverlässig aktualisiert werden.\n\n" +
-                "Bitte ein neueres Setup mit dem aktualisierten Inno-Skript oder das passende Server-Suite-ZIP-Paket auswählen.");
+        if (!string.Equals(info.ProductName?.Trim(), "NovaTouch Server Suite", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Die ausgewählte EXE ist kein NovaTouch-Server-Suite-Setup.");
+        if (!Regex.IsMatch(info.FileDescription?.Trim() ?? "", @"^NovaTouch Server Suite (?:Updater|Silent Update) v[1-9][0-9]*$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            throw new InvalidDataException("Dieses Server-Suite-Setup hat keine unterstützte Kennung ab v1. " +
+                "Ein zuverlässiges stilles Update mehrerer Instanzen ist damit nicht möglich.\n\n" +
+                "Bitte für diese Version das passende Server-Suite-ZIP-Paket verwenden.");
         string version = info.ProductVersion?.Trim() ?? "";
         _ = SoftwarePackageCatalog.NumericVersion(version);
         if (UpdatePackageNames.TryServerSuiteVersion(path, out string named) &&
