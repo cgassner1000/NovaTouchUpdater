@@ -77,6 +77,8 @@ public sealed partial class MainForm : Form
     private readonly Button btnUpdate = Button("2. Updates starten");
     private readonly Button btnServicePacks = new ModernButton { Name = "importServicePacks", Text = "Servicepacks\neinspielen", AutoSize = false,
         Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty, Visible = false };
+    private readonly Button btnCompileSoftware = new ModernButton { Name = "compileSoftwarePackages", Text = "Softwarepakete\nkompilieren", AutoSize = false,
+        Size = new Size(142, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty, Visible = false };
     private BetaFeatureGate? betaFeatures;
     private Action? showBetaActivated = null;
     private readonly Button btnTransfer = Button("Upload");
@@ -384,6 +386,7 @@ public sealed partial class MainForm : Form
         activationImage.Name = "appMark";
         betaFeatures = new BetaFeatureGate(this, activationImage);
         betaFeatures.Register(btnServicePacks);
+        betaFeatures.Register(btnCompileSoftware);
         betaFeatures.Register(chkIrisTls);
         betaFeatures.Activated += () =>
         {
@@ -545,9 +548,12 @@ public sealed partial class MainForm : Form
         var buildPreference = FlowRow(new Label { Text = "use Build:", AutoSize = true, Anchor = AnchorStyles.Left }, useBuild);
         buildPreference.Name = "buildPreference";
         betaFeatures.Register(buildPreference);
+        var betaDivider = SettingsDivider("BETA");
+        betaFeatures.Register(betaDivider);
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
-        var settingsContent = Stack(SettingsDivider("ALLGEMEIN"), chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            buildPreference, login, optionBar, chkUploadToZzzSoftware, chkIrisTls, chkForceUpdate, chkRestartPosAfterUpdate, targetPath,
+        var settingsContent = Stack(betaDivider, buildPreference, chkIrisTls,
+            SettingsDivider("ALLGEMEIN"), chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
+            login, optionBar, chkUploadToZzzSoftware, chkForceUpdate, chkRestartPosAfterUpdate, targetPath,
             SettingsDivider("LOKAL"), chkSkipLocalPackageCopy,
             SettingsDivider("REMOTE"), chkSkipRemotePackageCopy, chkSkipZipTransfer, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);
@@ -595,12 +601,13 @@ public sealed partial class MainForm : Form
         ((ModernButton)btnScan).Role = ButtonRole.Accent;
         ((ModernButton)btnUpdate).Role = ButtonRole.Primary;
         ((ModernButton)btnCancel).Role = ButtonRole.Danger;
-        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnServicePacks, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
+        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnServicePacks, btnCompileSoftware, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
         {
             btn.Margin = new Padding(0, 3, 7, 3);
             bar.Controls.Add(btn);
         }
-        bar.Layout += (_, _) => btnServicePacks.Height = btnUpdate.Height;
+        bar.Layout += (_, _) => btnCompileSoftware.Height = btnServicePacks.Height = btnUpdate.Height;
+        updateToolTip.SetToolTip(btnCompileSoftware, "Softwarepakete aus der installierten NovaTouch Control in allen IRIS-Namespaces ohne %-Präfix der ausgewählten Hosts importieren und kompilieren.");
         updateToolTip.SetToolTip(btnServicePacks, "XML-Servicepacks in alle IRIS-Namespaces ohne %-Präfix der ausgewählten Hosts importieren und mit ckbf kompilieren.");
         var filterBar = FlowRow();
         filterBar.Margin = new Padding(0, 9, 0, 12);
@@ -785,6 +792,7 @@ public sealed partial class MainForm : Form
         };
         btnUpdate.Click += async (_, _) => await RunUpdatesAsync(false);
         btnServicePacks.Click += async (_, _) => await ChooseServicePacksAsync();
+        btnCompileSoftware.Click += async (_, _) => await CompileSoftwarePackagesAsync();
         btnTransfer.Click += async (_, _) => await TransferFilesAsync();
         btnSendCommand.Click += async (_, _) => await SendCommandAsync();
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
@@ -2095,6 +2103,7 @@ public sealed partial class MainForm : Form
         btnDatabaseCheck.Enabled = idle && selected.Length > 0;
         btnUpdate.Enabled = idle && UpdateTargets(false).Length > 0;
         btnServicePacks.Enabled = idle && selected.Length > 0;
+        btnCompileSoftware.Enabled = idle && selected.Length > 0;
         betaFeatures?.ApplyVisibility();
         btnTransfer.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnSendCommand.Enabled = idle && selected.Any(h => !h.IsLocal);

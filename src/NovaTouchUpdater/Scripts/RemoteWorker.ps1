@@ -324,6 +324,11 @@ try {
     if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
     $req = $requestLine | ConvertFrom-Json
     $localExecution = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
+    if ($req.Action -eq 'compile-software-packages' -and $localExecution -and
+        $null -ne $req.PSObject.Properties['SoftwareCompilationChild'] -and [bool]$req.SoftwareCompilationChild) {
+        Emit (CompileSoftwarePackages @($req.DatabaseTargets))
+        exit 0
+    }
     if ($req.Action -eq 'import-servicepacks') {
         AssertServicePackFiles @($req.ServicePackFiles)
         if ($localExecution) {
@@ -392,6 +397,7 @@ try {
     $remotePackageStage = $null
     try {
         $session = if ($localExecution) { [pscustomobject]@{ NovaTouchLocal=$true } } else { New-PSSession @sessionArgs }
+        if ($req.Action -eq 'compile-software-packages') { Emit (InvokeSoftwareCompilation $req $session $PSCommandPath); exit 0 }
         if ($req.Action -eq 'import-servicepacks') { Emit (ImportRemoteServicePacks $req $session $PSCommandPath); exit 0 }
         if ($req.Action -eq 'database-inventory') {
             $script = 'function ReadSoftwareIrisRegistrations {' + ${function:ReadSoftwareIrisRegistrations}.ToString() + '}; function ReadSoftwareIrisInventory {' + ${function:ReadSoftwareIrisInventory}.ToString() + '}; ReadSoftwareIrisInventory'

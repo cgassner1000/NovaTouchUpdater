@@ -15,6 +15,7 @@ internal static partial class Program
             Application.EnableVisualStyles();
             if (args.Contains("--beta")) { BetaFeatureTests(); return 0; }
             if (args.Contains("--builds")) { Complete(BuildChannelCatalogTests()); BuildChannelSelectionTests(); return 0; }
+            if (args.Contains("--compile-software")) { BetaFeatureTests(); Complete(SoftwareCompilationTests()); return 0; }
             if (args.Contains("--servicepacks")) { BetaFeatureTests(); Complete(ServicePackTests()); return 0; }
             if (args.Contains("--administrator")) { AdministratorTests(); return 0; }
             if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
@@ -42,6 +43,7 @@ internal static partial class Program
                 AdministratorTests();
                 BetaFeatureTests();
                 Complete(ServicePackTests());
+                Complete(SoftwareCompilationTests());
                 ExpandableSectionTests();
                 FormattingTests();
                 SelectionTests();

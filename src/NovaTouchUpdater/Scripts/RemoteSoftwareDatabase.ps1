@@ -111,11 +111,12 @@ function GetSoftwareDatabaseRemotePlan([object[]]$Packages, [object[]]$Targets, 
 }
 
 function StartSoftwareDatabaseChild {
-    param([string]$Script, [string]$RequestJson, [string]$Initializer)
+    param([string]$Script, [string]$RequestJson, [string]$Initializer, [bool]$Use32Bit = $false)
     . ([scriptblock]::Create('function InitializeSoftwareDatabaseStreaming {' + $Initializer + '}'))
     InitializeSoftwareDatabaseStreaming
     if ($null -ne (Get-Variable -Name NovaTouchDatabaseRelay -Scope Global -ErrorAction SilentlyContinue)) { throw 'Ein Datenbank-Upload läuft bereits in dieser Sitzung.' }
-    $systemDirectory = if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) { 'Sysnative' } else { 'System32' }
+    $systemDirectory = if ($Use32Bit -and [Environment]::Is64BitOperatingSystem) { 'SysWOW64' }
+        elseif ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) { 'Sysnative' } else { 'System32' }
     $executable = Join-Path $env:SystemRoot ($systemDirectory + '\WindowsPowerShell\v1.0\powershell.exe')
     $global:NovaTouchDatabaseRelay = [NovaTouch.DatabaseStreaming.ProcessRelay]::new($executable, $Script, $RequestJson)
 }
@@ -187,7 +188,7 @@ function PublishStreamedSoftwarePackages([object[]]$Packages, [object[]]$Plan, [
 
 function InvokeSoftwareDatabaseChildOperation($Session, [string]$Worker, $Request, [object[]]$Resolved = @(), [object[]]$Plan = @()) {
     $json = $Request | ConvertTo-Json -Depth 12 -Compress
-    InvokeWorkerCommand -Session $Session -ScriptBlock ${function:StartSoftwareDatabaseChild} -ArgumentList $Worker, $json, ${function:InitializeSoftwareDatabaseStreaming}.ToString() -ErrorAction Stop | Out-Null
+    InvokeWorkerCommand -Session $Session -ScriptBlock ${function:StartSoftwareDatabaseChild} -ArgumentList $Worker, $json, ${function:InitializeSoftwareDatabaseStreaming}.ToString(), ($Request.Action -eq 'compile-software-packages') -ErrorAction Stop | Out-Null
     $result = $null
     try {
         if ($Request.Action -eq 'publish-msi-stream') {
@@ -214,13 +215,14 @@ function InvokeSoftwareDatabaseChildOperation($Session, [string]$Worker, $Reques
                 }
             }
         }
-        foreach ($event in @(InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareDatabaseChild} -ArgumentList '', $true -ErrorAction Stop)) {
+        InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareDatabaseChild} -ArgumentList '', $true -ErrorAction Stop | ForEach-Object {
+            $event=$_
             if ($event.Event -eq 'progress') { Progress $event.Phase $event.Message $event.ProgressPercent }
             elseif ($event.Event -eq 'result') { $result = $event }
         }
         if ($null -eq $result) { throw 'Keine gültige Rückmeldung des Datenbank-Workers auf dem Zielrechner.' }
         if ($null -ne $result.PSObject.Properties['DatabaseUploadedKinds']) { $script:databaseUploadedKinds = @($result.DatabaseUploadedKinds) }
-        if (-not $result.Success -and $Request.Action -ne 'import-servicepacks') { throw [string]$result.Error }
+        if (-not $result.Success -and $Request.Action -notin @('import-servicepacks','compile-software-packages')) { throw [string]$result.Error }
         return $result
     } finally { InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareDatabaseChild} -ArgumentList '', $false, $true -ErrorAction SilentlyContinue | Out-Null }
 }

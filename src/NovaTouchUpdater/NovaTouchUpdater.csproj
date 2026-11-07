@@ -42,6 +42,7 @@
     <EmbeddedResource Include="Scripts\DatabaseStreaming.ps1" LogicalName="NovaTouchUpdater.DatabaseStreaming.ps1" />
     <EmbeddedResource Include="Scripts\RemoteSoftwareDatabase.ps1" LogicalName="NovaTouchUpdater.RemoteSoftwareDatabase.ps1" />
     <EmbeddedResource Include="Scripts\ServicePacks.ps1" LogicalName="NovaTouchUpdater.ServicePacks.ps1" />
+    <EmbeddedResource Include="Scripts\SoftwareCompilation.ps1" LogicalName="NovaTouchUpdater.SoftwareCompilation.ps1" />
     <EmbeddedResource Include="Scripts\RemoteCommand.ps1" LogicalName="NovaTouchUpdater.RemoteCommand.ps1" />
     <EmbeddedResource Include="Scripts\WinRmWorker.ps1" LogicalName="NovaTouchUpdater.WinRmWorker.ps1" />
     <EmbeddedResource Include="Scripts\ConnectionWorker.ps1" LogicalName="NovaTouchUpdater.ConnectionWorker.ps1" />

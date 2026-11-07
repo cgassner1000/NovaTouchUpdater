@@ -14,6 +14,7 @@ public sealed class WorkerRequest
     public MsiPackageRequest[] MsiPackages { get; set; } = [];
     public IrisUploadTarget[] DatabaseTargets { get; set; } = [];
     public ServicePackFile[] ServicePackFiles { get; set; } = [];
+    public bool SoftwareCompilationChild { get; set; }
     public string DatabaseProviderDirectory { get; set; } = "";
     public int DatabaseUploadParallelism { get; set; } = 8;
     public bool IrisUseTls { get; set; }
@@ -65,6 +66,29 @@ public sealed class ServicePackNamespaceResult
     public bool Compiled { get; set; }
     public int ImportedFiles { get; set; }
     public string Error { get; set; } = "";
+}
+
+public sealed class SoftwareCompilationNamespaceResult
+{
+    public string Instance { get; set; } = "";
+    public string Namespace { get; set; } = "";
+    public bool Success { get; set; }
+    public int ImportedResources { get; set; }
+    public int SkippedResources { get; set; }
+    public string Error { get; set; } = "";
+    public SoftwareCompilationError[] CompilationErrors { get; set; } = [];
+}
+
+public sealed class SoftwareCompilationError
+{
+    public string Instance { get; set; } = "";
+    public string Namespace { get; set; } = "";
+    public string Resource { get; set; } = "";
+    public string Item { get; set; } = "";
+    public string ItemType { get; set; } = "Klasse";
+    public string Details { get; set; } = "";
+
+    public string Description => $"Fehler beim Kompilieren der {ItemType}: {Item}";
 }
 
 public sealed class IrisUploadTarget
@@ -134,6 +158,7 @@ public sealed class WorkerEvent
 
 public sealed class WorkerResult
 {
+    public SoftwareCompilationNamespaceResult[] SoftwareCompilationResults { get; set; } = [];
     public ServicePackNamespaceResult[] ServicePackResults { get; set; } = [];
     public string[] DatabaseUploadedKinds { get; set; } = [];
     public bool? HasIrisInstances { get; set; }
@@ -202,7 +227,7 @@ public sealed class WorkerRunner : IWorkerRunner
         string script = reader.ReadToEnd();
         if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
         {
-            foreach (string helper in new[] { "UpdateSteps", "ServerSuiteSetup", "UploadDirectory", "MsiUpdates", "SoftwareDatabase", "DatabaseStreaming", "RemoteSoftwareDatabase", "ServicePacks" })
+            foreach (string helper in new[] { "UpdateSteps", "ServerSuiteSetup", "UploadDirectory", "MsiUpdates", "SoftwareDatabase", "DatabaseStreaming", "RemoteSoftwareDatabase", "ServicePacks", "SoftwareCompilation" })
             {
                 using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream($"NovaTouchUpdater.{helper}.ps1")
                     ?? throw new InvalidOperationException($"Die eingebetteten Schritte {helper} fehlen.");

@@ -13,26 +13,36 @@ internal static partial class Program
         var gate = Field<BetaFeatureGate>(form, "betaFeatures");
         var image = All(canvas).OfType<AppMark>().Single();
         var button = Field<Button>(form, "btnServicePacks");
+        var compile = Field<Button>(form, "btnCompileSoftware");
         var check = Field<Button>(form, "btnDatabaseCheck");
         var tls = Field<CheckBox>(form, "chkIrisTls");
         var tlsParent = (TableLayoutPanel)tls.Parent!;
         var tlsCell = tlsParent.GetCellPosition(tls);
+        var betaDivider = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "betaSettingsDivider");
+        var betaCell = tlsParent.GetCellPosition(betaDivider);
+        var buildPreference = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "buildPreference");
+        var generalDivider = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "allgemeinSettingsDivider");
+        Assert(tlsParent.GetRow(betaDivider) < tlsParent.GetRow(buildPreference) &&
+            tlsParent.GetRow(buildPreference) < tlsParent.GetRow(tls) && tlsParent.GetRow(tls) < tlsParent.GetRow(generalDivider),
+            "the BETA settings group contains use Build and IRIS TLS before Allgemein");
         canvas.Controls.Add(tls);
+        canvas.Controls.Add(betaDivider);
         int popups = 0;
         SetField(form, "showBetaActivated", new Action(() => popups++));
         using var before = new Bitmap(image.Width, image.Height);
         image.DrawToBitmap(before, image.ClientRectangle);
         Cursor cursor = image.Cursor;
-        Assert(!gate.Enabled && !button.Visible && !tls.Visible && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
+        Assert(!gate.Enabled && !betaDivider.Visible && !button.Visible && !compile.Visible && !tls.Visible && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
             "servicepacks and IRIS TLS are hidden initially while Check Database remains a regular function");
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         gate.RegisterClick(check, true);
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         Assert(!gate.Enabled && popups == 0 && !button.Visible, "another control resets the five consecutive logo clicks");
         var fifth = Message.Create(image.Handle, 0x0203, IntPtr.Zero, IntPtr.Zero);
-        Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && button.Visible && tls.Visible,
+        Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && betaDivider.Visible && button.Visible && compile.Visible && tls.Visible,
             "the fifth logo click activates both servicepacks and IRIS TLS without consuming the click");
         tlsParent.Controls.Add(tls, tlsCell.Column, tlsCell.Row);
+        tlsParent.Controls.Add(betaDivider, betaCell.Column, betaCell.Row);
         for (int click = 0; click < 8; click++) gate.RegisterClick(image, true);
         Assert(popups == 1, "further logo clicks do not repeat the activation popup");
         using var future = new Button();
@@ -48,6 +58,8 @@ internal static partial class Program
         for (int pass = 0; pass < 4; pass++) Layout(canvas);
         Call(form, "ApplyColumnWidths");
         var update = Field<Button>(form, "btnUpdate");
+        Assert(compile.Parent == button.Parent && compile.Parent!.Controls.GetChildIndex(compile) == compile.Parent.Controls.GetChildIndex(button) + 1 &&
+            compile.Height == update.Height && compile.Text == "Softwarepakete\nkompilieren", "software compilation appears directly after servicepacks with the same button height");
         Assert(button.Height == update.Height && button.Parent == update.Parent &&
             button.Parent!.Controls.GetChildIndex(button) == button.Parent.Controls.GetChildIndex(update) + 1 && button.Text == "Servicepacks\neinspielen",
             "the two-line servicepacks button follows Updates starten with the same height");

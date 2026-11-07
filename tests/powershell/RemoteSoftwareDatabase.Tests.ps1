@@ -118,6 +118,25 @@ for ($offset=0; $offset -lt $destinations.Count; $offset+=$request.DatabaseUploa
     $streamOutcome=InvokeSoftwareDatabaseChildOperation $null $child @{ Action='publish-msi-stream';MsiPackages=@($package);DatabasePlan=$plan;DatabaseUploadParallelism=2 } @([pscustomobject]@{Path=$path;Package=$package}) $plan
     Assert ($streamOutcome.Success) 'the production WinRM chunk orchestration streams all waves through the actual child relay and returns its result'
 
+    # The real child collects multiple compiler errors with closed stdin;
+    # no operator confirmation is needed before the final result.
+    [IO.File]::WriteAllText($child, @'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$request=[Console]::In.ReadLine() | ConvertFrom-Json
+if($null -ne [Console]::In.ReadLine()){throw 'Unexpected confirmation input'}
+$failures=@()
+foreach($item in @('Fixture.First','Fixture.Second')) {
+    $failures+=@{Item=$item;Instance='IRIS:1972';Namespace='TAC';Details='#5272'}
+    [Console]::Out.WriteLine((@{Event='progress';Phase='Softwarepaket-Kompilierungsfehler';Message=$item;ProgressPercent=$null} | ConvertTo-Json -Compress))
+}
+[Console]::Out.WriteLine((@{Event='result';Success=$false;Changed=$true;Error='compiler errors';SoftwareCompilationResults=@(@{Instance='IRIS:1972';Namespace='TAC';CompilationErrors=$failures})} | ConvertTo-Json -Depth 6 -Compress))
+'@)
+    $compileOutcome=InvokeSoftwareDatabaseChildOperation $null $child @{Action='compile-software-packages'}
+    Assert (-not $compileOutcome.Success -and $compileOutcome.Changed) 'unattended x86 relay completes with closed stdin and retains the partial-failure result'
+    $failedNames=@($compileOutcome.SoftwareCompilationResults[0].CompilationErrors | ForEach-Object { $_.Item })
+    Assert (($failedNames -join ',') -ceq 'Fixture.First,Fixture.Second') 'the final relay outcome preserves every compiler error without confirmation input'
+    Assert ($null -eq (Get-Variable NovaTouchDatabaseRelay -Scope Global -ErrorAction SilentlyContinue)) 'unattended compilation cleans up the native process relay'
+
     # Orchestrate against an isolated fake target filesystem; no WinRM or DB calls.
     $script:copies=[Collections.Generic.List[string]]::new(); $script:children=[Collections.Generic.List[object]]::new()
     $script:plan=$plan; $script:remoteInventory=@($inventory[0])
