@@ -13,4 +13,4 @@
 # Weitere Dateien müssen für einen Versionswechsel nicht geändert werden.
 #
 # Aktuelle Basisversion (nur diese Zeile ändern; kein x und kein v eintragen):
-1.2
+1.3
