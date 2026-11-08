@@ -62,7 +62,7 @@ internal static partial class Program
             worker.Requests.Single(request => request.Action == "compile-software-packages").DatabaseTargets.Single().Namespaces.SequenceEqual(["PROG-DEV"]),
             "only the selected namespace is sent to the compiler and unselected servers are omitted");
         selectOne = false;
-        SoftwareCompilationTargetSelectionTests();
+        DatabaseTargetSelectionTests(servicePacks: false);
         worker.Requests.Clear(); worker.OnCompile = () => Field<CancellationTokenSource>(form, "cancellation").Cancel();
         await (Task)Call(form, "CompileSoftwarePackagesAsync")!;
         Assert(worker.Requests.Count(request => request.Action == "compile-software-packages") == 1,
@@ -91,7 +91,7 @@ internal static partial class Program
             "the real process finishes with closed stdin and retains every compiler error without an OK round trip");
     }
 
-    private static void SoftwareCompilationTargetSelectionTests()
+    private static void DatabaseTargetSelectionTests(bool servicePacks)
     {
         ServicePackHostPlan[] plans = [
             new(new HostState { Host = "SERVER-A" }, [
@@ -99,21 +99,25 @@ internal static partial class Program
                 new() { Instance = "IRIS02", Port = 56772, Directory = "C:\\IRIS02", Namespaces = ["USER"] }]),
             new(new HostState { Host = "SERVER-B" }, [new() { Instance = "IRIS01", Port = 1972, Namespaces = ["USER"] }]),
             new(new HostState { Host = "SERVER-EMPTY" }, [])];
-        using var dialog = new SoftwareCompilationTargetsDialog(plans);
+        using var dialog = servicePacks ? DatabaseTargetsDialog.ForServicePacks(plans, 2) : DatabaseTargetsDialog.ForSoftwareCompilation(plans);
         dialog.Show(); Application.DoEvents();
         var tree = All(dialog).OfType<TreeView>().Single();
-        var compile = All(dialog).OfType<Button>().Single(button => button.Name == "compileSelectedNamespaces");
+        var apply = All(dialog).OfType<Button>().Single(button => button.Name == "applySelectedNamespaces");
+        Assert(dialog.Text.StartsWith(servicePacks ? "Servicepacks einspielen" : "Softwarepakete kompilieren") &&
+            apply.Text == (servicePacks ? "Einspielen" : "Kompilieren") && apply.DialogResult == DialogResult.OK &&
+            (!servicePacks || All(dialog).OfType<Label>().Any(label => label.Text.Contains("2 XML-Servicepack(s)") && label.Text.Contains("fck"))),
+            "the shared namespace picker describes and confirms the requested operation");
         Assert(tree.CheckBoxes && tree.Nodes.Count == 3 && tree.Nodes[0].Nodes.Count == 2 &&
             tree.Nodes[0].Nodes[0].Nodes.Count == 3 && tree.Nodes[0].Nodes[0].Nodes.ContainsKey("PROG-DEV"),
             "the picker groups servers, instances and checked namespaces like Check Database, excluding percent namespaces");
         tree.Nodes[2].Checked = true;
         Assert(!tree.Nodes[2].Checked && tree.Nodes[2].Text.Contains("keine berücksichtigten Namespaces"),
-            "servers without applicable namespaces are shown and cannot be selected for compilation");
+            "servers without applicable namespaces are shown and cannot be selected for processing");
         foreach (TreeNode root in tree.Nodes) root.Checked = false;
-        Assert(dialog.GetSelectedPlans().Length == 0 && !compile.Enabled, "an empty namespace selection disables compilation");
+        Assert(dialog.GetSelectedPlans().Length == 0 && !apply.Enabled, "an empty namespace selection disables processing");
         tree.Nodes[0].Nodes[1].Nodes["USER"]!.Checked = true;
         ServicePackHostPlan[] selected = dialog.GetSelectedPlans();
-        Assert(compile.Enabled && selected.Length == 1 && selected[0].Host.Host == "SERVER-A" &&
+        Assert(apply.Enabled && selected.Length == 1 && selected[0].Host.Host == "SERVER-A" &&
             selected[0].Targets.Single().Instance == "IRIS02" && selected[0].Targets[0].Port == 56772 &&
             selected[0].Targets[0].Namespaces.SequenceEqual(["USER"]),
             "selecting USER on one instance cannot select the same namespace on another instance or server");
@@ -128,7 +132,7 @@ internal static partial class Program
         tree.SelectedNode = tree.Nodes[0].Nodes[0].Nodes["PROG-DEV"];
         using var bitmap = new Bitmap(dialog.Width, dialog.Height);
         dialog.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
-        bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "compilation-targets-dialog.png"));
+        bitmap.Save(Path.Combine(TestWorkspace.Artifacts, servicePacks ? "servicepack-targets-dialog.png" : "compilation-targets-dialog.png"));
         dialog.Hide();
     }
 

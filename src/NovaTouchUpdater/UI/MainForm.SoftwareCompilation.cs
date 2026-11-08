@@ -30,7 +30,7 @@ public sealed partial class MainForm
             if (selectSoftwareCompilationTargets is { } select) selection = select(plans);
             else
             {
-                using var dialog = new SoftwareCompilationTargetsDialog(plans);
+                using var dialog = DatabaseTargetsDialog.ForSoftwareCompilation(plans);
                 selection = dialog.ShowDialog(this) == DialogResult.OK ? dialog.GetSelectedPlans() : null;
             }
             if (selection is null || selection.Length == 0) return;

@@ -1,20 +1,36 @@
 namespace NovaTouchUpdater;
 
-internal sealed class SoftwareCompilationTargetsDialog : Form
+internal sealed class DatabaseTargetsDialog : Form
 {
     private sealed record NamespaceChoice(int ServerIndex, int InstanceIndex, string Namespace);
     private readonly ServicePackHostPlan[] plans;
-    private readonly TreeView instances = new() { Name = "compilationTargets", Dock = DockStyle.Fill, CheckBoxes = true, HideSelection = false, MinimumSize = new Size(0, 180) };
-    private readonly Label status = new() { Name = "compilationTargetCount", AutoSize = true, Dock = DockStyle.Fill };
-    private readonly TextBox details = new() { Name = "compilationTargetDetails", Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, MinimumSize = new Size(0, 100) };
-    private readonly Button compile = new ModernButton { Name = "compileSelectedNamespaces", Text = "Kompilieren", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.OK, Role = ButtonRole.Primary };
+    private readonly TreeView instances = new() { Name = "databaseTargets", Dock = DockStyle.Fill, CheckBoxes = true, HideSelection = false, MinimumSize = new Size(0, 180) };
+    private readonly Label status = new() { Name = "selectedTargetCount", AutoSize = true, Dock = DockStyle.Fill };
+    private readonly TextBox details = new() { Name = "targetDetails", Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, MinimumSize = new Size(0, 100) };
+    private readonly Button apply = new ModernButton { Name = "applySelectedNamespaces", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.OK, Role = ButtonRole.Primary };
     private bool changingChecks;
 
-    internal SoftwareCompilationTargetsDialog(ServicePackHostPlan[] plans)
+    internal static DatabaseTargetsDialog ForSoftwareCompilation(ServicePackHostPlan[] plans) => new(plans,
+        "Softwarepakete kompilieren – Namespaces auswählen", "Kompilieren",
+        "Namespaces für die Kompilierung auswählen. Ein Häkchen am Server oder an der Instanz wählt die zugehörigen Namespaces.\n" +
+        "Quelle: installierte NovaTouch Control. Vorab: Aprima, Systemparameter, Novacom-System und BLS.\n" +
+        "Danach: Daten → BOH → POS → POS-API → QRY. Auch aktuelle Klassenpakete werden erneut kompiliert.\n" +
+        "Globale Stammdaten werden wie beim NTC versionsabhängig oder einmalig eingespielt. BLS wird nur eingespielt.\n" +
+        "Namespaces mit Präfix % werden ausgeblendet. Fehler werden zum Abschluss aufgelistet.");
+
+    internal static DatabaseTargetsDialog ForServicePacks(ServicePackHostPlan[] plans, int fileCount) => new(plans,
+        "Servicepacks einspielen – Namespaces auswählen", "Einspielen",
+        $"{fileCount} XML-Servicepack(s) in die ausgewählten Namespaces einspielen.\n" +
+        "Ein Häkchen am Server oder an der Instanz wählt die zugehörigen Namespaces.\n" +
+        "Klassen und Routinen werden mit fck kompiliert; Globals werden importiert.\n" +
+        "Namespaces mit Präfix % werden ausgeblendet. Bei Import-/Compilerfehlern können Teilimporte vorhanden sein.");
+
+    private DatabaseTargetsDialog(ServicePackHostPlan[] plans, string title, string actionText, string instructions)
     {
         this.plans = plans;
         SuspendLayout();
-        Text = "Softwarepakete kompilieren – Namespaces auswählen";
+        Text = title;
+        apply.Text = actionText;
         Font = UiTheme.BodyFont(); ClientSize = new Size(900, 680); MinimumSize = new Size(620, 480);
         StartPosition = FormStartPosition.CenterParent; ShowInTaskbar = MinimizeBox = false;
         var layout = new TableLayoutPanel { ColumnCount = 1, RowCount = 5, Padding = new Padding(16) };
@@ -25,17 +41,13 @@ internal sealed class SoftwareCompilationTargetsDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 30));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.Controls.Add(new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 0, 3, 10),
-            Text = "Namespaces für die Kompilierung auswählen. Ein Häkchen am Server oder an der Instanz wählt die zugehörigen Namespaces.\n" +
-                "Quelle: installierte NovaTouch Control. Vorab: Aprima, Systemparameter, Novacom-System und BLS.\n" +
-                "Danach: Daten → BOH → POS → POS-API → QRY. Auch aktuelle Klassenpakete werden erneut kompiliert.\n" +
-                "Globale Stammdaten werden wie beim NTC versionsabhängig oder einmalig eingespielt. BLS wird nur eingespielt.\n" +
-                "Namespaces mit Präfix % werden ausgeblendet. Fehler werden zum Abschluss aufgelistet." }, 0, 0);
+            Text = instructions }, 0, 0);
         layout.Controls.Add(status, 0, 1); layout.Controls.Add(instances, 0, 2); layout.Controls.Add(details, 0, 3);
         var cancel = new ModernButton { Text = "Abbrechen", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.Cancel };
         var buttons = new WrappingFlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
-        buttons.Controls.Add(compile); buttons.Controls.Add(cancel); layout.Controls.Add(buttons, 0, 4);
+        buttons.Controls.Add(apply); buttons.Controls.Add(cancel); layout.Controls.Add(buttons, 0, 4);
         Controls.Add(WindowLayout.CreateScrollArea(layout, instances, details));
-        CancelButton = cancel; AcceptButton = compile;
+        CancelButton = cancel; AcceptButton = apply;
         for (int serverIndex = 0; serverIndex < plans.Length; serverIndex++)
         {
             ServicePackHostPlan plan = plans[serverIndex];
@@ -94,7 +106,7 @@ internal sealed class SoftwareCompilationTargetsDialog : Form
         TreeNode[] leaves = instances.Nodes.Cast<TreeNode>().SelectMany(Descendants).Where(node => node.Tag is NamespaceChoice).ToArray();
         int selected = leaves.Count(node => node.Checked);
         status.Text = $"{selected} von {leaves.Length} Namespace(s) ausgewählt.";
-        compile.Enabled = selected > 0;
+        apply.Enabled = selected > 0;
     }
 
     internal ServicePackHostPlan[] GetSelectedPlans()

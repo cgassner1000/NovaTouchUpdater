@@ -165,24 +165,32 @@ internal static partial class Program
         Field<ComboBox>(form, "executionMode").SelectedIndex = 1;
         Field<TextBox>(form, "txtRemotePath").Text = @"D:\Servicepacks Ziel";
         SetField(form, "readIrisInventory", new Func<CancellationToken, Task<IrisInventoryResult>>(_ => Task.FromResult(
-            new IrisInventoryResult([new("LOCAL", "C:\\IRIS", "", "", ["USER", "%SYS", "APP"], SuperServerPort: 1972)], []))));
+            new IrisInventoryResult([new("LOCAL", "C:\\IRIS", "", "", ["USER", "%SYS", "APP", "PROG-DEV"], SuperServerPort: 1972)], []))));
         SetField(form, "showBetaActivated", new Action(() => { }));
         var gate = Field<BetaFeatureGate>(form, "betaFeatures");
         var logo = All(form).OfType<AppMark>().Single();
         string? warning = null;
         SetField(form, "showServicePackWarning", new Action<string>(text => warning = text));
-        bool confirm = false;
-        SetField(form, "confirmServicePackImport", new Func<ServicePackHostPlan[], int, bool>((plans, files) =>
+        bool confirm = false, emptySelection = false;
+        int? selectedPlan = null;
+        SetField(form, "selectServicePackTargets", new Func<ServicePackHostPlan[], int, ServicePackHostPlan[]?>((plans, files) =>
         {
-            Assert(files == 2 && plans.SelectMany(plan => plan.Targets).All(target => target.Namespaces.All(ns => !ns.StartsWith('%'))),
-                "confirmation is prepared for the selected hosts and excludes all percent namespaces");
-            return confirm;
+            Assert(files == 2 && plans.Length == 4 && plans[0].Targets[0].Namespaces.Contains("PROG-DEV") &&
+                plans.SelectMany(plan => plan.Targets).All(target => target.Namespaces.All(ns => !ns.StartsWith('%'))),
+                "namespace selection is prepared for all selected hosts, including PROG namespaces and excluding percent namespaces");
+            if (!confirm) return null;
+            if (emptySelection) return [];
+            if (selectedPlan is not { } index) return plans;
+            IrisUploadTarget target = plans[index].Targets.Last();
+            return [new(plans[index].Host, [new() { Instance = target.Instance, Directory = target.Directory, Port = target.Port,
+                Namespaces = ["USER"], User = target.User, Password = target.Password, Ssl = target.Ssl }])];
         }));
         await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
         Assert(worker.Requests.Count == 0, "hidden beta servicepacks cannot be invoked before activation");
         for (int click = 0; click < 5; click++) gate.RegisterClick(logo, true);
         await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
-        Assert(worker.Requests.All(request => request.Action == "database-inventory"), "declining confirmation imports no code");
+        Assert(worker.Requests.All(request => request.Action == "database-inventory") && !Field<bool>(form, "loadingPackages"),
+            "cancelling namespace selection imports no code and restores the UI");
         worker.Requests.Clear(); confirm = true;
         await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
         Assert(warning is null && worker.Requests.Count(request => request.Action == "import-servicepacks") == 4 &&
@@ -199,6 +207,25 @@ internal static partial class Program
                 request.ServicePackFiles.All(file => !new[] { classes, routines }.Contains(file.Path))),
             "only remote hosts receive snapshots; local requests load the original selection directly");
         Assert(File.ReadAllBytes(classes).SequenceEqual(original), "UI imports leave source files unchanged");
+        worker.Requests.Clear(); selectedPlan = 1;
+        await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
+        WorkerRequest remoteImport = worker.Requests.Single(request => request.Action == "import-servicepacks");
+        Assert(!remoteImport.LocalExecution && remoteImport.Host == Targets(form)[1].Host &&
+            remoteImport.DatabaseTargets is [var remoteTarget] && remoteTarget.Instance == "REMOTE2" && remoteTarget.Port == 56772 &&
+            remoteTarget.Namespaces.SequenceEqual(["USER"]),
+            "servicepacks reach only the selected remote server, instance and namespace, even when other instances have USER");
+        worker.Requests.Clear(); selectedPlan = 0;
+        await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
+        WorkerRequest localImport = worker.Requests.Single(request => request.Action == "import-servicepacks");
+        Assert(localImport.LocalExecution && localImport.DatabaseTargets.Single().Namespaces.SequenceEqual(["USER"]) &&
+            localImport.ServicePackFiles.Select(file => file.Path).SequenceEqual([classes, routines]),
+            "a local namespace selection preserves original XML paths and excludes every unselected host and namespace");
+        worker.Requests.Clear(); selectedPlan = null; emptySelection = true;
+        await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
+        Assert(worker.Requests.All(request => request.Action == "database-inventory") && !Field<bool>(form, "busy") &&
+            !Field<bool>(form, "loadingPackages"), "an empty namespace selection starts no import");
+        emptySelection = false;
+        DatabaseTargetSelectionTests(servicePacks: true);
         worker.Requests.Clear();
         worker.OnImport = () => Field<CancellationTokenSource>(form, "cancellation").Cancel();
         await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
@@ -219,7 +246,8 @@ internal static partial class Program
         {
             Requests.Add(request);
             if (request.Action == "database-inventory") return Task.FromResult(new WorkerResult { Success = true,
-                IrisInstances = [new() { Name = "REMOTE", Directory = "C:\\IRIS", SuperServerPort = 1972, Namespaces = ["USER", "%SYS", "APP"] }] });
+                IrisInstances = [new() { Name = "REMOTE", Directory = "C:\\IRIS", SuperServerPort = 1972, Namespaces = ["USER", "%SYS", "APP"] },
+                    new() { Name = "REMOTE2", Directory = "C:\\IRIS2", SuperServerPort = 56772, Namespaces = ["USER", "%SYS", "APP"] }] });
             Assert(request.Action == "import-servicepacks" && !ct.CanBeCanceled && request.ServicePackFiles.All(file => File.Exists(file.Path)),
                 "an accepted host uses existing XML paths and finishes without forced cancellation");
             OnImport?.Invoke();

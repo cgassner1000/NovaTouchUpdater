@@ -4,7 +4,7 @@ internal sealed record ServicePackHostPlan(HostState Host, IrisUploadTarget[] Ta
 
 public sealed partial class MainForm
 {
-    private Func<ServicePackHostPlan[], int, bool>? confirmServicePackImport = null;
+    private Func<ServicePackHostPlan[], int, ServicePackHostPlan[]?>? selectServicePackTargets = null;
     private Action<string>? showServicePackWarning = null;
 
     internal static OpenFileDialog CreateServicePackFileDialog() => new()
@@ -66,12 +66,17 @@ public sealed partial class MainForm
             }
             int namespaces = plans.Sum(plan => plan.Targets.Sum(target => target.Namespaces.Length));
             if (namespaces == 0) throw new InvalidDataException("Keine IRIS-Namespaces ohne %-Präfix auf den ausgewählten Hosts gefunden. Check Database prüfen.");
-            bool confirmed = confirmServicePackImport?.Invoke(plans, selection.Files.Length) ??
-                MessageBox.Show(this, $"{selection.Files.Length} ServicePack(s) auf {plans.Count(plan => plan.Targets.Length > 0)} Host(s) in {namespaces} Namespace(s) importieren?\n\n",
-                    "Servicepacks einspielen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
-            if (!confirmed) return;
+            ServicePackHostPlan[]? chosen;
+            if (selectServicePackTargets is { } select) chosen = select(plans, selection.Files.Length);
+            else
+            {
+                using var dialog = DatabaseTargetsDialog.ForServicePacks(plans, selection.Files.Length);
+                chosen = dialog.ShowDialog(this) == DialogResult.OK ? dialog.GetSelectedPlans() : null;
+            }
+            if (chosen is null || chosen.Length == 0) return;
+            plans = chosen;
             CaptureCredentials();
-            await InBatchAsync(selected, async ct =>
+            await InBatchAsync(plans.Select(plan => plan.Host).ToArray(), async ct =>
             {
                 foreach (ServicePackHostPlan plan in plans)
                 {
