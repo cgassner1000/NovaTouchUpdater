@@ -79,8 +79,10 @@ internal static partial class Program
         SetField(form, "isProcessElevated", new Func<bool>(() => true));
         Assert((bool)Call(form, "EnsureLocalInstallationAccess", new[] { local }, false)!, "already elevated local installation proceeds");
         var startup=Field<CheckBox>(form, "chkScanOnStartup");
-        Assert(startup.Text == "Version beim Programmstart prüfen" && ((TableLayoutPanel)startup.Parent!).GetRow(startup) == 1 &&
-            startup.Parent.Controls["allgemeinSettingsDivider"] is not null,
+        var settings=(TableLayoutPanel)startup.Parent!;
+        var generalDivider=settings.Controls["allgemeinSettingsDivider"];
+        Assert(startup.Text == "Version beim Programmstart prüfen" && generalDivider is not null &&
+            settings.GetRow(startup) == settings.GetRow(generalDivider) + 1,
             "startup version switch is the first option below the general settings divider");
         Assert(Field<CheckBox>(form, "chkIrisTls").Text == "IRIS-Verbindung mit TLS", "TLS option uses its regular caption behind beta activation");
     }

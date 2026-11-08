@@ -29,8 +29,14 @@ public sealed partial class MainForm : Form
     private bool selfUpdating;
     private bool checkingRelease;
     private bool startupConfigLoaded;
+    private Task applicationStartupTask = Task.CompletedTask;
+    private Task hostScanTask = Task.CompletedTask;
+    private bool startupPackageSearch;
+    private CancellationTokenSource? hostScanCancellation;
+    private CancellationTokenSource? selfUpdateCancellation;
+    private Func<AppRelease, bool>? confirmApplicationUpdate = null;
     private AppRelease? availableRelease;
-    private readonly HttpClient releaseHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly HttpClient releaseHttp;
     private readonly HttpClient feedbackHttp = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
     private readonly CancellationTokenSource appLifetime = new();
     private readonly System.Windows.Forms.Timer releaseTimer = new() { Interval = 30 * 60 * 1000 };
@@ -118,8 +124,9 @@ public sealed partial class MainForm : Form
 
     // Off-screen design previews use synthetic rows and never load the user's
     // config, start monitoring, check releases or write an application log.
-    internal MainForm(bool preview, IWorkerRunner? worker = null, IWorkerRunner? monitoringWorker = null)
+    internal MainForm(bool preview, IWorkerRunner? worker = null, IWorkerRunner? monitoringWorker = null, HttpClient? appReleaseHttp = null)
     {
+        releaseHttp = appReleaseHttp ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         runner = worker ?? new WorkerRunner();
         connectionRunner = monitoringWorker ?? new WorkerRunner("NovaTouchUpdater.ConnectionWorker.ps1");
         prepareDatabaseTargets = async ct => activeDatabaseTargets ??= IrisUploadPlan.Create(await readIrisInventory(ct), activeIrisUseTls);
@@ -164,11 +171,7 @@ public sealed partial class MainForm : Form
         {
             ApplyColumnWidths();
             if (preview) return;
-            if (!string.IsNullOrWhiteSpace(softwarePath.Text)) await LoadSoftwarePackagesAsync();
-            connectionTimer.Start();
-            releaseTimer.Start();
-            _ = CheckAppReleaseAsync();
-            await RunStartupChecksAsync();
+            await RunApplicationStartupAsync();
         };
         UpdateButtons();
         FormClosing += (_, e) =>
@@ -252,6 +255,30 @@ public sealed partial class MainForm : Form
         executionMode.SelectedIndex = Enum.TryParse<UpdateExecutionMode>(config.ExecutionMode, out var mode) ? (int)mode : (int)UpdateExecutionMode.Remote;
         UpdateExecutionSelection();
         startupConfigLoaded = true;
+    }
+
+    private Task RunApplicationStartupAsync()
+    {
+        if (!applicationStartupTask.IsCompleted) return applicationStartupTask;
+        return applicationStartupTask = RunApplicationStartupCoreAsync();
+    }
+
+    private async Task RunApplicationStartupCoreAsync()
+    {
+        if (connectionClosing || IsDisposed || selfUpdating) return;
+        // Begin the updater release request before potentially slow package or
+        // host discovery. Neither startup workflow waits for the other.
+        releaseTimer.Start();
+        _ = CheckAppReleaseAsync();
+        if (!string.IsNullOrWhiteSpace(softwarePath.Text))
+        {
+            startupPackageSearch = true;
+            try { await LoadSoftwarePackagesAsync(); }
+            finally { startupPackageSearch = false; if (!IsDisposed) UpdateButtons(); }
+        }
+        if (connectionClosing || IsDisposed || selfUpdating) return;
+        connectionTimer.Start();
+        await RunStartupChecksAsync();
     }
 
     private async Task RunStartupChecksAsync()
@@ -797,7 +824,7 @@ public sealed partial class MainForm : Form
         btnSendCommand.Click += async (_, _) => await SendCommandAsync();
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
         btnExport.Click += (_, _) => ExportHtml();
-        btnCancel.Click += (_, _) => { cancellation?.Cancel(); packageCancellation?.Cancel(); };
+        btnCancel.Click += (_, _) => { selfUpdateCancellation?.Cancel(); cancellation?.Cancel(); packageCancellation?.Cancel(); };
 
         main.Layout += (_, _) =>
         {
@@ -1405,7 +1432,13 @@ public sealed partial class MainForm : Form
         return true;
     }
 
-    private async Task RunScansAsync()
+    private Task RunScansAsync()
+    {
+        if (!hostScanTask.IsCompleted) return Task.CompletedTask;
+        return hostScanTask = RunScansCoreAsync();
+    }
+
+    private async Task RunScansCoreAsync()
     {
         HostState[] targets = SelectedHosts();
         if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
@@ -1427,42 +1460,48 @@ public sealed partial class MainForm : Form
         int parallelism = (int)nScan.Value;
         await InBatchAsync(targets, async ct =>
         {
-            // Each slot owns one host from connection through inventory. A slow
-            // connection must not hold up version reads on other connected hosts.
-            await ParallelPhaseAsync(targets, parallelism, async (host, token) =>
+            hostScanCancellation = cancellation;
+            UpdateButtons();
+            try
             {
-                Mark(host, h =>
+                // Each slot owns one host from connection through inventory. A slow
+                // connection must not hold up version reads on other connected hosts.
+                await ParallelPhaseAsync(targets, parallelism, async (host, token) =>
                 {
-                    h.Connection = "Prüfung läuft"; h.Phase = "Verbindung"; h.Result = "Offen"; h.Error = ""; h.Scanned = false;
-                    h.DotNet48Installed = null; h.PosVersion = h.NtcVersion = "–";
-                });
-                var result = await DoWorkerAsync(host, "probe", token);
-                Mark(host, h =>
-                {
-                    h.Connection = result.Success ? (h.IsLocal ? "Lokal" : "Verbunden") : "Nicht erreichbar";
-                    h.Phase = result.Success ? "Verbunden" : "Verbindungsfehler";
-                    h.Error = result.Success ? "" : FriendlyError(result);
-                    h.Result = result.Success ? "Offen" : "Fehler";
-                });
-                if (!result.Success)
-                {
+                    Mark(host, h =>
+                    {
+                        h.Connection = "Prüfung läuft"; h.Phase = "Verbindung"; h.Result = "Offen"; h.Error = ""; h.Scanned = false;
+                        h.DotNet48Installed = null; h.PosVersion = h.NtcVersion = "–";
+                    });
+                    var result = await DoWorkerAsync(host, "probe", token);
+                    Mark(host, h =>
+                    {
+                        h.Connection = result.Success ? (h.IsLocal ? "Lokal" : "Verbunden") : "Nicht erreichbar";
+                        h.Phase = result.Success ? "Verbunden" : "Verbindungsfehler";
+                        h.Error = result.Success ? "" : FriendlyError(result);
+                        h.Result = result.Success ? "Offen" : "Fehler";
+                    });
+                    if (!result.Success)
+                    {
+                        CountCompleted();
+                        return;
+                    }
+                    token.ThrowIfCancellationRequested();
+                    Mark(host, h => h.Phase = "Versionen werden gelesen");
+                    result = await DoWorkerAsync(host, "scan", token);
+                    Mark(host, h =>
+                    {
+                        h.Scanned = result.Success;
+                        ReadScanInventory(h, result);
+                        if (result.Success) { h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; h.PosBefore = h.PosVersion; h.NtcBefore = h.NtcVersion; }
+                        h.Phase = result.Success ? "Scan abgeschlossen" : "Scan fehlgeschlagen";
+                        h.Result = result.Success ? "Bereit" : "Fehler";
+                        h.Error = result.Success ? "" : FriendlyError(result);
+                    });
                     CountCompleted();
-                    return;
-                }
-                token.ThrowIfCancellationRequested();
-                Mark(host, h => h.Phase = "Versionen werden gelesen");
-                result = await DoWorkerAsync(host, "scan", token);
-                Mark(host, h =>
-                {
-                    h.Scanned = result.Success;
-                    ReadScanInventory(h, result);
-                    if (result.Success) { h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; h.PosBefore = h.PosVersion; h.NtcBefore = h.NtcVersion; }
-                    h.Phase = result.Success ? "Scan abgeschlossen" : "Scan fehlgeschlagen";
-                    h.Result = result.Success ? "Bereit" : "Fehler";
-                    h.Error = result.Success ? "" : FriendlyError(result);
-                });
-                CountCompleted();
-            }, ct);
+                }, ct);
+            }
+            finally { hostScanCancellation = null; if (!IsDisposed) UpdateButtons(); }
         });
     }
 
@@ -1685,7 +1724,7 @@ public sealed partial class MainForm : Form
 
     private async Task RefreshConnectionsAsync()
     {
-        if (connectionClosing || IsDisposed || connectionScanPaused || connectionCheckRunning || hosts.Count == 0) return;
+        if (connectionClosing || IsDisposed || selfUpdating || connectionScanPaused || connectionCheckRunning || hosts.Count == 0) return;
         // Do not repeatedly authenticate while credentials are being edited.
         if (txtUser.Focused || txtPassword.Focused || nHttpsPort.ContainsFocus || (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)) return;
 
@@ -2018,29 +2057,47 @@ public sealed partial class MainForm : Form
         finally { checkingRelease = false; }
     }
 
+    private bool CanUpdateApplication => !selfUpdating && !connectionClosing && !preparingDatabaseUpload && !restartingAsAdministrator &&
+        (!busy || hostScanCancellation is not null && ReferenceEquals(hostScanCancellation, cancellation)) &&
+        (!loadingPackages || startupPackageSearch);
+
+    private async Task StopDiscoveryForSelfUpdateAsync(CancellationToken ct)
+    {
+        connectionTimer.Stop();
+        InvalidateConnectionChecks();
+        hostScanCancellation?.Cancel();
+        if (startupPackageSearch) packageCancellation?.Cancel();
+        await Task.WhenAll(applicationStartupTask, hostScanTask).WaitAsync(ct);
+    }
+
     private async Task UpdateApplicationAsync()
     {
-        if (busy || selfUpdating || availableRelease is not { } release) return;
-        if (MessageBox.Show(this,
+        if (!CanUpdateApplication || availableRelease is not { } release) return;
+        bool confirmed = confirmApplicationUpdate?.Invoke(release) ?? MessageBox.Show(this,
             $"NovaTouch Updater {AppReleaseClient.DisplayVersion(release.Version)} ist verfügbar.\n" +
             $"Aktuelle Version: {AppReleaseClient.DisplayVersion(AppReleaseClient.CurrentVersion)}\n\n" +
             "Soll die neue Version von NovaTouchUpdater heruntergeladen und installiert werden?",
-            "Neue Version verfügbar", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            "Neue Version verfügbar", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+        if (!confirmed || !CanUpdateApplication) return;
 
         selfUpdating = true;
-        cancellation = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
+        using var updateCancellation = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
+        selfUpdateCancellation = updateCancellation;
         UpdateButtons();
         try
         {
+            updateNotice.Text = busy || loadingPackages ? "Prüfung wird beendet …" : "Download wird vorbereitet …";
+            await StopDiscoveryForSelfUpdateAsync(updateCancellation.Token);
+            updateCancellation.Token.ThrowIfCancellationRequested();
             using var update = new AppSelfUpdate();
             var downloadProgress = new Progress<int>(percent =>
             {
                 if (!IsDisposed && selfUpdating) updateNotice.Text = $"Download: {percent} %";
             });
-            await new AppReleaseClient(releaseHttp).DownloadAsync(release, update.DownloadPath, downloadProgress, cancellation.Token);
+            await new AppReleaseClient(releaseHttp).DownloadAsync(release, update.DownloadPath, downloadProgress, updateCancellation.Token);
             updateNotice.Text = "Neustart wird vorbereitet …";
-            await update.StartHelperAsync(release, cancellation.Token);
-            cancellation.Token.ThrowIfCancellationRequested();
+            await update.StartHelperAsync(release, updateCancellation.Token);
+            updateCancellation.Token.ThrowIfCancellationRequested();
             Log("SYSTEM", $"Updater-Version {AppReleaseClient.DisplayVersion(release.Version)} geprüft; EXE-Austausch nach Programmende.");
             selfUpdating = false;
             Close();
@@ -2055,10 +2112,15 @@ public sealed partial class MainForm : Form
         }
         finally
         {
-            cancellation.Dispose();
-            cancellation = null;
+            selfUpdateCancellation = null;
             selfUpdating = false;
-            if (!IsDisposed) { updateNotice.Text = "Neue Version verfügbar"; UpdateButtons(); }
+            if (!IsDisposed)
+            {
+                updateNotice.Text = "Neue Version verfügbar";
+                connectionTimer.Start();
+                _ = RefreshConnectionsAsync();
+                UpdateButtons();
+            }
         }
     }
 
@@ -2089,7 +2151,7 @@ public sealed partial class MainForm : Form
         HostState[] selected = SelectedHosts();
         btnAdministrator.Visible = !isProcessElevated();
         btnAdministrator.Enabled = idle;
-        updateNotice.Enabled = idle;
+        updateNotice.Enabled = CanUpdateApplication;
         btnImport.Enabled = btnEditHosts.Enabled = idle && Mode != UpdateExecutionMode.Local; btnSaveConfig.Enabled = idle;
         btnPayment.Enabled = idle; btnFiscal.Enabled = idle; btnServerSuite.Enabled = idle;
         btnSelectAll.Enabled = btnClearSelection.Enabled = idle && hosts.Count > 0;
