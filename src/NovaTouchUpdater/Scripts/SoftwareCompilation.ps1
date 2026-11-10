@@ -170,10 +170,6 @@ function InvokeSoftwareCompilationMethod([type]$Type, [string]$Name, [object[]]$
 
 function CompleteSoftwareCompilationStatus($Runtime, $Connection, $Resource, [string]$Item, $Status, [string]$Destination, [bool]$Classes,
     [Collections.Generic.List[object]]$Failures, [string[]]$Secrets) {
-    if ([int]$Status.Code -eq 5380) {
-        $flags='frvk/display=none/checkuptodate=expandedonly'
-        $Status=InvokeSoftwareCompilationMethod $Runtime.Proxy 'OBJCompileList' @($Connection,$Item,$flags,'')
-    }
     if (-not $Status.IsOK) {
         $details=GetSoftwareDatabaseError ([pscustomobject]@{Exception=[Exception]::new([string]$Status.Message)}) $Secrets
         $failedItems=@()
@@ -197,9 +193,48 @@ function CompleteSoftwareCompilationStatus($Runtime, $Connection, $Resource, [st
     }
 }
 
+function CompileSoftwareCompilationBatch($Context, [string[]]$Items, [int]$Offset, [string]$Flags) {
+    Progress 'Softwarepaket kompilieren' ("$($Context.Destination) · $($Context.Kind) $($Offset+1) von $($Context.Count) · $($Context.Resource.Name)") ([int][Math]::Floor(100.0*($Context.CompletedItems+$Offset)/$Context.TotalItems))
+    $Context.Calls++
+    $status=InvokeSoftwareCompilationMethod $Context.Runtime.Proxy 'OBJCompileList' @($Context.Connection,([string]::Join(',', $Items)),$Flags,'')
+    if ([int]$status.Code -eq 5380 -and $Flags -ne 'frvk/display=none/checkuptodate=expandedonly') {
+        # Retry the entire deployed list before diagnosing individual entries.
+        $Flags='frvk/display=none/checkuptodate=expandedonly'
+        $Context.Calls++; $Context.DeployedRetries++
+        $status=InvokeSoftwareCompilationMethod $Context.Runtime.Proxy 'OBJCompileList' @($Context.Connection,([string]::Join(',', $Items)),$Flags,'')
+    }
+    if (-not $status.IsOK) {
+        if ($Items.Count -eq 1) {
+            CompleteSoftwareCompilationStatus $Context.Runtime $Context.Connection $Context.Resource $Items[0] $status $Context.Destination $Context.Classes $Context.Failures $Context.Secrets
+        } else {
+            # A failed descendant may not occur in the explicit list. Keep its
+            # error even if compiling the parent again happens to succeed.
+            if ([int]$status.Code -ne 5380 -and [string]$status.Message -match '(?i)(compiling\s+(class|routine)|Kompilieren\s+(?:(?:der|von)\s+)?(Klasse|Routine))') {
+                CompleteSoftwareCompilationStatus $Context.Runtime $Context.Connection $Context.Resource $Items[0] $status $Context.Destination $Context.Classes $Context.Failures $Context.Secrets
+            }
+            $Context.Splits++
+            Progress 'Softwarepaket-Warnung' ("$($Context.Destination) · Fehlerhafte Einträge eingrenzen · $($Context.Resource.Name)")
+            # Small failed groups go straight to individual diagnosis, avoiding
+            # a full binary tree when many entries have the same compiler error.
+            if ($Items.Count -le 16) {
+                for ($index=0; $index -lt $Items.Count; $index++) {
+                    CompileSoftwareCompilationBatch $Context @($Items[$index]) ($Offset+$index) $Flags
+                }
+                return
+            }
+            # Only failed halves are split again; successful halves stay batched.
+            $middle=[int][Math]::Floor($Items.Count/2.0)
+            CompileSoftwareCompilationBatch $Context $Items[0..($middle-1)] $Offset $Flags
+            CompileSoftwareCompilationBatch $Context $Items[$middle..($Items.Count-1)] ($Offset+$middle) $Flags
+            return
+        }
+    }
+    Progress 'Softwarepaket kompilieren' ("$($Context.Destination) · $($Context.Kind) $($Offset+$Items.Count) von $($Context.Count) · $($Context.Resource.Name)") ([int][Math]::Floor(100.0*($Context.CompletedItems+$Offset+$Items.Count)/$Context.TotalItems))
+}
+
 function CompileSoftwareCompilationItems($Runtime, $Connection, $Resource, [string[]]$Items, [string]$Destination, [bool]$Classes,
     [Collections.Generic.List[object]]$Failures, [string[]]$Secrets, [int]$CompletedItems=0, [int]$TotalItems=0) {
-    if ($Items.Count -eq 0) { return }
+    if ($Items.Count -eq 0) { return [pscustomobject]@{Calls=0;Splits=0;DeployedRetries=0} }
     # The installed Aprima proxy forwards a comma-separated list to CompileList.
     # Bound both the protocol size and the work between visible progress updates.
     $groups=[Collections.Generic.List[object]]::new()
@@ -207,42 +242,22 @@ function CompileSoftwareCompilationItems($Runtime, $Connection, $Resource, [stri
     foreach ($item in $Items) {
         $size=[Text.Encoding]::UTF8.GetByteCount($item)+1
         if ($size -gt 24000) { throw 'Klassen-/Routinenname überschreitet die maximale Compilerlistenlänge.' }
-        if ($group.Count -gt 0 -and ($group.Count -ge 50 -or $bytes+$size -gt 24000)) { $groups.Add($group.ToArray()); $group.Clear(); $bytes=0 }
+        if ($group.Count -gt 0 -and ($group.Count -ge 500 -or $bytes+$size -gt 24000)) { $groups.Add($group.ToArray()); $group.Clear(); $bytes=0 }
         $group.Add($item); $bytes+=$size
     }
     if ($group.Count -gt 0) { $groups.Add($group.ToArray()) }
     # Explicit entries must be rebuilt by this manual action. Only already
     # current dependencies expanded by r/b may be skipped by the compiler.
     $flags='frvkb/display=none/checkuptodate=expandedonly'
-    $done=0; $kind=if ($Classes) { 'Klasse' } else { 'Routine' }
-    $TotalItems=[Math]::Max($TotalItems, $CompletedItems+$Items.Count)
+    $context=[pscustomobject]@{Runtime=$Runtime;Connection=$Connection;Resource=$Resource;Destination=$Destination;Classes=$Classes;
+        Kind=$(if ($Classes) { 'Klasse' } else { 'Routine' });Failures=$Failures;Secrets=$Secrets;Count=$Items.Count;
+        CompletedItems=$CompletedItems;TotalItems=[Math]::Max($TotalItems, $CompletedItems+$Items.Count);Calls=0;Splits=0;DeployedRetries=0}
+    $done=0
     foreach ($batch in $groups) {
-        Progress 'Softwarepaket kompilieren' ("$Destination · $kind $($done+1) von $($Items.Count) · $($Resource.Name)") ([int][Math]::Floor(100.0*($CompletedItems+$done)/$TotalItems))
-        $status=InvokeSoftwareCompilationMethod $Runtime.Proxy 'OBJCompileList' @($Connection,([string]::Join(',', [string[]]$batch)),$flags,'')
-        if (-not $status.IsOK) {
-            if ($batch.Count -eq 1) {
-                CompleteSoftwareCompilationStatus $Runtime $Connection $Resource $batch[0] $status $Destination $Classes $Failures $Secrets
-            } else {
-                # Diagnose individual entries and continue the remainder,
-                # retaining the 5380 retry. Do not skip explicit current classes.
-                # Retain named compiler errors before checking currency: the
-                # parent may already be current although its descendant failed.
-                if ([int]$status.Code -ne 5380 -and [string]$status.Message -match '(?i)(compiling\s+(class|routine)|Kompilieren\s+(?:(?:der|von)\s+)?(Klasse|Routine))') {
-                    CompleteSoftwareCompilationStatus $Runtime $Connection $Resource $batch[0] $status $Destination $Classes $Failures $Secrets
-                }
-                Progress 'Softwarepaket-Warnung' ("$Destination · Compilerliste fehlgeschlagen; betroffene Einträge einzeln prüfen. · $($Resource.Name)")
-                $checked=0
-                foreach ($item in $batch) {
-                    Progress 'Softwarepaket kompilieren' ("$Destination · $kind $($done+$checked+1) von $($Items.Count) · $($Resource.Name)") ([int][Math]::Floor(100.0*($CompletedItems+$done+$checked)/$TotalItems))
-                    $individual=InvokeSoftwareCompilationMethod $Runtime.Proxy 'OBJCompileList' @($Connection,$item,$flags,'')
-                    CompleteSoftwareCompilationStatus $Runtime $Connection $Resource $item $individual $Destination $Classes $Failures $Secrets
-                    $checked++
-                }
-            }
-        }
+        CompileSoftwareCompilationBatch $context $batch $done $flags
         $done+=$batch.Count
-        Progress 'Softwarepaket kompilieren' ("$Destination · $kind $done von $($Items.Count) · $($Resource.Name)") ([int][Math]::Floor(100.0*($CompletedItems+$done)/$TotalItems))
     }
+    return [pscustomobject]@{Calls=$context.Calls;Splits=$context.Splits;DeployedRetries=$context.DeployedRetries}
 }
 
 function OpenSoftwareCompilationVersion($Runtime, $Resource) {
@@ -334,14 +349,19 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
             $imported=$true
             AssertSoftwareDatabaseStatus (InvokeSoftwareCompilationMethod $Runtime.Proxy 'OBJLoad' $loadArguments) 'XML-Ressource importieren'
             $loadedAt=$elapsed.Elapsed.TotalSeconds
-            $items=@(([string]$loadArguments[4]).Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-            if ($items.Count -eq 0) { throw 'Der XML-Import hat keine Klassen oder Routinen zurückgemeldet.' }
+            $classes=[Collections.Generic.List[string]]::new(); $routines=[Collections.Generic.List[string]]::new(); $hasItems=$false
+            foreach ($entry in ([string]$loadArguments[4]).Split(',')) {
+                $item=$entry.Trim()
+                if (-not $item) { continue }
+                $hasItems=$true
+                if ($item.EndsWith('.cls',[StringComparison]::OrdinalIgnoreCase)) { $classes.Add($item) }
+                elseif ($item.EndsWith('.mac',[StringComparison]::OrdinalIgnoreCase) -or $item.EndsWith('.int',[StringComparison]::OrdinalIgnoreCase) -or $item.EndsWith('.bas',[StringComparison]::OrdinalIgnoreCase)) { $routines.Add($item) }
+            }
+            if (-not $hasItems) { throw 'Der XML-Import hat keine Klassen oder Routinen zurückgemeldet.' }
             # Classes before routines, using bounded compiler lists.
-            $classes=@($items | Where-Object { $_ -match '(?i)\.cls$' })
-            $routines=@($items | Where-Object { $_ -match '(?i)\.(mac|int|bas)$' })
             $totalItems=$classes.Count+$routines.Count
-            $null=CompileSoftwareCompilationItems $Runtime $Connection $Resource $classes $Destination $true $Failures $Secrets 0 $totalItems
-            $null=CompileSoftwareCompilationItems $Runtime $Connection $Resource $routines $Destination $false $Failures $Secrets $classes.Count $totalItems
+            $classStats=CompileSoftwareCompilationItems $Runtime $Connection $Resource $classes.ToArray() $Destination $true $Failures $Secrets 0 $totalItems
+            $routineStats=CompileSoftwareCompilationItems $Runtime $Connection $Resource $routines.ToArray() $Destination $false $Failures $Secrets $classes.Count $totalItems
             $null=InvokeSoftwareCompilationMethod $Runtime.Proxy 'SQLPurge' @($Connection)
         }
         $compiledAt=$elapsed.Elapsed.TotalSeconds
@@ -363,8 +383,9 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
                 $Destination,$Resource.Name,$transferredAt,($loadedAt-$transferredAt),$elapsed.Elapsed.TotalSeconds))
             Progress 'Softwarepaket importiert' ($Destination + ' · Stammdaten importiert · ' + $Resource.Name) 100
         } else {
-            Progress 'Softwarepaket-Zeiten' (('{0} · {1} · Bereitstellen {2:N2}s · Import {3:N2}s · Kompilieren {4:N2}s · Gesamt {5:N2}s' -f
-                $Destination,$Resource.Name,$transferredAt,($loadedAt-$transferredAt),($compiledAt-$loadedAt),$elapsed.Elapsed.TotalSeconds))
+            Progress 'Softwarepaket-Zeiten' (('{0} · {1} · Bereitstellen {2:N2}s · Import {3:N2}s · Kompilieren {4:N2}s · Gesamt {5:N2}s · Compileraufrufe {6} · Fehlerteilungen {7} · Deployed-Wiederholungen {8}' -f
+                $Destination,$Resource.Name,$transferredAt,($loadedAt-$transferredAt),($compiledAt-$loadedAt),$elapsed.Elapsed.TotalSeconds,
+                ($classStats.Calls+$routineStats.Calls),($classStats.Splits+$routineStats.Splits),($classStats.DeployedRetries+$routineStats.DeployedRetries)))
         }
         return [pscustomobject]@{ Imported=$true; Skipped=$false; CompilationErrors=@($Failures.ToArray() | Select-Object -Skip $failuresBefore) }
     } catch {

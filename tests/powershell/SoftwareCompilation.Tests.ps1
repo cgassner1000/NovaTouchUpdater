@@ -114,9 +114,10 @@ $result=CompileSoftwarePackages $targets
 Assert ($result.Success -and -not $result.Changed -and [CompilationFixture.State]::CompileCalls -eq 0 -and
     @($result.SoftwareCompilationResults | Where-Object { $_.SkippedResources -ne 5 }).Count -eq 0) 'an explicit rebuild still protects newer database resources from older XML imports'
 [CompilationFixture.State]::Reset(); [CompilationFixture.State]::Fallback=$true; $result=CompileSoftwarePackages $targets
-Assert ($result.Success -and @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:frvk/display=none*' }).Count -eq 50) 'deployed status 5380 retries with frvk, matching Aprima'
+Assert ($result.Success -and @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:frvk/display=none*' }).Count -eq 20 -and
+    [CompilationFixture.State]::CompileCalls -eq 40 -and [CompilationFixture.State]::CompiledItems.Count -eq 50) 'deployed status 5380 retries whole lists with frvk while preserving every explicit class and routine'
 [CompilationFixture.State]::Reset(); [CompilationFixture.State]::FailBatches=$true; $result=CompileSoftwarePackages $targets
-Assert ($result.Success -and [CompilationFixture.State]::Versions.Count -eq 10 -and [CompilationFixture.State]::CurrencyCalls -eq 0) 'a failed list retries every explicit item without skipping current classes and preserves successful outcomes'
+Assert ($result.Success -and [CompilationFixture.State]::Versions.Count -eq 10 -and [CompilationFixture.State]::CurrencyCalls -eq 0) 'a failed list is divided until every explicit item can compile without skipping current classes'
 [CompilationFixture.State]::Reset(); [CompilationFixture.State]::FailItem='Test.Class.cls'; $result=CompileSoftwarePackages $targets
 Assert (-not $result.Success -and $result.Changed -and [CompilationFixture.State]::Versions.Count -eq 0 -and -not [CompilationFixture.State]::Locked -and
     $result.SoftwareCompilationResults[0].CompilationErrors.Count -eq 5 -and $result.SoftwareCompilationResults[0].ImportedResources -eq 5 -and
