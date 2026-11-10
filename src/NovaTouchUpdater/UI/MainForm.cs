@@ -468,6 +468,7 @@ public sealed partial class MainForm : Form
         useFolderPackages.Click += (_, _) => UseFolderPackages();
         var files = individualFilesSection = new ExpandableSection("Update-Dateien Einzeln", filesContent);
         files.Name = "filesCard";
+        EnablePackageDrop(files);
         files.Margin = Padding.Empty;
         var packageColumn = Stack(localCard, files);
         packageColumn.Name = "packageColumn";
@@ -580,7 +581,7 @@ public sealed partial class MainForm : Form
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(betaDivider, buildPreference, chkIrisTls,
             SettingsDivider("ALLGEMEIN"), chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            login, optionBar, chkUploadToZzzSoftware, chkForceUpdate, chkRestartPosAfterUpdate, targetPath,
+            login, optionBar, chkUploadToZzzSoftware, chkForceUpdate, chkRestartPosAfterUpdate, CreateSoftwareSourcePath(), targetPath,
             SettingsDivider("LOKAL"), chkSkipLocalPackageCopy,
             SettingsDivider("REMOTE"), chkSkipRemotePackageCopy, chkSkipZipTransfer, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);
@@ -2194,6 +2195,7 @@ public sealed partial class MainForm : Form
             remove.Enabled = idle && loaded;
         }
         foreach (Button remove in selectedPackagesTable.Controls.OfType<Button>()) remove.Enabled = idle;
+        foreach (var drop in shellPackageDrops) drop.Enabled = idle && !connectionClosing;
     }
 
     private void Log(string host, string msg)

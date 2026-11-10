@@ -146,7 +146,7 @@ internal static class Program
                 new Font("Segoe UI", 22F * scale, FontStyle.Bold);
             header.Scale(new SizeF(scale, scale));
             _ = header.Handle; // no Form.Show, connections or real application startup
-            foreach (int width in new[] { 1700, 1190, 610, 400, 1190, 1700 })
+            foreach (int width in new[] { 1700, 1190, 610, 400, 300, 1190, 1700 })
             {
                 header.Width = (int)(width * scale);
                 for (int pass = 0; pass < 8; pass++)
@@ -155,13 +155,12 @@ internal static class Program
                     foreach (Control control in header.Controls) control.PerformLayout();
                 }
                 var captions = header.Controls.OfType<Label>().Where(c => c != link).ToArray();
-                var subtitle = captions.Single(c => c.Text.Contains("ZIP- und MSI-Updates"));
+                var title = captions.Single();
                 Assert(link.Right <= header.ClientSize.Width && Math.Abs(link.Right + link.Margin.Right - header.ClientSize.Width) <= 2,
                     $"update notice stays aligned to the right at {width}px / {scale * 100}%");
                 Assert(captions.All(caption => !link.Bounds.IntersectsWith(caption.Bounds)), $"notice never overlaps caption at {width}px / {scale * 100}%");
                 Assert(captions.All(c => c.Right <= header.ClientSize.Width), $"header texts fit at {width}px / {scale * 100}%");
-                if (width == 1190) Assert(header.GetRow(link) == header.GetRow(subtitle), $"normal window keeps the notice beside the subtitle at {scale * 100}%");
-                if (width == 400) Assert(header.GetRow(link) > header.GetRow(subtitle), $"narrow window gives the notice its own row at {scale * 100}%");
+                Assert(header.GetRow(link) > header.GetRow(title), $"release notice retains its own row below the title at {scale * 100}%");
                 if (scale == 1F && width is 1190 or 610)
                 {
                     header.Height = header.GetPreferredSize(new Size(header.Width, 0)).Height;

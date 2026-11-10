@@ -61,6 +61,12 @@ internal static partial class Program
                     InForm(form, table) == tableBefore && InForm(form, files) == filesBefore,
                     "opening settings changes its arrow and overlays content without moving packages or hosts");
                 Assert(form.ClientRectangle.Contains(settings.Bounds), "expanded settings stay within the window");
+                var source = Field<TextBox>(form, "softwarePath");
+                var destination = Field<TextBox>(form, "txtRemotePath");
+                Assert(source.Parent!.Parent == destination.Parent!.Parent &&
+                    source.Parent.Bottom <= destination.Parent.Top && source.Width > 0 &&
+                    source.Right <= source.Parent.ClientSize.Width,
+                    "the source path remains directly above the destination and fits inside expanded settings");
                 Assert(settings.Parent == form && form.Controls.GetChildIndex(settings) == 0 &&
                     settings.Location == settingsBefore.Location && settings.Width == settingsBefore.Width && settings.Height > settingsBefore.Height,
                     "the original card expands at its existing position above the main scroll area");

@@ -2,7 +2,6 @@ namespace NovaTouchUpdater;
 
 internal sealed class UpdaterHeader : TableLayoutPanel
 {
-    private readonly Label subtitle;
     private readonly Label title;
     private readonly LinkLabel notice;
     private readonly FlowLayoutPanel actions;
@@ -17,11 +16,10 @@ internal sealed class UpdaterHeader : TableLayoutPanel
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         ColumnCount = 3;
-        RowCount = 4;
+        RowCount = 3;
         ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        RowStyles.Add(new RowStyle(SizeType.AutoSize));
         RowStyles.Add(new RowStyle(SizeType.AutoSize));
         RowStyles.Add(new RowStyle(SizeType.AutoSize));
         RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -47,24 +45,19 @@ internal sealed class UpdaterHeader : TableLayoutPanel
         actions.Controls.Add(administrator);
         actions.Controls.Add(feedback);
         Controls.Add(actions, 2, 0);
-        subtitle = new Label
-        {
-            Text = "ZIP- und MSI-Updates    ·    lokal und remote",
-            AutoSize = true, Dock = DockStyle.Fill, ForeColor = UiTheme.Muted, Margin = new Padding(0, 5, 0, 0)
-        };
-        Controls.Add(subtitle, 1, 1);
         notice.Anchor = AnchorStyles.Right;
         notice.AutoSize = true;
         notice.TextAlign = ContentAlignment.MiddleRight;
         notice.Padding = new Padding(12, 6, 12, 6);
         notice.BackColor = UiTheme.AccentSoft;
         notice.Margin = new Padding(16, 0, 0, 0);
-        Controls.Add(notice, 2, 1);
+        Controls.Add(notice, 1, 1);
+        SetColumnSpan(notice, 2);
     }
 
     protected override void OnLayout(LayoutEventArgs levent)
     {
-        if (!arranging && subtitle is not null)
+        if (!arranging && notice?.Parent == this)
         {
             arranging = true;
             try
@@ -78,12 +71,7 @@ internal sealed class UpdaterHeader : TableLayoutPanel
                 SetColumnSpan(actions, separateFeedback ? 2 : 1);
                 SetColumnSpan(title, separateFeedback ? 2 : 1);
                 title.MaximumSize = new Size(Math.Max(1, ClientSize.Width - markWidth - (separateFeedback ? 0 : feedbackWidth)), 0);
-                int noticeWidth = notice.GetPreferredSize(Size.Empty).Width + notice.Margin.Horizontal;
-                bool separateRow = notice.Visible && ClientSize.Width - markWidth < TextRenderer.MeasureText(subtitle.Text, subtitle.Font).Width + noticeWidth;
-                SetCellPosition(notice, separateRow ? new TableLayoutPanelCellPosition(1, 3) : new TableLayoutPanelCellPosition(2, 1));
-                SetColumnSpan(notice, separateRow ? 2 : 1);
-                SetColumnSpan(subtitle, separateRow || !notice.Visible ? 2 : 1);
-                subtitle.MaximumSize = new Size(Math.Max(1, ClientSize.Width - markWidth - (!separateRow && notice.Visible ? noticeWidth : 0)), 0);
+                notice.MaximumSize = new Size(Math.Max(1, ClientSize.Width - markWidth - notice.Margin.Horizontal), 0);
             }
             finally { arranging = false; }
         }

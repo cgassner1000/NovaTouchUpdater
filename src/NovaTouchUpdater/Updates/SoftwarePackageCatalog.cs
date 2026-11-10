@@ -34,10 +34,33 @@ internal sealed class SoftwarePackageCatalog : IDisposable
             catch (Exception ex) when (ex is IOException or InvalidDataException or System.ComponentModel.Win32Exception or UnauthorizedAccessException or ArgumentException)
             { warnings.Add(relativePath + ": " + ex.Message); }
         }
-        return new(candidates.GroupBy(p => p.Component).Select(group => group.OrderByDescending(p => NumericVersion(p.Version))
-            .ThenByDescending(p => p.Component == UpdateComponents.ServerSuite && ServerSuiteInstaller.IsSetup(p.Path))
-            .ThenByDescending(p => File.GetLastWriteTimeUtc(p.Path)).ThenBy(p => p.Path, StringComparer.OrdinalIgnoreCase).First()).ToArray(), warnings.ToArray());
+        return new(LatestPackages(candidates), warnings.ToArray());
     }
+
+    internal static bool IsPackageFile(string path) => System.IO.Path.GetExtension(path).ToLowerInvariant() is ".zip" or ".msi" or ".exe";
+
+    internal async Task<SoftwareCatalogResult> ReadFilesAsync(IEnumerable<string> paths, CancellationToken ct)
+    {
+        var candidates = new List<SoftwarePackage>();
+        var warnings = new List<string>();
+        foreach (string path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                if (!File.Exists(path)) throw new FileNotFoundException("Paketdatei nicht gefunden.", path);
+                candidates.AddRange(await ReadFileAsync(path, ct).ConfigureAwait(false));
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or System.ComponentModel.Win32Exception or UnauthorizedAccessException or ArgumentException)
+            { warnings.Add(System.IO.Path.GetFileName(path) + ": " + ex.Message); }
+        }
+        return new(LatestPackages(candidates), warnings.ToArray());
+    }
+
+    private static SoftwarePackage[] LatestPackages(IEnumerable<SoftwarePackage> candidates) =>
+        candidates.GroupBy(p => p.Component).Select(group => group.OrderByDescending(p => NumericVersion(p.Version))
+            .ThenByDescending(p => p.Component == UpdateComponents.ServerSuite && ServerSuiteInstaller.IsSetup(p.Path))
+            .ThenByDescending(p => File.GetLastWriteTimeUtc(p.Path)).ThenBy(p => p.Path, StringComparer.OrdinalIgnoreCase).First()).ToArray();
 
     private static IEnumerable<string> EnumerateBuildFiles(string folder, string channel, CancellationToken ct)
     {

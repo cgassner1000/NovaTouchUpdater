@@ -84,16 +84,10 @@ public sealed partial class MainForm
     private Control CreateLocalUpdateCard()
     {
         browseSoftware.Name = "browseSoftware"; readPackages.Name = "readPackages";
-        var selector = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Dock = DockStyle.Top, Margin = Padding.Empty };
-        selector.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        selector.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        selector.Controls.Add(softwarePath, 0, 0);
-        selector.Controls.Add(FlowRow(browseSoftware, readPackages), 1, 0);
-        var card = Section("Installations-Pakete", Stack(new Label
-        {
-            Text = "Softwareordner mit Setup-, ZIP- und MSI-Paketen (inkl. Unterordner):", AutoSize = true, Dock = DockStyle.Fill
-        }, selector, packageStatus));
+        var dropArea = new PackageDropArea();
+        var card = Section("Installations-Pakete", Stack(dropArea, FlowRow(browseSoftware, readPackages), packageStatus));
         card.Name = "localUpdateCard";
+        EnablePackageDrop(card);
         browseSoftware.Click += async (_, _) =>
         {
             using var dialog = new FolderBrowserDialog { Description = "Ordner mit der vollständigen NovaTouch-Software auswählen", UseDescriptionForTitle = true };
@@ -105,6 +99,23 @@ public sealed partial class MainForm
         readPackages.Click += async (_, _) => await LoadSoftwarePackagesAsync();
         softwarePath.KeyDown += async (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = e.SuppressKeyPress = true; await LoadSoftwarePackagesAsync(); } };
         return card;
+    }
+
+    private Control CreateSoftwareSourcePath()
+    {
+        var source = new TableLayoutPanel
+        {
+            Name = "softwareSourcePath", Dock = DockStyle.Top, AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 2, RowCount = 1,
+            Padding = new Padding(0, 2, 0, 0)
+        };
+        source.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        source.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        source.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        source.Controls.Add(new Label { Text = "Quellpfad für Pakete:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+        softwarePath.Margin = new Padding(3, 2, 8, 2);
+        source.Controls.Add(softwarePath, 1, 0);
+        return source;
     }
 
     private Control CreateMsiPackageRows()
@@ -193,6 +204,7 @@ public sealed partial class MainForm
         remove.Visible = false;
         removePackageButtons.Add(component, remove);
         var row = (TableLayoutPanel)PanelRow(choose, version);
+        row.Tag = component;
         row.ColumnCount = 3;
         row.ColumnStyles[1].SizeType = SizeType.AutoSize;
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));

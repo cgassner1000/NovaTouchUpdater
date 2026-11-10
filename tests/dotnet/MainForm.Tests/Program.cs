@@ -13,6 +13,7 @@ internal static partial class Program
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
+            if (args.Contains("--package-drop-native")) { NativePackageDropTests(); return 0; }
             if (args.Contains("--beta")) { BetaFeatureTests(); return 0; }
             if (args.Contains("--builds")) { Complete(BuildChannelCatalogTests()); BuildChannelSelectionTests(); return 0; }
             if (args.Contains("--compile-software")) { BetaFeatureTests(); Complete(SoftwareCompilationTests()); return 0; }
@@ -25,6 +26,7 @@ internal static partial class Program
             if (args.Contains("--targeting")) { UpdateTargetingTests(); return 0; }
             if (args.Contains("--staging")) { PackageCopyOptionsTests(); PackageStagingTests(); PackageHashPreparationTests(); return 0; }
             if (args.Contains("--packages")) { PackageSelectionTests(); PackageRemovalTests(); return 0; }
+            if (args.Contains("--package-drop")) { PackageDropTests(); NativePackageDropTests(); return 0; }
             if (args.Contains("--local")) { Complete(PackageCatalogTests()); PackageSelectionTests(); PackageRemovalTests(); LocalExecutionTests(); RemotePackageRestrictionTests(); return 0; }
             if (args.Contains("--suite-setup")) { Complete(ServerSuiteSetupTests()); return 0; }
             if (args.Contains("--columns")) { ColumnSizingTests(); return 0; }
@@ -61,6 +63,8 @@ internal static partial class Program
                 BuildChannelSelectionTests();
                 PackageSelectionTests();
                 PackageRemovalTests();
+                PackageDropTests();
+                NativePackageDropTests();
                 LocalExecutionTests();
                 RemotePackageRestrictionTests();
                 PackageStagingTests();

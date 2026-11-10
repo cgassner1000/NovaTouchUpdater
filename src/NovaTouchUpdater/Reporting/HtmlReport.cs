@@ -56,7 +56,7 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
 <body>
 <header class="hero">
   <h1>NovaTouch Updater</h1>
-  <p>Update-Ergebnisbericht · lokal und remote · Dienste und NovaTouch-MSI-Pakete</p>
+  <p>Update-Ergebnisbericht</p>
 """);
         sb.Append("  <div class=\"stamp\">Erstellt: ").Append(E(createdAt.ToString("dd.MM.yyyy HH:mm:ss"))).AppendLine("</div>");
         sb.AppendLine("</header><main><section class=\"meta\" aria-label=\"Zielversionen\">");
