@@ -418,7 +418,7 @@ public sealed partial class MainForm : Form
         betaFeatures.Activated += () =>
         {
             if (showBetaActivated is { } show) show();
-            else BeginInvoke(() => MessageBox.Show(this, "BETA-Funktionen aktiviert", "BETA", MessageBoxButtons.OK, MessageBoxIcon.Information));
+            else BeginInvoke(() => MessageBox.Show(this, "Erweiterte Einstellungen aktiviert", "Erweitert", MessageBoxButtons.OK, MessageBoxIcon.Information));
         };
 
         // Keep package cards in their own column, independent of the menu headers.
@@ -576,7 +576,7 @@ public sealed partial class MainForm : Form
         var buildPreference = FlowRow(new Label { Text = "use Build:", AutoSize = true, Anchor = AnchorStyles.Left }, useBuild);
         buildPreference.Name = "buildPreference";
         betaFeatures.Register(buildPreference);
-        var betaDivider = SettingsDivider("BETA");
+        var betaDivider = SettingsDivider("Erweitert");
         betaFeatures.Register(betaDivider);
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(betaDivider, buildPreference, chkIrisTls,

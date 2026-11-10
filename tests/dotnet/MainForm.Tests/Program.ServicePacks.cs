@@ -18,13 +18,13 @@ internal static partial class Program
         var tls = Field<CheckBox>(form, "chkIrisTls");
         var tlsParent = (TableLayoutPanel)tls.Parent!;
         var tlsCell = tlsParent.GetCellPosition(tls);
-        var betaDivider = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "betaSettingsDivider");
+        var betaDivider = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "erweitertSettingsDivider");
         var betaCell = tlsParent.GetCellPosition(betaDivider);
         var buildPreference = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "buildPreference");
         var generalDivider = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "allgemeinSettingsDivider");
         Assert(tlsParent.GetRow(betaDivider) < tlsParent.GetRow(buildPreference) &&
             tlsParent.GetRow(buildPreference) < tlsParent.GetRow(tls) && tlsParent.GetRow(tls) < tlsParent.GetRow(generalDivider),
-            "the BETA settings group contains use Build and IRIS TLS before Allgemein");
+            "the Erweitert settings group contains use Build and IRIS TLS before Allgemein");
         canvas.Controls.Add(tls);
         canvas.Controls.Add(betaDivider);
         int popups = 0;
