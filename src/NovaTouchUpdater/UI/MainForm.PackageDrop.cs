@@ -11,7 +11,7 @@ public sealed partial class MainForm
 
     private static string[] DroppedPackageFiles(IDataObject? data) =>
         data?.GetData(DataFormats.FileDrop, false) is string[] paths
-            ? paths.Where(SoftwarePackageCatalog.IsPackageFile).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : [];
+            ? paths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() : [];
 
     private void EnablePackageDrop(Control surface)
     {
@@ -37,7 +37,7 @@ public sealed partial class MainForm
     private void AcceptPackageDrop(Control surface, string[] paths)
     {
         if (!CanDropPackages) return;
-        string[] files = paths.Where(SoftwarePackageCatalog.IsPackageFile).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        string[] files = paths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length == 0) return;
         UpdateComponents components = UpdateComponents.All;
         for (Control? parent = surface; parent is not null; parent = parent.Parent)
@@ -54,16 +54,17 @@ public sealed partial class MainForm
         UpdateButtons();
         try
         {
-            SoftwareCatalogResult result = await Task.Run(() => packageCatalog.ReadFilesAsync(paths, ct.Token), ct.Token);
+            SoftwareDropResult result = await Task.Run(() => packageCatalog.ReadFilesAsync(paths, ct.Token), ct.Token);
             ct.Token.ThrowIfCancellationRequested();
             foreach (string warning in result.Warnings) Log("SYSTEM", "PAKETE: " + warning);
             SoftwarePackage[] packages = result.Packages.Where(package => (package.Component & components) != 0).ToArray();
-            if (packages.Length == 0)
-                throw new InvalidDataException(components == UpdateComponents.All ? "Keine unterstützten Update-Pakete in den abgelegten Dateien gefunden." :
+            if (packages.Length == 0 && result.AdditionalFiles.Length == 0)
+                throw new InvalidDataException(components == UpdateComponents.All ? "Keine lesbaren Dateien zum Hinzufügen gefunden. Ordner werden nicht übernommen." :
                     "Die abgelegten Dateien enthalten kein Update-Paket für " + HostUpdateState.Label(components) + ".");
             foreach (SoftwarePackage package in packages) SelectIndividualPackage(package);
-            packageStatus.Text = $"{packages.Length} Komponente(n) per DragDrop hinzugefügt." +
-                (result.Warnings.Length == 0 ? "" : $" {result.Warnings.Length} Datei(en) nicht lesbar (Details im Protokoll).");
+            AddAdditionalFiles(result.AdditionalFiles);
+            packageStatus.Text = $"{packages.Length} Paket(e), {result.AdditionalFiles.Length} zusätzliche Datei(en) per DragDrop hinzugefügt." +
+                (result.Warnings.Length == 0 ? "" : $" {result.Warnings.Length} Hinweis(e) (Details im Protokoll).");
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)

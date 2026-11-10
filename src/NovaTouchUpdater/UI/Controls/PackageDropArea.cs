@@ -10,9 +10,9 @@ internal sealed class PackageDropArea : Control
     internal PackageDropArea()
     {
         Name = "packageDropArea";
-        Text = "Pakete hierher ziehen";
+        Text = "Dateien hierher ziehen";
         AccessibleName = Text;
-        AccessibleDescription = "Eine oder mehrere Paketdateien per Drag & Drop auswählen.";
+        AccessibleDescription = "Eine oder mehrere Dateien per Drag & Drop auswählen.";
         AccessibleRole = AccessibleRole.Pane;
         AutoSize = true;
         Dock = DockStyle.Fill;

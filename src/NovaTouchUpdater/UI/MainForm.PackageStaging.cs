@@ -25,7 +25,7 @@ public sealed partial class MainForm
         paymentHash = fiscalHash = serverSuiteHash = "";
         IEnumerable<string> sources = PackageFileCandidates(components & activeInstallHashComponents).Select(file => file.LocalPath)
             .Concat(msiPackages.Where(pair => (pair.Key & components & ~activeInstallHashComponents) != 0).Select(pair => pair.Value.PayloadPath));
-        string[] paths = sources.Select(Path.GetFullPath)
+        string[] paths = sources.Concat(activeAdditionalFiles.Select(file => file.LocalPath)).Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var hashes = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var calculateHash = hashFile ?? WorkerRunner.Sha256Async;
@@ -49,12 +49,15 @@ public sealed partial class MainForm
         }
     }
 
-    private async Task<TransferFileRequest[]> PackageFilesAsync(UpdateComponents components, CancellationToken ct)
+    private Task<TransferFileRequest[]> PackageFilesAsync(UpdateComponents components, CancellationToken ct) =>
+        PrepareTransferFilesAsync(PackageFileCandidates(components), ct);
+
+    private async Task<TransferFileRequest[]> PrepareTransferFilesAsync(IEnumerable<TransferFileRequest> candidates, CancellationToken ct)
     {
         var files = new Dictionary<string, TransferFileRequest>(StringComparer.OrdinalIgnoreCase);
         var hashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "NovaTouchUpdater", "PackagePaths")) + Path.DirectorySeparatorChar;
-        foreach (TransferFileRequest file in PackageFileCandidates(components))
+        foreach (TransferFileRequest file in candidates)
         {
             ct.ThrowIfCancellationRequested();
             string relative = string.IsNullOrWhiteSpace(file.RelativePath) ? Path.GetFileName(file.LocalPath) : file.RelativePath.Replace('/', '\\');
@@ -79,8 +82,19 @@ public sealed partial class MainForm
 
     private async Task ExecuteHostUpdateAsync(HostState host, CancellationToken ct, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
-        if (host.IsLocal && !await StageLocalUpdatePackagesAsync(host, ct)) return;
+        if (host.IsLocal && !await StageLocalUpdatePackagesAsync(host, ct))
+        {
+            if (host.Updates is { } state && host.Error.Length > 0)
+                foreach (UpdateComponents component in HostUpdateState.Each(state.Pending)) state.Fail(component, host.Error);
+            await UploadAdditionalFilesAsync(host, ct);
+            return;
+        }
         await UpdateHostAsync(host, ct, delay);
+        if (activeAdditionalFiles.Length > 0)
+        {
+            await UploadAdditionalFilesAsync(host, ct);
+            FinishHostUpdate(host);
+        }
     }
 
     private async Task<bool> StageLocalUpdatePackagesAsync(HostState host, CancellationToken ct)

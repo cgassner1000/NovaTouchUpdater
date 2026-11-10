@@ -5,6 +5,7 @@ namespace NovaTouchUpdater;
 
 internal sealed record SoftwarePackage(UpdateComponents Component, string Path, string Version, MsiPackageRequest? Msi = null);
 internal sealed record SoftwareCatalogResult(SoftwarePackage[] Packages, string[] Warnings);
+internal sealed record SoftwareDropResult(SoftwarePackage[] Packages, string[] AdditionalFiles, string[] Warnings);
 
 internal sealed class SoftwarePackageCatalog : IDisposable
 {
@@ -39,9 +40,10 @@ internal sealed class SoftwarePackageCatalog : IDisposable
 
     internal static bool IsPackageFile(string path) => System.IO.Path.GetExtension(path).ToLowerInvariant() is ".zip" or ".msi" or ".exe";
 
-    internal async Task<SoftwareCatalogResult> ReadFilesAsync(IEnumerable<string> paths, CancellationToken ct)
+    internal async Task<SoftwareDropResult> ReadFilesAsync(IEnumerable<string> paths, CancellationToken ct)
     {
         var candidates = new List<SoftwarePackage>();
+        var additional = new List<string>();
         var warnings = new List<string>();
         foreach (string path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -49,12 +51,19 @@ internal sealed class SoftwarePackageCatalog : IDisposable
             try
             {
                 if (!File.Exists(path)) throw new FileNotFoundException("Paketdatei nicht gefunden.", path);
-                candidates.AddRange(await ReadFileAsync(path, ct).ConfigureAwait(false));
+                SoftwarePackage[] packages = IsPackageFile(path) ? await ReadFileAsync(path, ct).ConfigureAwait(false) : [];
+                if (packages.Length > 0) candidates.AddRange(packages);
+                else additional.Add(System.IO.Path.GetFullPath(path));
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or System.ComponentModel.Win32Exception or UnauthorizedAccessException or ArgumentException)
-            { warnings.Add(System.IO.Path.GetFileName(path) + ": " + ex.Message); }
+            {
+                bool exists = File.Exists(path);
+                if (exists) additional.Add(System.IO.Path.GetFullPath(path));
+                warnings.Add(System.IO.Path.GetFileName(path) + ": " + ex.Message +
+                    (exists ? " Kein bekanntes Update-Paket erkannt; wird nur als zusätzliche Datei kopiert." : ""));
+            }
         }
-        return new(LatestPackages(candidates), warnings.ToArray());
+        return new(LatestPackages(candidates), additional.ToArray(), warnings.ToArray());
     }
 
     private static SoftwarePackage[] LatestPackages(IEnumerable<SoftwarePackage> candidates) =>

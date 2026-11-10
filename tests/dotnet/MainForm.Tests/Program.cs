@@ -14,6 +14,7 @@ internal static partial class Program
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             if (args.Contains("--package-drop-native")) { NativePackageDropTests(); return 0; }
+            if (args.Contains("--additional-files")) { AdditionalFileSelectionTests(); AdditionalFileUpdateTests(); Complete(AdditionalFileCopyTest()); return 0; }
             if (args.Contains("--beta")) { BetaFeatureTests(); return 0; }
             if (args.Contains("--builds")) { Complete(BuildChannelCatalogTests()); BuildChannelSelectionTests(); return 0; }
             if (args.Contains("--compile-software")) { BetaFeatureTests(); Complete(SoftwareCompilationTests()); return 0; }
@@ -65,6 +66,9 @@ internal static partial class Program
                 PackageRemovalTests();
                 PackageDropTests();
                 NativePackageDropTests();
+                AdditionalFileSelectionTests();
+                AdditionalFileUpdateTests();
+                Complete(AdditionalFileCopyTest());
                 LocalExecutionTests();
                 RemotePackageRestrictionTests();
                 PackageStagingTests();

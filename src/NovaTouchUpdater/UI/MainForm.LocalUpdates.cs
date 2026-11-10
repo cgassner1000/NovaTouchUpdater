@@ -48,7 +48,7 @@ public sealed partial class MainForm
     private bool UseLocalPackageSources => chkSkipLocalPackageCopy.Checked || string.IsNullOrWhiteSpace(txtRemotePath.Text);
     private string RemoteDestinationPath() => string.IsNullOrWhiteSpace(txtRemotePath.Text) ? DefaultRemoteInstallPath : txtRemotePath.Text.Trim();
     private bool IsUpdatePathValid(HostState[] selected) =>
-        !selected.Any(h => h.IsLocal ? !UseLocalPackageSources : !chkSkipRemotePackageCopy.Checked) ||
+        (additionalFiles.Count == 0 && !selected.Any(h => h.IsLocal ? !UseLocalPackageSources : !chkSkipRemotePackageCopy.Checked)) ||
         System.Text.RegularExpressions.Regex.IsMatch(RemoteDestinationPath(), @"^[A-Za-z]:\\");
 
     private void EnsureLocalHost()
@@ -182,10 +182,17 @@ public sealed partial class MainForm
 
     private PackageRemoveButton CreateRemovePackageButton(UpdateComponents component)
     {
+        var remove = CreateSelectionRemoveButton(HostUpdateState.Label(component) + " aus der Auswahl entfernen", () => RemoveSelectedPackage(component));
+        remove.Name = "remove" + component + "Package";
+        remove.Tag = component;
+        return remove;
+    }
+
+    private PackageRemoveButton CreateSelectionRemoveButton(string description, Action removeSelection)
+    {
         var remove = new PackageRemoveButton
         {
-            Name = "remove" + component + "Package", Text = "×", Tag = component,
-            AccessibleName = HostUpdateState.Label(component) + " aus der Auswahl entfernen",
+            Text = "×", AccessibleName = description,
             AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Font = new Font("Segoe UI", 12F, FontStyle.Bold), Cursor = Cursors.Hand,
             ForeColor = UiTheme.Danger, BackColor = UiTheme.DangerSoft,
@@ -193,8 +200,8 @@ public sealed partial class MainForm
             Anchor = AnchorStyles.Right
         };
         remove.FlatAppearance.BorderSize = 0;
-        updateToolTip.SetToolTip(remove, "Paket aus der Auswahl entfernen. Die Datei bleibt auf der Festplatte erhalten.");
-        remove.Click += (_, _) => RemoveSelectedPackage(component);
+        updateToolTip.SetToolTip(remove, "Aus der Auswahl entfernen. Die Datei bleibt auf der Festplatte erhalten.");
+        remove.Click += (_, _) => removeSelection();
         return remove;
     }
 
@@ -295,9 +302,10 @@ public sealed partial class MainForm
         if (fiscalZip.Length > 0) packages.Add(new(UpdateComponents.Fiscal, fiscalZip, fiscalVersion));
         if (serverSuiteZip.Length > 0) packages.Add(new(UpdateComponents.ServerSuite, serverSuiteZip, serverSuiteVersion));
         packages.AddRange(msiPackages.Select(pair => new SoftwarePackage(pair.Key, pair.Value.PayloadPath, pair.Value.ProductVersion)));
-        selectedPackagesList.Text = packages.Count == 0 ? "Keine Pakete ausgewählt." :
+        selectedPackagesList.Text = packages.Count == 0 && additionalFiles.Count == 0 ? "Keine Pakete ausgewählt." :
             string.Join(Environment.NewLine, packages.OrderBy(package => package.Component).Select(package =>
-                $"{HostUpdateState.Label(package.Component)} · {package.Version} · {Path.GetFileName(package.Path)}"));
+                $"{HostUpdateState.Label(package.Component)} · {package.Version} · {Path.GetFileName(package.Path)}")
+                .Concat(additionalFiles.Select(path => "Zusätzliche Datei · " + Path.GetFileName(path))));
         selectedPackagesList.AccessibleDescription = individualPackageSelection ? "Einzeln ausgewählte Pakete" : "Pakete aus dem Softwareordner";
         selectedPackagesTable.SuspendLayout();
         try
@@ -329,8 +337,9 @@ public sealed partial class MainForm
                 remove.Margin = new Padding(6, 2, 0, 2);
                 selectedPackagesTable.Controls.Add(remove, 2, row);
             }
-            selectedPackagesList.Visible = packages.Count == 0;
+            selectedPackagesList.Visible = packages.Count == 0 && additionalFiles.Count == 0;
             selectedPackagesTable.Visible = packages.Count > 0;
+            RefreshAdditionalFiles();
         }
         finally { selectedPackagesTable.ResumeLayout(true); }
     }
@@ -404,6 +413,12 @@ public sealed partial class MainForm
             text.AppendLine($"{HostUpdateState.Label(component)} {version}: {selected.Count(h => (ComponentsForUpdate(h, onlyFailed) & component) != 0)} Host(s)");
         }
         if (onlyFailed) text.AppendLine("\nBereits verifizierte Komponenten werden nicht wiederholt.");
+        if (additionalFiles.Count > 0)
+        {
+            text.AppendLine($"\nZusätzliche Dateien: {additionalFiles.Count} Datei(en) nach '{RemoteDestinationPath()}'. Nur kopieren, nicht ausführen.");
+            foreach (string path in additionalFiles) text.AppendLine("Datei: " + Path.GetFileName(path));
+            text.AppendLine("Diese Dateien werden unabhängig von den Paket-Kopieroptionen übertragen. Bestehende Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt.");
+        }
         text.AppendLine("\nNur bereits installierte Komponenten werden aktualisiert.");
         if ((needed & UpdateComponents.ZipServices) != 0)
             text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Payment/Fiscal: zusätzliche Client-Dateien bleiben erhalten.");

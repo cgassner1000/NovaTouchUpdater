@@ -475,6 +475,17 @@ try {
             if ($files.Count -eq 0) { throw 'Keine Dateien zur Übertragung angegeben.' }
             $copied = 0
             $verified = 0
+            $readTransferHash = {
+                param([string]$path, [bool]$required)
+                if (-not [IO.File]::Exists($path)) {
+                    if ($required) { throw "Datei fehlt nach der Übertragung: $path" }
+                    return ''
+                }
+                $source = [IO.File]::OpenRead($path)
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { [BitConverter]::ToString($sha.ComputeHash($source)).Replace('-', '') }
+                finally { $sha.Dispose(); $source.Dispose() }
+            }
             foreach ($file in $files) {
                 $localFile = [string]$file.LocalPath
                 $expectedHash = [string]$file.Sha256
@@ -487,12 +498,7 @@ try {
                 if (-not $remoteFile.StartsWith($remotePath.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { throw "Paketpfad verlässt den Zielordner: $relative" }
                 $fileLabel = "Datei $($verified + 1)/$($files.Count)"
                 Progress 'Übertragung' ("$fileLabel : Prüfe $([IO.Path]::GetFileName($localFile))") 0
-                $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
-                    param([string]$path)
-                    if (Test-Path -LiteralPath $path -PathType Leaf) {
-                        (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
-                    } else { '' }
-                }
+                $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile, $false -ErrorAction Stop -ScriptBlock $readTransferHash
                 if ($remoteHash -ne $expectedHash) {
                     try {
                         InvokeWorkerCommand -Session $session -ArgumentList ([IO.Path]::GetDirectoryName($remoteFile)) -ScriptBlock { param($directory) [void][IO.Directory]::CreateDirectory($directory) } -ErrorAction Stop
@@ -501,11 +507,7 @@ try {
                     catch {
                         throw "Dateiübertragung fehlgeschlagen ($remoteHost; $remoteFile): $($_.Exception.Message)"
                     }
-                    $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile -ErrorAction Stop -ScriptBlock {
-                        param([string]$path)
-                        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Datei fehlt nach der Übertragung: $path" }
-                        (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash
-                    }
+                    $remoteHash = InvokeWorkerCommand -Session $session -ArgumentList $remoteFile, $true -ErrorAction Stop -ScriptBlock $readTransferHash
                     if ($remoteHash -ne $expectedHash) { throw "SHA256-Pruefung nach der Übertragung fehlgeschlagen ($remoteHost; $remoteFile)" }
                     $copied++
                 }

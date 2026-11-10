@@ -62,9 +62,9 @@ internal static partial class Program
         }
         Assert(Enter(dropArea, Data(payment)).Effect == DragDropEffects.Copy &&
             Enter(dropArea, Data(payment), DragDropEffects.Move).Effect == DragDropEffects.None &&
-            Enter(dropArea, Data("notes.txt")).Effect == DragDropEffects.None &&
+            Enter(dropArea, Data("notes.txt")).Effect == DragDropEffects.Copy &&
             Enter(dropArea, new DataObject(DataFormats.Text, payment)).Effect == DragDropEffects.None,
-            "only package file drops are accepted with copy semantics; move-only and plain text drags are rejected");
+            "all file drops are accepted with copy semantics; move-only and plain text drags are rejected");
         Drop(dropArea, paymentOld, payment, payment, ntc, archivePath);
         var msi = Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages");
         Assert(warning is null && Field<string>(form, "paymentZip") == payment && Field<string>(form, "fiscalZip") == fiscalOld &&
@@ -82,11 +82,12 @@ internal static partial class Program
         Drop(files, suite, broken);
         Assert(warning is null && Field<string>(form, "serverSuiteZip") == suite &&
             Field<TableLayoutPanel>(form, "selectedPackagesTable").RowCount == 5 &&
-            Field<Label>(form, "packageStatus").Text.Contains("1 Datei(en) nicht lesbar"),
-            "the individual section accepts packages by type and reports unreadable files while keeping valid files from the same drop");
+            Field<Label>(form, "packageStatus").Text.Contains("1 Hinweis(e)") && Field<List<string>>(form, "additionalFiles").Contains(broken),
+            "the individual section accepts packages by type and retains an unrecognized file as copy-only with its parser warning");
         Drop(dropArea, broken);
-        Assert(warning is not null && Field<string>(form, "serverSuiteZip") == suite && !Field<bool>(form, "loadingPackages"),
-            "an entirely invalid drop reports the problem and restores the UI without losing valid selections");
+        Assert(warning is null && Field<List<string>>(form, "additionalFiles").Count(path => path == broken) == 1 &&
+            Field<string>(form, "serverSuiteZip") == suite && !Field<bool>(form, "loadingPackages"),
+            "unrecognized files are added once without losing valid package selections");
         foreach (string state in new[] { "busy", "selfUpdating", "loadingPackages", "preparingDatabaseUpload", "restartingAsAdministrator", "connectionClosing" })
         {
             SetField(form, state, true);

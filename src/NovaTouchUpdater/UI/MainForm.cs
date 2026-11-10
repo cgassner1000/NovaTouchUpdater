@@ -587,7 +587,7 @@ public sealed partial class MainForm : Form
         var settings = new ExpandableSection("Einstellungen", settingsContent);
         settings.Name = "settingsCard";
         settings.Margin = new Padding(0, 0, 0, 12);
-        var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList, selectedPackagesTable));
+        var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList, selectedPackagesTable, additionalFilesTable));
         selectedPackagesCard.Name = "selectedPackagesCard";
         selectedPackagesCard.Margin = new Padding(0, 12, 0, 0);
         var menuColumn = Stack(settings, hostCard, selectedPackagesCard);
@@ -1370,6 +1370,7 @@ public sealed partial class MainForm : Form
         activeForceUpdate = chkForceUpdate.Checked;
         activeLocalInstallPath = txtRemotePath.Text.Trim();
         activeRemoteInstallPath = RemoteDestinationPath();
+        activeAdditionalDestination = activeRemoteInstallPath;
         activeSkipZipTransfer = chkSkipZipTransfer.Checked;
         activeSkipLocalPackageCopy = UseLocalPackageSources;
         activeSkipRemotePackageCopy = chkSkipRemotePackageCopy.Checked;
@@ -1508,15 +1509,15 @@ public sealed partial class MainForm : Form
 
     private async Task RunUpdatesAsync(bool onlyFailed)
     {
-        if (busy || selfUpdating || preparingDatabaseUpload || SelectedHosts().Length == 0) return;
-        if (SelectedUpdateComponents() == UpdateComponents.None)
+        if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator || SelectedHosts().Length == 0) return;
+        if (SelectedUpdateComponents() == UpdateComponents.None && additionalFiles.Count == 0)
         {
             MessageBox.Show(this, "Mindestens ein Update-Paket auswählen oder den Softwareordner einlesen."); return;
         }
         var selected = UpdateTargets(onlyFailed);
         if (selected.Length > 0)
         {
-            selected = selected.Where(host => ComponentsForUpdate(host, onlyFailed) != UpdateComponents.None ||
+            selected = selected.Where(host => NeedsAdditionalFiles(host, onlyFailed) || ComponentsForUpdate(host, onlyFailed) != UpdateComponents.None ||
                 (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0 && (!onlyFailed || host.Updates?.DatabaseUploadCompleted != true)) ||
                 (chkRestartPosAfterUpdate.Checked && !host.IsLocal && (!onlyFailed || host.Updates?.PosRestartCompleted != true)) ||
                 (onlyFailed && host.Updates is { } state && (state.DatabaseUploadError.Length > 0 || state.PosRestartError.Length > 0))).ToArray();
@@ -1547,9 +1548,12 @@ public sealed partial class MainForm : Form
                 "Fehlende Update-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        if (MessageBox.Show(this, UpdateConfirmation(selected, needed, onlyFailed),
-            "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        string confirmation = UpdateConfirmation(selected, needed, onlyFailed);
+        bool confirmed = confirmUpdate?.Invoke(confirmation) ?? MessageBox.Show(this, confirmation,
+            "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+        if (!confirmed) return;
         CaptureCredentials();
+        CaptureAdditionalFiles(selected.Any(host => NeedsAdditionalFiles(host, onlyFailed)));
         activeDatabaseTargets = null;
         lastUpdateForce = activeForceUpdate;
         Guid updateRunId = Guid.NewGuid();
@@ -1569,7 +1573,11 @@ public sealed partial class MainForm : Form
             activeInstallHashComponents = needed;
             if (activeUploadToZzzSoftware && selected.Any(host => host.Updates?.DatabaseUploadCompleted != true))
                 hashComponents |= SelectedUpdateComponents() & UpdateComponents.Msi;
-            try { await PrepareUpdatePackageHashesAsync(hashComponents, ct); }
+            try
+            {
+                await PrepareUpdatePackageHashesAsync(hashComponents, ct);
+                await PrepareAdditionalFilesAsync(needed, ct);
+            }
             catch (Exception ex)
             {
                 foreach (HostState host in selected)
@@ -1700,18 +1708,20 @@ public sealed partial class MainForm : Form
                     if (!string.IsNullOrWhiteSpace(state.ErrorText)) h.Error = state.ErrorText;
                     h.Result = "Fehler";
                     h.Phase = state.Pending != UpdateComponents.None ? "Maximal 3 Versuche: " + HostUpdateState.Label(state.Pending)
+                        : state.AdditionalFilesError.Length > 0 ? "Übertragung zusätzlicher Dateien fehlgeschlagen"
                         : state.DatabaseUploadError.Length > 0 ? "zzzSoftware-Upload fehlgeschlagen" : "POS-Neustart fehlgeschlagen";
                 }
                 else
                 {
                     h.Error = "";
                     h.Result = state.AllSkipped ? "Übersprungen" : state.Changed ? "Erfolgreich" : "Bereits aktuell / übersprungen";
-                    h.Phase = state.PosRestartCompleted ? state.PosRestartMessage + (h.RebootRequired ? " · Windows-Neustart erforderlich" : "")
+                    h.Phase = state.Attempted == UpdateComponents.None && state.AdditionalFilesCompleted ? state.AdditionalFilesMessage
+                        : state.PosRestartCompleted ? state.PosRestartMessage + (h.RebootRequired ? " · Windows-Neustart erforderlich" : "")
                         : state.Attempted == UpdateComponents.None && state.DatabaseUploadCompleted
                         ? (state.Changed ? "zzzSoftware-Upload abgeschlossen" : "zzzSoftware geprüft – kein Upload erforderlich")
                         : state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
                 }
-                h.Phase = string.Join(" · ", new[] { h.Phase, state.DatabaseUploadMessage, state.PosRestartSkipMessage }
+                h.Phase = string.Join(" · ", new[] { h.Phase, state.DatabaseUploadMessage, state.PosRestartSkipMessage, state.AdditionalFilesMessage }
                     .Where(message => message.Length > 0).Distinct());
                 if (!h.UpdateFailed && state.Changed) h.SetProgress(100);
             });
@@ -1922,6 +1932,7 @@ public sealed partial class MainForm : Form
         {
             cancellation.Dispose(); cancellation = null; busy = false;
             preparedPackageHashes = null;
+            activeAdditionalFiles = [];
             activeInstallHashComponents = UpdateComponents.All;
             activeDatabaseTargets = null;
             activePassword = "";
@@ -2195,6 +2206,7 @@ public sealed partial class MainForm : Form
             remove.Enabled = idle && loaded;
         }
         foreach (Button remove in selectedPackagesTable.Controls.OfType<Button>()) remove.Enabled = idle;
+        foreach (Button remove in additionalFilesTable.Controls.OfType<Button>()) remove.Enabled = idle;
         foreach (var drop in shellPackageDrops) drop.Enabled = idle && !connectionClosing;
     }
 
@@ -2234,7 +2246,8 @@ public sealed partial class MainForm : Form
                 "-" + Guid.NewGuid().ToString("N")[..8] + ".html";
             string previewFile = Path.Combine(previewDir, filename);
             string report = HtmlReport.Create(ExecutionHosts().ToArray(), paymentVersion, fiscalVersion, DateTime.Now, lastUpdateForce, serverSuiteVersion,
-                msiPackages.Values.ToDictionary(p => p.ProductName, p => p.ProductVersion), executionMode.Text);
+                msiPackages.Values.ToDictionary(p => p.ProductName, p => p.ProductVersion), executionMode.Text,
+                additionalFiles.Select(path => Path.GetFileName(path)).ToArray());
             File.WriteAllText(previewFile, report, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             Process.Start(new ProcessStartInfo(previewFile) { UseShellExecute = true });
         }

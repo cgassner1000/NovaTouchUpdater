@@ -8,7 +8,7 @@ public sealed partial class MainForm
     private bool MatchesSelectedSoftware(HostState host)
     {
         UpdateComponents selected = SelectedUpdateComponents();
-        return host.IsLocal || selected == UpdateComponents.None || host.InstalledComponents is not { } installed || (installed & selected) != 0;
+        return additionalFiles.Count > 0 || host.IsLocal || selected == UpdateComponents.None || host.InstalledComponents is not { } installed || (installed & selected) != 0;
     }
 
     private bool IsDatabaseUploadServer(HostState host) =>

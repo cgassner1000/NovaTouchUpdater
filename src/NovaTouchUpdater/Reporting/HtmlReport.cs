@@ -11,7 +11,7 @@ internal static class HtmlReport
     private static string E(string? value) => WebUtility.HtmlEncode(value ?? "");
 
     public static string Create(IReadOnlyList<HostState> hosts, string paymentTarget, string fiscalTarget, DateTime createdAt, bool forceUpdate, string serverSuiteTarget = "",
-        IReadOnlyDictionary<string, string>? msiTargets = null, string executionMode = "")
+        IReadOnlyDictionary<string, string>? msiTargets = null, string executionMode = "", IReadOnlyList<string>? additionalFiles = null)
     {
         int count = hosts.Count;
         int updated = hosts.Count(x => x.Result == "Erfolgreich");
@@ -66,6 +66,9 @@ input,select,button{font:inherit;border:1px solid #cbd6e3;background:#fff;border
         if (msiTargets is not null)
             foreach (var (name, version) in msiTargets)
                 sb.Append("<span class=\"chip\">").Append(E(name)).Append(" Target: <strong>").Append(E(version)).AppendLine("</strong></span>");
+        if (additionalFiles is not null)
+            foreach (string file in additionalFiles)
+                sb.Append("<span class=\"chip\">Zusätzliche Datei: <strong>").Append(E(file)).AppendLine("</strong></span>");
         if (!string.IsNullOrWhiteSpace(executionMode))
             sb.Append("<span class=\"chip\">Ausführung: <strong>").Append(E(executionMode)).AppendLine("</strong></span>");
         sb.Append("<span class=\"chip\">ZIP-Modus: <strong>").Append(forceUpdate ? "Force Up-Downgrade" : "Normal").AppendLine("</strong></span>");

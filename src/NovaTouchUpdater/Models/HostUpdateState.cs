@@ -26,6 +26,22 @@ internal sealed class HostUpdateState(UpdateComponents components)
     internal string PosRestartMessage { get; private set; } = "";
     internal string DatabaseUploadError { get; set; } = "";
     internal string PosRestartError { get; set; } = "";
+    internal bool AdditionalFilesCompleted { get; private set; }
+    internal string AdditionalFilesMessage { get; private set; } = "";
+    internal string AdditionalFilesError { get; set; } = "";
+    internal void CompleteAdditionalFiles(bool changed, string message)
+    {
+        AdditionalFilesCompleted = true;
+        AdditionalFilesError = "";
+        AdditionalFilesMessage = message;
+        Changed |= changed;
+        AllSkipped &= !changed;
+    }
+    internal void ResetAdditionalFiles()
+    {
+        AdditionalFilesCompleted = false;
+        AdditionalFilesMessage = AdditionalFilesError = "";
+    }
     internal HashSet<string> CompletedServiceNames { get; } = new(StringComparer.OrdinalIgnoreCase);
     internal void CompletePosRestart(WorkerResult result)
     {
@@ -79,7 +95,7 @@ internal sealed class HostUpdateState(UpdateComponents components)
             errors.Remove(component);
     }
     internal string ErrorText => string.Join(" | ", Each(Pending).Where(errors.ContainsKey).Select(c => Label(c) + ": " + errors[c])
-        .Concat(new[] { DatabaseUploadError, PosRestartError }.Where(error => error.Length > 0)));
+        .Concat(new[] { DatabaseUploadError, PosRestartError, AdditionalFilesError }.Where(error => error.Length > 0)));
 
     internal void Complete(UpdateComponents component, WorkerResult result)
     {
