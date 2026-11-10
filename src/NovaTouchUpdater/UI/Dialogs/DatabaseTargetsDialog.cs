@@ -68,6 +68,12 @@ internal sealed class DatabaseTargetsDialog : Form
             foreach (TreeNode node in root.Nodes) node.Expand();
         }
         instances.BeforeCheck += (_, e) => { if (e.Node is { Nodes.Count: 0, Tag: not NamespaceChoice }) e.Cancel = true; };
+        instances.NodeMouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left && e.Node.Tag is NamespaceChoice &&
+                (instances.HitTest(e.Location).Location & TreeViewHitTestLocations.Label) != 0)
+                e.Node.Checked = !e.Node.Checked;
+        };
         instances.AfterCheck += (_, e) =>
         {
             if (changingChecks || e.Node is null) return;

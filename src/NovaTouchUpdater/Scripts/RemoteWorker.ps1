@@ -392,7 +392,7 @@ try {
         $sessionArgs.Credential = New-Object System.Management.Automation.PSCredential([string]$req.Username, $secure)
     }
 
-        Progress 'Verbindung' $(if ($localExecution) { 'Lokaler Zugriff ohne WinRM' } else { 'WinRM-Verbindung wird aufgebaut' })
+    if (-not $localExecution) { Progress 'Verbindung' 'WinRM-Verbindung wird aufgebaut' }
     $session = $null
     $remotePackageStage = $null
     try {

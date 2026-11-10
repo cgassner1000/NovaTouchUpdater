@@ -57,7 +57,7 @@ public sealed partial class MainForm
         HostState? local = hosts.FirstOrDefault(h => h.IsLocal);
         if (local is null)
         {
-            local = new HostState { Host = "LOCALHOST", Connection = "Lokal", Phase = "Lokaler Rechner – ohne WinRM" };
+            local = new HostState { Host = "LOCALHOST", Connection = "Lokal", Phase = "Lokaler Rechner" };
             hosts.Insert(0, local);
         }
         if (LocalFallback)
@@ -441,7 +441,7 @@ public sealed partial class MainForm
         if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
             ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
             : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +
-            "\nNur installierte Komponenten aktualisieren. Direkter Zugriff ohne WinRM. Installationen benötigen Administratorrechte.");
+            "\nNur installierte Komponenten aktualisieren. Installationen benötigen Administratorrechte.");
         if (selected.Any(h => !h.IsLocal)) text.AppendLine("REMOTE: ausschließlich Payment, Fiscal und Server Suite. POS, NTC, SOL und NTV werden remote nicht installiert.\n" +
             (chkSkipRemotePackageCopy.Checked ? "Pakete nur temporär für die Installation bereitstellen und danach entfernen. Keine zusätzliche Kopie oder Bereinigung im eingestellten Zielverzeichnis." :
             "Remote-Zielpfad: " + RemoteDestinationPath() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv")));

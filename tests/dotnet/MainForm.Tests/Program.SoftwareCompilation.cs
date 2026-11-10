@@ -115,6 +115,29 @@ internal static partial class Program
             "servers without applicable namespaces are shown and cannot be selected for processing");
         foreach (TreeNode root in tree.Nodes) root.Checked = false;
         Assert(dialog.GetSelectedPlans().Length == 0 && !apply.Enabled, "an empty namespace selection disables processing");
+        var leaf = tree.Nodes[0].Nodes[1].Nodes["USER"]!;
+        void ClickNode(TreeNode node, int x, MouseButtons button = MouseButtons.Left)
+        {
+            int y = node.Bounds.Top + node.Bounds.Height / 2;
+            typeof(TreeView).GetMethod("OnNodeMouseClick", Private)!.Invoke(tree,
+                [new TreeNodeMouseClickEventArgs(node, button, 1, x, y)]);
+        }
+        ClickNode(leaf, leaf.Bounds.Left + 4);
+        Assert(leaf.Checked && apply.Enabled && dialog.GetSelectedPlans() is [var clickedPlan] &&
+            clickedPlan.Targets is [var clickedTarget] && clickedTarget.Instance == "IRIS02" && clickedTarget.Namespaces.SequenceEqual(["USER"]),
+            "clicking a namespace name selects only that namespace and enables processing");
+        ClickNode(leaf, leaf.Bounds.Left + 4);
+        Assert(!leaf.Checked && dialog.GetSelectedPlans().Length == 0 && !apply.Enabled,
+            "clicking the namespace name again clears its checkbox and disables an empty selection");
+        ClickNode(leaf, leaf.Bounds.Left + 4, MouseButtons.Right);
+        ClickNode(tree.Nodes[0], tree.Nodes[0].Bounds.Left + 4);
+        Assert(!leaf.Checked && !tree.Nodes[0].Checked, "right-clicking a namespace and selecting a server name leave checkboxes unchanged");
+        int checkboxX = Enumerable.Range(0, leaf.Bounds.Left).First(x =>
+            (tree.HitTest(x, leaf.Bounds.Top + leaf.Bounds.Height / 2).Location & TreeViewHitTestLocations.StateImage) != 0);
+        leaf.Checked = true; // The native checkbox toggles before NodeMouseClick.
+        ClickNode(leaf, checkboxX);
+        Assert(leaf.Checked, "the namespace-name handler does not toggle a checkbox click a second time");
+        leaf.Checked = false;
         tree.Nodes[0].Nodes[1].Nodes["USER"]!.Checked = true;
         ServicePackHostPlan[] selected = dialog.GetSelectedPlans();
         Assert(apply.Enabled && selected.Length == 1 && selected[0].Host.Host == "SERVER-A" &&
