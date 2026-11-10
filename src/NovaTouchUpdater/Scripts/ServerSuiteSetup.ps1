@@ -74,7 +74,7 @@ function InstallServerSuiteSetup {
     $queue = [Collections.Generic.List[object]]::new()
     foreach ($plan in $plans) { $queue.Add($plan) }
     $active = [Collections.Generic.List[object]]::new()
-    Status 'Setup planen' ("Maximal $limit Server-Suite-Instanz(en) parallel je Host; gemeinsame Installationsordner werden nacheinander aktualisiert.")
+    Status 'Setup planen' ("Server Suite · $($plans.Count) Instanz(en) vorbereiten")
     try {
         while ($queue.Count -gt 0 -or $active.Count -gt 0) {
             for ($index = 0; $index -lt $queue.Count -and $active.Count -lt $limit;) {
@@ -90,7 +90,7 @@ function InstallServerSuiteSetup {
                 $queue.RemoveAt($index)
                 $log = Join-Path $logRoot (($plan.Name -replace '[^a-zA-Z0-9_.-]', '_') + '-' + [guid]::NewGuid().ToString('N') + '.log')
                 try {
-                    Status 'Setup installieren' ("$($plan.Name): reguläres Instanzupdate auf $Version in $($plan.Root); Setup-Log: $log")
+                    Status 'Setup installieren' ("$($plan.Name) · Version $Version installieren")
                     # Supported setups select the exact service and run their normal update.
                     $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /NOCANCEL /RESTARTEXITCODE=3010 /SERVICENAME="' + $plan.Name + '" /DIR="' + $plan.Root + '" /LOG="' + $log + '"'
                     $process = Start-Process -FilePath $Setup -ArgumentList $arguments -PassThru -WindowStyle Hidden -ErrorAction Stop
@@ -117,7 +117,7 @@ function InstallServerSuiteSetup {
                         catch { throw "Dienst läuft nicht: $($plan.Name); $($_.Exception.Message)" }
                     }
                     $installed.Add($plan.Name)
-                    Status 'Setup abgeschlossen' ("$($plan.Name): Setup beendet (Exitcode $code); $($installed.Count)/$($plans.Count) Instanzen installiert")
+                    Status 'Setup abgeschlossen' ("$($plan.Name) · $($installed.Count) von $($plans.Count) Instanzen installiert")
                 } catch { $errors.Add("$($plan.Name): $($_.Exception.Message); Setup-Log: $($job.Log)") }
                 finally { $job.Process.Dispose(); [void]$active.Remove($job) }
             }

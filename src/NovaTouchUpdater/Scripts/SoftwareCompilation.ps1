@@ -192,31 +192,32 @@ function CompleteSoftwareCompilationStatus($Runtime, $Connection, $Resource, [st
             $failure=[pscustomobject]@{Instance=$Destination.Substring(0,$separator);Namespace=$Destination.Substring($separator+1);
                 Resource=$Resource.Name;Item=$name;ItemType=$failed.ItemType;Details=$details}
             $Failures.Add($failure)
-            Progress 'Softwarepaket-Kompilierungsfehler' ($Destination + ' · ' + $Resource.Name + ' · Fehler beim Kompilieren der ' + $failure.ItemType + ': ' + $name + ' · ' + $details)
+            Progress 'Softwarepaket-Kompilierungsfehler' ($Destination + ' · Fehler beim Kompilieren der ' + $failure.ItemType + ': ' + $name + ' · ' + $details + ' · ' + $Resource.Name)
         }
     }
 }
 
 function CompileSoftwareCompilationItems($Runtime, $Connection, $Resource, [string[]]$Items, [string]$Destination, [bool]$Classes,
-    [Collections.Generic.List[object]]$Failures, [string[]]$Secrets) {
+    [Collections.Generic.List[object]]$Failures, [string[]]$Secrets, [int]$CompletedItems=0, [int]$TotalItems=0) {
     if ($Items.Count -eq 0) { return }
     # The installed Aprima proxy forwards a comma-separated list to CompileList.
-    # Bound the UTF-8 size for providers using the legacy short-string protocol.
+    # Bound both the protocol size and the work between visible progress updates.
     $groups=[Collections.Generic.List[object]]::new()
     $group=[Collections.Generic.List[string]]::new(); $bytes=0
     foreach ($item in $Items) {
         $size=[Text.Encoding]::UTF8.GetByteCount($item)+1
         if ($size -gt 24000) { throw 'Klassen-/Routinenname überschreitet die maximale Compilerlistenlänge.' }
-        if ($group.Count -gt 0 -and $bytes+$size -gt 24000) { $groups.Add($group.ToArray()); $group.Clear(); $bytes=0 }
+        if ($group.Count -gt 0 -and ($group.Count -ge 50 -or $bytes+$size -gt 24000)) { $groups.Add($group.ToArray()); $group.Clear(); $bytes=0 }
         $group.Add($item); $bytes+=$size
     }
     if ($group.Count -gt 0) { $groups.Add($group.ToArray()) }
     # Explicit entries must be rebuilt by this manual action. Only already
     # current dependencies expanded by r/b may be skipped by the compiler.
     $flags='frvkb/display=none/checkuptodate=expandedonly'
-    $done=0; $kind=if ($Classes) { 'Klassen' } else { 'Routinen' }
+    $done=0; $kind=if ($Classes) { 'Klasse' } else { 'Routine' }
+    $TotalItems=[Math]::Max($TotalItems, $CompletedItems+$Items.Count)
     foreach ($batch in $groups) {
-        Progress 'Softwarepaket kompilieren' ("$Destination · $($Resource.Name) · $kind $($done+1)–$($done+$batch.Count)/$($Items.Count) · Compilerflags: $flags")
+        Progress 'Softwarepaket kompilieren' ("$Destination · $kind $($done+1) von $($Items.Count) · $($Resource.Name)") ([int][Math]::Floor(100.0*($CompletedItems+$done)/$TotalItems))
         $status=InvokeSoftwareCompilationMethod $Runtime.Proxy 'OBJCompileList' @($Connection,([string]::Join(',', [string[]]$batch)),$flags,'')
         if (-not $status.IsOK) {
             if ($batch.Count -eq 1) {
@@ -229,14 +230,18 @@ function CompileSoftwareCompilationItems($Runtime, $Connection, $Resource, [stri
                 if ([int]$status.Code -ne 5380 -and [string]$status.Message -match '(?i)(compiling\s+(class|routine)|Kompilieren\s+(?:(?:der|von)\s+)?(Klasse|Routine))') {
                     CompleteSoftwareCompilationStatus $Runtime $Connection $Resource $batch[0] $status $Destination $Classes $Failures $Secrets
                 }
-                Progress 'Softwarepaket-Warnung' ("$Destination · $($Resource.Name) · Compilerliste fehlgeschlagen; betroffene Einträge einzeln prüfen.")
+                Progress 'Softwarepaket-Warnung' ("$Destination · Compilerliste fehlgeschlagen; betroffene Einträge einzeln prüfen. · $($Resource.Name)")
+                $checked=0
                 foreach ($item in $batch) {
+                    Progress 'Softwarepaket kompilieren' ("$Destination · $kind $($done+$checked+1) von $($Items.Count) · $($Resource.Name)") ([int][Math]::Floor(100.0*($CompletedItems+$done+$checked)/$TotalItems))
                     $individual=InvokeSoftwareCompilationMethod $Runtime.Proxy 'OBJCompileList' @($Connection,$item,$flags,'')
                     CompleteSoftwareCompilationStatus $Runtime $Connection $Resource $item $individual $Destination $Classes $Failures $Secrets
+                    $checked++
                 }
             }
         }
         $done+=$batch.Count
+        Progress 'Softwarepaket kompilieren' ("$Destination · $kind $done von $($Items.Count) · $($Resource.Name)") ([int][Math]::Floor(100.0*($CompletedItems+$done)/$TotalItems))
     }
 }
 
@@ -291,7 +296,7 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
     try {
         $version=OpenSoftwareCompilationVersion $Runtime $Resource
         if (-not (TestSoftwareCompilationNeeded $version $Resource)) {
-            Progress 'Softwarepaket übersprungen' ($Destination + ' · ' + $Resource.Name + ' · ' + (GetSoftwareCompilationSkipReason $version $Resource))
+            Progress 'Softwarepaket übersprungen' ($Destination + ' · übersprungen · ' + (GetSoftwareCompilationSkipReason $version $Resource) + ' · ' + $Resource.Name) 100
             return [pscustomobject]@{ Imported=$false; Skipped=$true }
         }
         if (-not (InvokeSoftwareCompilationMethod $Runtime.Update 'LockExklusiv')) { throw 'Updates werden bereits an einem anderen Arbeitsplatz eingespielt.' }
@@ -299,10 +304,10 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
         # Recheck under the original namespace-exclusive update lock.
         $version.Close(); $version=OpenSoftwareCompilationVersion $Runtime $Resource
         if (-not (TestSoftwareCompilationNeeded $version $Resource)) {
-            Progress 'Softwarepaket übersprungen' ($Destination + ' · ' + $Resource.Name + ' · ' + (GetSoftwareCompilationSkipReason $version $Resource))
+            Progress 'Softwarepaket übersprungen' ($Destination + ' · übersprungen · ' + (GetSoftwareCompilationSkipReason $version $Resource) + ' · ' + $Resource.Name) 100
             return [pscustomobject]@{ Imported=$false; Skipped=$true }
         }
-        Progress 'Softwarepaket übertragen' ($Destination + ' · ' + $Resource.Name)
+        Progress 'Softwarepaket übertragen' ($Destination + ' · übertragen · ' + $Resource.Name) 0
         $stream=OpenSoftwareCompilationSource $Resource
         $binary=[Activator]::CreateInstance($Runtime.Provider.BinaryStreamType, [object[]]@($Connection))
         $buffer=New-Object byte[] 30720
@@ -315,7 +320,7 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
             # This is the NTC's legacy global reader. Its string result preserves
             # import errors; it has no terminal output and requires no temp XML.
             $imported=$true
-            Progress 'Globale Stammdaten importieren' ($Destination + ' · ' + $Resource.Name)
+            Progress 'Globale Stammdaten importieren' ($Destination + ' · Stammdaten importieren · ' + $Resource.Name) 0
             $loadResult=InvokeSoftwareCompilationMethod $Runtime.GlobalImport 'LoadStream' @($Connection,$binary)
             if ([string]$loadResult -cne '1') { throw ('Globale Stammdaten konnten nicht importiert werden: ' + $loadResult) }
             $loadedAt=$elapsed.Elapsed.TotalSeconds
@@ -334,8 +339,9 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
             # Classes before routines, using bounded compiler lists.
             $classes=@($items | Where-Object { $_ -match '(?i)\.cls$' })
             $routines=@($items | Where-Object { $_ -match '(?i)\.(mac|int|bas)$' })
-            $null=CompileSoftwareCompilationItems $Runtime $Connection $Resource $classes $Destination $true $Failures $Secrets
-            $null=CompileSoftwareCompilationItems $Runtime $Connection $Resource $routines $Destination $false $Failures $Secrets
+            $totalItems=$classes.Count+$routines.Count
+            $null=CompileSoftwareCompilationItems $Runtime $Connection $Resource $classes $Destination $true $Failures $Secrets 0 $totalItems
+            $null=CompileSoftwareCompilationItems $Runtime $Connection $Resource $routines $Destination $false $Failures $Secrets $classes.Count $totalItems
             $null=InvokeSoftwareCompilationMethod $Runtime.Proxy 'SQLPurge' @($Connection)
         }
         $compiledAt=$elapsed.Elapsed.TotalSeconds
@@ -355,6 +361,7 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
         if ($Resource.Kind -eq 'Globals') {
             Progress 'Softwarepaket-Zeiten' (('{0} · {1} · Bereitstellen {2:N2}s · Import {3:N2}s · Gesamt {4:N2}s · nur eingespielt (ohne Kompilierung)' -f
                 $Destination,$Resource.Name,$transferredAt,($loadedAt-$transferredAt),$elapsed.Elapsed.TotalSeconds))
+            Progress 'Softwarepaket importiert' ($Destination + ' · Stammdaten importiert · ' + $Resource.Name) 100
         } else {
             Progress 'Softwarepaket-Zeiten' (('{0} · {1} · Bereitstellen {2:N2}s · Import {3:N2}s · Kompilieren {4:N2}s · Gesamt {5:N2}s' -f
                 $Destination,$Resource.Name,$transferredAt,($loadedAt-$transferredAt),($compiledAt-$loadedAt),$elapsed.Elapsed.TotalSeconds))

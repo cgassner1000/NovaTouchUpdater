@@ -177,11 +177,16 @@ function Start-Process {
 }
 function RunInstall($selected = $script:records, [string]$Package = $script:setup, [int]$Parallelism = 1) {
     $script:expectedLimit=[Math]::Max(1,[Math]::Min(100,$Parallelism))
-    @(InstallServerSuiteSetup $Package (Get-FileHash -LiteralPath $Package -Algorithm SHA256).Hash '2026.4.9999' (ConvertTo-Json -InputObject @($selected) -Compress) (ConvertTo-Json -InputObject @($script:records) -Compress) $Parallelism | Where-Object Event -eq 'setup-result')[0]
+    $script:setupProgress=[Collections.Generic.List[object]]::new()
+    @(InstallServerSuiteSetup $Package (Get-FileHash -LiteralPath $Package -Algorithm SHA256).Hash '2026.4.9999' (ConvertTo-Json -InputObject @($selected) -Compress) (ConvertTo-Json -InputObject @($script:records) -Compress) $Parallelism | ForEach-Object {
+        if ($_.Event -eq 'progress') { $script:setupProgress.Add($_) } else { $_ }
+    })[0]
 }
 NewState
 $result=RunInstall
 Assert ($result.Errors.Count -eq 0 -and $result.InstalledNames.Count -eq 3) 'every installed instance gets its own setup invocation'
+Assert (($setupProgress.Message -join ' ') -notmatch 'Setup-Log:|Exitcode|[A-Z]:\\|parallel' -and
+    @($setupProgress | Where-Object { $_.Message -like '*Version 2026.4.9999 installieren' }).Count -eq 3) 'normal setup status contains instance, version and progress without paths, log names or technical details'
 Assert (@($trace | Where-Object { $_ -like 'setup:*' }).Count -eq 3 -and $eventLog.Status -eq 'Running') 'all three instance setups run without stopping EventLog'
 Assert (@($trace | Where-Object { $_ -notlike 'setup:*' }).Count -eq 0) 'the wrapper performs no additional service or process actions'
 Assert ($states.nt3_server_suite_OFF.Status -eq 'Running' -and $records[2].StartType -eq 'Automatic') 'service registration and startup configuration are determined by the installer'

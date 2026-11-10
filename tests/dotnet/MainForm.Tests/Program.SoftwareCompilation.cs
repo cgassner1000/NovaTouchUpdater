@@ -13,6 +13,14 @@ internal static partial class Program
         SetField(form, "showBetaActivated", new Action(() => { }));
         string? warning = null;
         SetField(form, "showSoftwareCompilationWarning", new Action<string>(text => warning = text));
+        worker.AfterProgress = request =>
+        {
+            Application.DoEvents();
+            HostState host = ((HostState[])Call(form, "SelectedHosts")!).Single(host => host.Host == request.Host);
+            Assert(host.ProgressPercent == 40 && host.Phase == "IRIS:1972/USER · Klasse 101 von 250 · Novacom-NT-BOH.xml" &&
+                host.Row?.Cells["information"].Tag is 40 && host.Row.Cells["information"].Value?.ToString() == "40 % · IRIS:1972/USER · Klasse 101 von 250 · Novacom-NT-BOH.xml",
+                "the information cell shows percentage, database destination, class count and XML filename last; timing details stay in the log");
+        };
         IReadOnlyList<SoftwareCompilationHostOutcome>? overview = null;
         SetField(form, "showSoftwareCompilationResults", new Action<IReadOnlyList<SoftwareCompilationHostOutcome>>(results =>
         {
@@ -49,12 +57,16 @@ internal static partial class Program
             "confirmed compilation uses local and remote hosts with their IRIS targets, without MSI or servicepack-file operations");
         Assert(overview?.Count == 4 && overview[0].Host == Environment.MachineName + " (lokal)",
             "the final overview includes every server and identifies the actual local computer");
+        Assert(((HostState[])Call(form, "SelectedHosts")!).All(host => host.ProgressPercent == 100 && host.Phase == "kompiliert"),
+            "successful compilation finishes with full progress and a concise result");
         worker.Requests.Clear(); worker.ReportCompilerError = true;
         await (Task)Call(form, "CompileSoftwarePackagesAsync")!;
         Assert(warning is null && overview?.Sum(host => host.Result.SoftwareCompilationResults.Sum(ns => ns.CompilationErrors.Length)) == 4 &&
             worker.Requests.Count(request => request.Action == "compile-software-packages") == 4,
             "compiler errors continue subsequent servers without intermediate warning dialogs and retain all failures for the final overview");
         SoftwareCompilationDialogTests(overview!);
+        Assert(((HostState[])Call(form, "SelectedHosts")!).All(host => host.ProgressPercent is null),
+            "compiler errors clear completed progress before showing the final result");
         worker.ReportCompilerError = false;
         worker.Requests.Clear(); selectOne = true;
         await (Task)Call(form, "CompileSoftwarePackagesAsync")!;
@@ -190,6 +202,7 @@ internal static partial class Program
     {
         internal readonly List<WorkerRequest> Requests = [];
         internal Action? OnCompile;
+        internal Action<WorkerRequest>? AfterProgress;
         internal bool ReportCompilerError;
         public Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> onProgress, CancellationToken ct)
         {
@@ -198,7 +211,11 @@ internal static partial class Program
                 return Task.FromResult(new WorkerResult { Success = true, IrisInstances = [new() { Name = "REMOTE", Directory = "C:\\IRIS", SuperServerPort = 1972, Namespaces = ["%SYS", "USER", "PROG-DEV"] }] });
             Assert(request.Action == "compile-software-packages" && !ct.CanBeCanceled, "an accepted host compilation is isolated from UI cancellation");
             OnCompile?.Invoke();
-            onProgress(new WorkerEvent { Event = "progress", Phase = "Softwarepaket kompilieren", Message = "Fixture.Class.cls" });
+            onProgress(new WorkerEvent { Event = "progress", Phase = "Softwarepaket kompilieren",
+                Message = "IRIS:1972/USER · Klasse 101 von 250 · Novacom-NT-BOH.xml", ProgressPercent = 40 });
+            AfterProgress?.Invoke(request);
+            onProgress(new WorkerEvent { Event = "progress", Phase = "Softwarepaket-Zeiten", Message = "Import 1,20s · Kompilieren 2,30s" });
+            AfterProgress?.Invoke(request);
             if (ReportCompilerError)
             {
                 var failure = new SoftwareCompilationError { Instance = request.LocalExecution ? "LOCAL:1972" : "REMOTE:56772", Namespace = request.LocalExecution ? "TAC" : "USER", Resource = "Novacom-NT-BOH.xml",

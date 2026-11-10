@@ -43,7 +43,12 @@ Assert $rejected 'the additional Novacom system assembly is required before open
 [IO.File]::WriteAllText((Join-Path $bin 'Nov.SysDB.dll'),'fixture')
 
 $script:messages=[Collections.Generic.List[string]]::new()
-function Progress { param($phase,$message,$percent) $script:messages.Add($phase+': '+$message) }
+$script:progressEvents=[Collections.Generic.List[object]]::new()
+function Progress {
+    param($phase,$message,$percent)
+    $script:messages.Add($phase+': '+$message)
+    $script:progressEvents.Add([pscustomobject]@{Phase=$phase;Message=$message;Percent=$percent})
+}
 function Emit { throw 'Compilation must finish without interactive events or confirmation input.' }
 $script:compilationResources=$null
 function InitializeSoftwareCompilationRuntime {
@@ -65,6 +70,12 @@ $expected=@('Novacom-NT-Daten.xml','Novacom-NT-BOH.xml','Novacom-NT-POS.xml','No
 foreach($namespace in @('USER','PROG-DEV')) {
     $loads=@([CompilationFixture.State]::Calls | Where-Object { $_ -like ($namespace+':load:*') } | ForEach-Object { $_.Substring(($namespace+':load:').Length) })
     Assert (($loads -join ',') -ceq ($expected -join ',')) ('five resources are imported in the required order in '+$namespace)
+    foreach($name in $expected) {
+        $updates=@($script:progressEvents | Where-Object { $_.Phase -eq 'Softwarepaket kompilieren' -and $_.Message.StartsWith('IRIS:1972/'+$namespace+' '+[char]0xB7+' ') -and $_.Message.EndsWith(' '+[char]0xB7+' '+$name) })
+        Assert ($updates.Count -eq 4 -and ($updates.Percent -join ',') -eq '0,60,60,100' -and $updates[0].Message.Contains('Klasse 1 von 3') -and
+            $updates[1].Message.Contains('Klasse 3 von 3') -and $updates[2].Message.Contains('Routine 1 von 2') -and
+            $updates[3].Message.Contains('Routine 2 von 2') -and ($updates.Message -join ' ') -notmatch 'Compilerflags|display=|checkuptodate=') ('readable class and routine counts share one XML progress bar: '+$name+' / '+$namespace)
+    }
 }
 $calls=[CompilationFixture.State]::Calls; $compiledItems=[CompilationFixture.State]::CompiledItems
 Assert (@($compiledItems | Where-Object { $_ -match ':Test.Current' }).Count -eq 10 -and
@@ -168,6 +179,7 @@ try {
         $legacy=[CompilationFixture.Record]::new(); $legacy.Application='Aprima.SysDB'; $legacy.Tabelle='Aprima-Daten.xml'; $legacy.Version='legacy data version'
         [CompilationFixture.State]::Versions[$namespace+'/Aprima-Daten.xml']=$legacy
     }
+    $script:progressEvents.Clear()
     $result=CompileSoftwarePackages $targets
     Assert ($result.Success -and $result.SoftwareCompilationResults[0].ImportedResources -eq 11 -and [CompilationFixture.State]::Versions.Count -eq 24 -and
         [CompilationFixture.State]::Versions['USER/Aprima-Daten.xml'].Version -ceq 'legacy data version' -and
@@ -175,6 +187,10 @@ try {
     foreach($namespace in @('USER','PROG-DEV')) {
         $steps=@([CompilationFixture.State]::Calls | Where-Object { $_ -match ('^'+[regex]::Escape($namespace)+':(load|globals):') } | ForEach-Object { $_ -replace ('^'+[regex]::Escape($namespace)+':(load|globals):'),'' })
         Assert (($steps -join ',') -ceq ($allExpected -join ',')) ('six startup packages precede all five NT packages in '+$namespace)
+        foreach($resource in $bundle) {
+            $updates=@($script:progressEvents | Where-Object { $null -ne $_.Percent -and $_.Message.StartsWith('IRIS:1972/'+$namespace+' '+[char]0xB7+' ') -and $_.Message.EndsWith(' '+[char]0xB7+' '+$resource.Name) })
+            Assert ($updates.Count -ge 2 -and $updates[0].Percent -eq 0 -and $updates[-1].Percent -eq 100) ('every XML has its own progress from start to finish: '+$resource.Name+' / '+$namespace)
+        }
     }
     Assert ([CompilationFixture.State]::Versions['USER/Aprima-Datentypen.xml'].Application -ceq 'Aprima.SysDB' -and
         [CompilationFixture.State]::Versions['USER/Aprima-System.xml'].Application -ceq 'Aprima.SysDB' -and

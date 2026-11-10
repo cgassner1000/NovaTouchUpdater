@@ -54,12 +54,24 @@ public sealed partial class MainForm
                         result = await runner.RunAsync(request, progress =>
                         {
                             Log(plan.Host.Host, progress.Phase + ": " + progress.Message);
-                            Mark(plan.Host, host => host.Phase = progress.Phase + ": " + DisplayText.Clean(progress.Message));
+                            if (progress.Phase == "Softwarepaket-Zeiten") return;
+                            Mark(plan.Host, host =>
+                            {
+                                host.Error = "";
+                                host.Phase = progress.Phase == "Softwarepakete vorbereiten" ? progress.Phase : DisplayText.Clean(progress.Message);
+                                host.SetProgress(progress.ProgressPercent);
+                            });
                         }, CancellationToken.None);
                     }
                     outcomes.Add(new(plan.Host.IsLocal ? Environment.MachineName + " (lokal)" : plan.Host.Host, result));
                     Log(plan.Host.Host, "Softwarepakete kompilieren: " + result.Message + (result.Error.Length > 0 ? " | " + result.Error : ""));
-                    Mark(plan.Host, host => { host.Result = result.Success ? "Abgeschlossen" : "Fehler"; host.Error = result.Error; });
+                    Mark(plan.Host, host =>
+                    {
+                        host.Result = result.Success ? "Abgeschlossen" : "Fehler";
+                        host.Phase = result.Message;
+                        host.Error = result.Error;
+                        if (result.Success && !result.Skipped) host.SetProgress(100);
+                    });
                     CountCompleted();
                 }
             });
