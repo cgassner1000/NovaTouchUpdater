@@ -191,6 +191,7 @@ internal static partial class Program
             if (request.Action == "publish-msi-packages")
             {
                 onProgress(new WorkerEvent { Phase="zzzSoftware", Message="TEST:51774/APP · NovaTouch POS · 400 / 1000 Bytes", ProgressPercent=40 });
+                onProgress(new WorkerEvent { Phase="zzzSoftware-Zeiten", Message="512 Schreibaufrufe · Übertragen 1,25s · Speichern 0,10s" });
                 ObservePublication?.Invoke();
                 if (FailPublication) return Task.FromResult(new WorkerResult { Success=false, Error=PublicationError });
             }

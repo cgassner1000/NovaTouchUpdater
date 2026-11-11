@@ -37,6 +37,8 @@ internal static partial class Program
                         if ($provider.BinaryStreamType.FullName -ne 'InterSystems.Data.IRISTypes.IRISBinaryStream') { throw 'Binary stream API unavailable' }
                         if ($null -eq $provider.ObjectType.GetConstructor([type[]]@($provider.ConnectionType,[string],[object[]]))) { throw 'Dynamic object constructor unavailable' }
                         if ($null -eq $provider.BinaryStreamType.GetMethod('Write',[type[]]@([byte[]],[int],[int]))) { throw 'Binary stream Write API unavailable' }
+                        $nativeStream = $provider.BinaryStreamType.GetProperty('NativeObject')
+                        if ($null -eq $nativeStream -or $null -eq $nativeStream.PropertyType.GetMethod('InvokeStatusCode',[type[]]@([string],[object[]]))) { throw 'Native binary stream status API unavailable' }
                         $connection.GeneratedAssembly = $provider.ObjectType.Assembly
                         if ($connection.GeneratedAssembly -ne $provider.ObjectType.Assembly) { throw 'Binding assembly projection unavailable' }
                         $native = $provider.ConnectionType.GetProperty('NativeAPI')

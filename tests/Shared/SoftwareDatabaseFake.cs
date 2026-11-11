@@ -39,6 +39,8 @@ namespace SoftwareDatabaseFixture
         public static List<Entry> Entries = new List<Entry>();
         public static List<string> Events = new List<string>();
         public static int WriteDelayMilliseconds, ActiveTransactions, PeakTransactions;
+        public static int NativeWriteCalls, LegacyWriteCalls, MaximumWriteBytes;
+        public static bool TruncateNativeWrites;
         public static void Record(string value) { lock (Gate) Events.Add(value); }
         public static string FailTarget = "";
         public static string FailOpenTarget = "";
@@ -156,19 +158,57 @@ namespace SoftwareDatabaseFixture
     }
     public sealed class BinaryStream : MemoryStream
     {
+        readonly byte[] buffered = new byte[32000];
+        int bufferedCount;
+        readonly NativeBinaryStream native;
+        public BinaryStream() { native = new NativeBinaryStream(this); }
+        public NativeBinaryStream NativeObject { get { return native; } }
+        public override long Length { get { return base.Length + bufferedCount; } }
         public override void Write(byte[] buffer, int offset, int count)
         {
+            System.Threading.Interlocked.Increment(ref Database.LegacyWriteCalls);
+            while (count > 0)
+            {
+                int take = Math.Min(buffered.Length - bufferedCount, count);
+                Buffer.BlockCopy(buffer, offset, buffered, bufferedCount, take);
+                bufferedCount += take; offset += take; count -= take;
+                if (bufferedCount == buffered.Length) Flush();
+            }
+        }
+        public override void Flush()
+        {
+            if (bufferedCount == 0) return;
+            Store(buffered, 0, bufferedCount); bufferedCount = 0;
+        }
+        internal void Store(byte[] buffer, int offset, int count)
+        {
+            System.Threading.Interlocked.Increment(ref Database.NativeWriteCalls);
+            lock (Database.Gate) Database.MaximumWriteBytes = Math.Max(Database.MaximumWriteBytes, count);
+            if (Database.FailStreamOperation == "Write") throw new Exception("IRIS status 5004: simulated stream write failure; Password=synthetic-secret");
             if (Database.WriteDelayMilliseconds > 0) System.Threading.Thread.Sleep(Database.WriteDelayMilliseconds);
-            base.Write(buffer, offset, count);
+            base.Write(buffer, offset, Database.TruncateNativeWrites ? Math.Max(0, count-1) : count);
         }
         public Status Clear()
         {
             if (Database.FailStreamOperation == "Clear") return new Status { Error = "IRIS status 5001: simulated stream clear failure; Password=synthetic-secret" };
-            SetLength(0); return new Status();
+            bufferedCount = 0; SetLength(0); return new Status();
         }
         public Status Save()
         {
+            Flush();
             return new Status { Error = Database.FailStreamOperation == "Save" ? "IRIS status 5002: simulated stream save failure; Password=synthetic-secret" : "" };
+        }
+    }
+    public sealed class NativeBinaryStream
+    {
+        readonly BinaryStream stream;
+        public NativeBinaryStream(BinaryStream value) { stream = value; }
+        public void InvokeStatusCode(string method, object[] arguments)
+        {
+            if (method != "Write" || arguments.Length != 1 || !(arguments[0] is byte[])) throw new Exception("Native stream Write requires one binary argument");
+            byte[] bytes = (byte[])arguments[0];
+            if (bytes.Length == 0 || bytes.Length > 512*1024) throw new Exception("Native write exceeds the bounded upload block");
+            stream.Store(bytes, 0, bytes.Length);
         }
     }
     public sealed class DynamicObject

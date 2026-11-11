@@ -118,6 +118,7 @@ public sealed partial class MainForm
             WorkerResult result = await runner.RunAsync(request, ev =>
             {
                 Log(host.Host, ev.Phase + ": " + ev.Message);
+                if (ev.Phase == "zzzSoftware-Zeiten") return;
                 Mark(host, h => h.ApplyProgress(ev));
             }, ct);
             host.Updates?.RecordDatabaseUploads(result.DatabaseUploadedKinds);

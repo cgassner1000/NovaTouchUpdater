@@ -52,7 +52,7 @@ try {
     }
     InitializeSoftwareDatabaseStreaming
     [Console]::SetIn([IO.StringReader]::new($lines.ToString()))
-    [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds=100
+    [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds=300
     try { PublishStreamedSoftwarePackages @($package) $plan $fixture 2 }
     finally { [SoftwareDatabaseFixture.Database]::WriteDelayMilliseconds=0; [Console]::SetIn($previousInput) }
     Assert ($script:result.Success -and $script:result.Changed -and [SoftwareDatabaseFixture.Database]::Entries.Count -eq 5 -and [SoftwareDatabaseFixture.Database]::PeakTransactions -eq 2) 'bounded WinRM streams feed independent namespace transactions in multiple waves using the configured concurrency'
@@ -85,12 +85,16 @@ try {
 [Console]::InputEncoding=[Text.UTF8Encoding]::new($false)
 $request=[Console]::In.ReadLine() | ConvertFrom-Json
 [Console]::Out.WriteLine((@{Event='progress';Message=$request.Name} | ConvertTo-Json -Compress))
-$bytes=[Convert]::FromBase64String([Console]::In.ReadLine())
-[Console]::Out.WriteLine((@{Event='result';Success=($bytes.Length -eq 3)} | ConvertTo-Json -Compress))
+$received=0
+for ($index=0; $index -lt $request.Chunks; $index++) { $received+=[Convert]::FromBase64String([Console]::In.ReadLine()).Length }
+[Console]::Out.WriteLine((@{Event='result';Success=($received -eq $request.Length)} | ConvertTo-Json -Compress))
 '@)
-    StartSoftwareDatabaseChild $child '{"Name":"Prüfung"}' ${function:InitializeSoftwareDatabaseStreaming}.ToString()
+    StartSoftwareDatabaseChild $child '{"Name":"Prüfung","Chunks":1,"Length":3}' ${function:InitializeSoftwareDatabaseStreaming}.ToString()
     $events=@(ReadSoftwareDatabaseChild 'AQID' $true)
     Assert ($events.Count -eq 2 -and $events[0].Message -eq 'Prüfung' -and $events[1].Success) 'the remote native process relay preserves JSON, Unicode progress and streamed stdin without a PowerShell background runspace'
+    StartSoftwareDatabaseChild $child '{"Name":"Batch","Chunks":2,"Length":6}' ${function:InitializeSoftwareDatabaseStreaming}.ToString()
+    $events=@(ReadSoftwareDatabaseChild @('AQID','BAUG') $true)
+    Assert ($events.Count -eq 2 -and $events[1].Success) 'a batched remote call forwards each binary frame to the actual child as a separate input line'
 
     [IO.File]::WriteAllText($child, @'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)

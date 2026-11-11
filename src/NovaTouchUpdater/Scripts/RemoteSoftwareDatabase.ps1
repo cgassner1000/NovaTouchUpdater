@@ -122,11 +122,12 @@ function StartSoftwareDatabaseChild {
 }
 
 function ReadSoftwareDatabaseChild {
-    param([string]$Chunk = '', [bool]$Finish = $false, [bool]$Stop = $false)
+    param([string[]]$Chunk = @(), [bool]$Finish = $false, [bool]$Stop = $false)
     if ($Stop) { if ($null -ne (Get-Variable -Name NovaTouchDatabaseRelay -Scope Global -ErrorAction SilentlyContinue)) { $global:NovaTouchDatabaseRelay.Dispose(); Remove-Variable NovaTouchDatabaseRelay -Scope Global }; return }
-    if ($Chunk) {
-        try { $global:NovaTouchDatabaseRelay.Write($Chunk) }
-        catch { if (-not $global:NovaTouchDatabaseRelay.HasExited) { throw }; $global:NovaTouchDatabaseRelay.Wait() }
+    foreach ($block in $Chunk) {
+        if (-not $block) { continue }
+        try { $global:NovaTouchDatabaseRelay.Write($block) }
+        catch { if (-not $global:NovaTouchDatabaseRelay.HasExited) { throw }; $global:NovaTouchDatabaseRelay.Wait(); break }
     }
     if ($Finish) { $global:NovaTouchDatabaseRelay.CloseInput() }
     do {
@@ -201,9 +202,18 @@ function InvokeSoftwareDatabaseChildOperation($Session, [string]$Worker, $Reques
                     $file = [IO.File]::Open($msi.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
                     try {
                         $buffer = New-Object byte[] (512 * 1024)
-                        while (($read = $file.Read($buffer,0,$buffer.Length)) -gt 0) {
-                            $chunk = [Convert]::ToBase64String($buffer,0,$read)
-                            foreach ($event in @(InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareDatabaseChild} -ArgumentList $chunk -ErrorAction Stop)) {
+                        # Send at most 4 MiB per invocation instead of one WinRM
+                        # round trip per 512 KiB. Keep the individual pipe frames
+                        # unchanged and memory bounded for every host.
+                        while ($true) {
+                            $chunks = [Collections.Generic.List[string]]::new()
+                            for ($block=0; $block -lt 8; $block++) {
+                                $read = $file.Read($buffer,0,$buffer.Length)
+                                if ($read -eq 0) { break }
+                                $chunks.Add([Convert]::ToBase64String($buffer,0,$read))
+                            }
+                            if ($chunks.Count -eq 0) { break }
+                            foreach ($event in @(InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareDatabaseChild} -ArgumentList (,$chunks.ToArray()) -ErrorAction Stop)) {
                                 if ($event.Event -eq 'progress') { Progress $event.Phase $event.Message $event.ProgressPercent }
                                 elseif ($event.Event -eq 'result') {
                                     if ($null -ne $event.PSObject.Properties['DatabaseUploadedKinds']) { $script:databaseUploadedKinds = @($event.DatabaseUploadedKinds) }

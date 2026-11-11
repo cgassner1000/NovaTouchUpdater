@@ -183,7 +183,7 @@ try {
     try { PublishLocalIrisSoftwarePackages $selected $targets $fixture } catch { $detail = $_.Exception.Message }
     Assert ($detail.Contains('alte Setups und Servicepacks ersetzen') -and $detail.Contains('simulated provider failure') -and -not $detail.Contains('synthetic-secret')) 'upload errors identify the failed operation and original provider cause without credentials'
     [SoftwareDatabaseFixture.Database]::FailTarget = ''
-    foreach ($operation in @('Clear','Save','ObjectSave')) {
+    foreach ($operation in @('Clear','Write','Save','ObjectSave')) {
         DowngradeEntries
         [SoftwareDatabaseFixture.Database]::FailStreamOperation = $operation
         [SoftwareDatabaseFixture.Database]::FailObjectSave = $operation -eq 'ObjectSave'

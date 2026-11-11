@@ -372,19 +372,44 @@ function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transactio
         $file = if ($null -ne $Resolved.StreamSource) { $Resolved.StreamSource.Open($Destination) }
             else { [IO.File]::Open($Resolved.Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read) }
         $hasher = [Security.Cryptography.SHA256]::Create()
-        $buffer = New-Object byte[] 30720
-        $done = 0L; $clock = [Diagnostics.Stopwatch]::StartNew()
-        while (($read = $file.Read($buffer, 0, $buffer.Length)) -gt 0) {
-            $stream.Write($buffer, 0, $read)
+        # IRISStream.Write splits writes into 32,000-byte RPCs internally.
+        # The public NativeObject API writes the same stream in bounded binary
+        # blocks and checks the server's status for every write.
+        $nativeStream = $stream.NativeObject
+        if ($null -eq $nativeStream) { throw 'Native IRIS-Binärstream-Schnittstelle fehlt.' }
+        $buffer = [byte[]]::new(512 * 1024)
+        $writeArguments = [object[]]@($null)
+        $done = 0L; $writes = 0; $length = [long]$file.Length
+        $clock = [Diagnostics.Stopwatch]::StartNew(); $transferClock = [Diagnostics.Stopwatch]::StartNew()
+        while ($true) {
+            # A pipe may return short reads even before EOF. Coalesce them so a
+            # small WinRM fragment does not become another database round trip.
+            $read = 0
+            while ($read -lt $buffer.Length) {
+                $part = $file.Read($buffer, $read, $buffer.Length - $read)
+                if ($part -eq 0) { break }
+                $read += $part
+            }
+            if ($read -eq 0) { break }
+            if ($read -eq $buffer.Length) { $writeArguments[0] = $buffer }
+            else {
+                $tail = [byte[]]::new($read)
+                [Buffer]::BlockCopy($buffer, 0, $tail, 0, $read)
+                $writeArguments[0] = $tail
+            }
+            $writes++
+            $nativeStream.InvokeStatusCode('Write', $writeArguments)
             [void]$hasher.TransformBlock($buffer, 0, $read, $null, 0); $done += $read
             if ($clock.ElapsedMilliseconds -gt 250) {
-                Progress 'zzzSoftware' ($progressLabel + " · $done / " + $file.Length + ' Bytes') ([int][Math]::Min(99, 100.0 * $done / [Math]::Max(1, $file.Length)))
+                Progress 'zzzSoftware' ($progressLabel + " · $done / " + $length + ' Bytes') ([int][Math]::Min(99, 100.0 * $done / [Math]::Max(1, $length)))
                 $clock.Restart()
             }
         }
         [void]$hasher.TransformFinalBlock([byte[]]@(), 0, 0)
         $actual = [BitConverter]::ToString($hasher.Hash).Replace('-', '')
-        if ($actual -ine $Resolved.Sha256 -or $stream.Length -ne $file.Length) { throw 'MSI-Inhalt wurde während des Uploads verändert oder unvollständig übertragen.' }
+        if ($actual -ine $Resolved.Sha256 -or $done -ne $length -or $stream.Length -ne $length) { throw 'MSI-Inhalt wurde während des Uploads verändert oder unvollständig übertragen.' }
+        $transferSeconds = $transferClock.Elapsed.TotalSeconds
+        $saveClock = [Diagnostics.Stopwatch]::StartNew()
         $operation = 'MSI-Binärstream speichern'
         AssertSoftwareDatabaseStatus ($stream.Save()) $operation
         $operation = 'zzzSoftware-Objekt speichern'
@@ -394,6 +419,8 @@ function WriteSoftwareDatabaseMsi($Provider, $Connection, $Resolved, $Transactio
         $operation = 'alte Setups und Servicepacks ersetzen'
         InvokeSoftwareDatabaseSql $Connection "DELETE FROM zzzSoftware WHERE Application=? AND Ordner IN ('Setup','ServicePacks')" @($Resolved.Application) $Transaction
         InvokeSoftwareDatabaseSql $Connection 'UPDATE zzzSoftware SET Application=? WHERE Application=?' @($Resolved.Application, $temporaryApplication) $Transaction
+        Progress 'zzzSoftware-Zeiten' (('{0} · {1} · {2} Bytes · {3} Schreibaufrufe · Übertragen {4:N2}s · Speichern {5:N2}s' -f
+            $Destination,$package.ProductName,$done,$writes,$transferSeconds,$saveClock.Elapsed.TotalSeconds))
     } catch {
         throw [InvalidOperationException]::new("MSI '$($package.ProductName)': $operation fehlgeschlagen.", $_.Exception)
     } finally {
