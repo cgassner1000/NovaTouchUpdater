@@ -34,7 +34,23 @@ function MeasureCompilation([string]$Name) {
     [pscustomobject]@{Name=$Name;Milliseconds=[Math]::Round($median,2);Iterations=$Iterations;SamplesMilliseconds=@($samples.Milliseconds);
         CompileCalls=$samples[-1].CompileCalls;CurrencyCalls=$samples[-1].CurrencyCalls;ProgressMessages=$samples[-1].ProgressMessages}
 }
+function MeasureCurrentCompilation([string]$Name) {
+    [CompilationFixture.State]::Reset(); [CompilationFixture.State]::AlreadyCurrent=$true; [CompilationFixture.State]::AllClassesCurrent=$true
+    [CompilationFixture.State]::GeneratedClasses=1000; [CompilationFixture.State]::GeneratedRoutines=200
+    [CompilationFixture.State]::CompileItemDelayMilliseconds=1
+    $runtime=InitializeSoftwareCompilationRuntime $bin; $connection=[CompilationFixture.Connection]::new('CURRENT')
+    [CompilationFixture.Cache]::Connection=$connection
+    try {
+        $clock=[Diagnostics.Stopwatch]::StartNew()
+        $result=ImportSoftwareCompilationResource $runtime $connection $runtime.Resources[0] 'IRIS:1972/CURRENT'
+        $clock.Stop()
+        $compiled=[CompilationFixture.State]::CompiledItems.Count
+        Assert ($result.Imported -and $compiled -eq $(if($Name -eq 'Before'){1200}else{200}) -and [CompilationFixture.State]::CurrencyCalls -eq 0) ($Name+': current classes follow NTC currency checks while all 200 routines still compile, without per-class queries')
+        return [pscustomobject]@{Name=$Name;Milliseconds=[Math]::Round($clock.Elapsed.TotalMilliseconds,2);CompiledObjects=$compiled;CompilerCalls=[CompilationFixture.State]::CompileCalls}
+    } finally {[CompilationFixture.Cache]::Connection=$null;$connection.Dispose();$runtime.Resolver.Dispose()}
+}
 $baseline=$null
+$currentBefore=$null
 if ($BaselineScript) {
     $optimized=@{}
     # Compare batching and fallback as well as the importer. Older baselines may
@@ -50,6 +66,7 @@ if ($BaselineScript) {
             elseif ($name -eq 'ImportSoftwareCompilationResource') { throw 'Baseline importer is missing' }
         }
         $baseline=MeasureCompilation 'Before'
+        $currentBefore=MeasureCurrentCompilation 'Before'
     } finally {
         foreach($name in $optimized.Keys) { . ([scriptblock]::Create('function '+$name+' {'+$optimized[$name]+'}')) }
     }
@@ -59,6 +76,40 @@ Assert ($after.CompileCalls -eq 3 -and $after.CurrencyCalls -eq 0 -and $after.Pr
 $measurements=@($baseline,$after | Where-Object { $null -ne $_ })
 $measurements | Select-Object Name,Milliseconds,Iterations,CompileCalls,CurrencyCalls,ProgressMessages | Format-Table -AutoSize
 $measurements | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $TestArtifactsRoot 'software-compilation-performance.json') -Encoding UTF8
+$currentAfter=MeasureCurrentCompilation 'After'
+@($currentBefore,$currentAfter | Where-Object {$null -ne $_}) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $TestArtifactsRoot 'software-compilation-current-performance.json') -Encoding UTF8
+
+# Transfer binary data with short reads and a partial final block. Exercise the
+# exact source writer and verify every byte, not just an XML prefix or length.
+$payload=[byte[]]::new(8*1024*1024+123); [Random]::new(42).NextBytes($payload)
+$payloadFile=Join-Path $fixture 'large-transfer.bin'; [IO.File]::WriteAllBytes($payloadFile,$payload)
+$runtime=InitializeSoftwareCompilationRuntime $bin; $connection=[CompilationFixture.Connection]::new('TRANSFER')
+$hash=[Security.Cryptography.SHA256]::Create()
+try {
+    $expectedHash=[Convert]::ToBase64String($hash.ComputeHash($payload))
+    foreach($mode in @('Blocks','File','DeniedFile')) {
+        [CompilationFixture.State]::Reset(); [CompilationFixture.State]::DenyFileCopy=$mode -eq 'DeniedFile'
+        $source=[CompilationFixture.ShortReadStream]::new($payload);$binary=[CompilationFixture.Binary]::new($connection)
+        try {
+            $path=if($mode -eq 'Blocks'){''}else{$payloadFile}
+            $stats=WriteSoftwareCompilationSource $runtime $connection $binary $source $path
+            Assert ($stats.Bytes -eq $payload.Length -and [Convert]::ToBase64String($hash.ComputeHash($binary.ToArray())) -ceq $expectedHash -and
+                [CompilationFixture.State]::LegacyWrites -eq 0) ($mode+': every source byte survives transfer and fallback after a partial failed copy')
+            if($mode -eq 'File') {
+                Assert ($stats.Writes -eq 0 -and [CompilationFixture.State]::FileCopies -eq 1 -and [CompilationFixture.State]::ClosedFiles -eq 1 -and [IO.File]::Exists($payloadFile)) 'server-side file copy uses no binary upload calls and retains the source file'
+            } else {
+                Assert ($stats.Writes -eq 17 -and [CompilationFixture.State]::MaximumWrite -eq 512*1024) ($mode+': short reads coalesce into 17 bounded writes instead of 274 small writes')
+            }
+        } finally {$binary.Close();$source.Dispose()}
+    }
+    foreach($fault in @('Write','Truncate')) {
+        [CompilationFixture.State]::Reset(); [CompilationFixture.State]::FailNativeWrite=$fault -eq 'Write';[CompilationFixture.State]::TruncateNativeWrite=$fault -eq 'Truncate'
+        $source=[IO.MemoryStream]::new($payload,$false);$binary=[CompilationFixture.Binary]::new($connection);$rejected=$false
+        try {try {$null=WriteSoftwareCompilationSource $runtime $connection $binary $source} catch {$rejected=$true}}
+        finally {$binary.Close();$source.Dispose()}
+        Assert $rejected ($fault+': failed or incomplete writes are rejected before XML import')
+    }
+} finally {$hash.Dispose();$connection.Dispose();$runtime.Resolver.Dispose()}
 
 # Exercise large lists and failures, without fake latency.
 [CompilationFixture.State]::Reset(); [CompilationFixture.State]::GeneratedClasses=3000

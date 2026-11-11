@@ -95,7 +95,6 @@ function GetSoftwareCompilationResources($Aprima, $System, $Data, [string]$Direc
     NewSoftwareCompilationEmbeddedResource $Aprima 'Aprima-System-PLZ-D.xml' 'Globals' $true
     NewSoftwareCompilationFileResource $Directory 'Aprima-Systemparameter.xml'
     NewSoftwareCompilationEmbeddedResource $System 'Novacom-System.xml'
-    NewSoftwareCompilationFileResource $Directory 'bls-v301-sp1.xml' $true
     foreach ($name in @('Novacom-NT-Daten.xml','Novacom-NT-BOH.xml','Novacom-NT-POS.xml','Novacom-NT-POS-API.xml','Novacom-NT-QRY.xml')) {
         NewSoftwareCompilationEmbeddedResource $Data $name
     }
@@ -197,9 +196,9 @@ function CompileSoftwareCompilationBatch($Context, [string[]]$Items, [int]$Offse
     Progress 'Softwarepaket kompilieren' ("$($Context.Destination) · $($Context.Kind) $($Offset+1) von $($Context.Count) · $($Context.Resource.Name)") ([int][Math]::Floor(100.0*($Context.CompletedItems+$Offset)/$Context.TotalItems))
     $Context.Calls++
     $status=InvokeSoftwareCompilationMethod $Context.Runtime.Proxy 'OBJCompileList' @($Context.Connection,([string]::Join(',', $Items)),$Flags,'')
-    if ([int]$status.Code -eq 5380 -and $Flags -ne 'frvk/display=none/checkuptodate=expandedonly') {
+    if ([int]$status.Code -eq 5380 -and $Flags.StartsWith('frvkb/')) {
         # Retry the entire deployed list before diagnosing individual entries.
-        $Flags='frvk/display=none/checkuptodate=expandedonly'
+        $Flags=$Flags.Replace('frvkb/','frvk/')
         $Context.Calls++; $Context.DeployedRetries++
         $status=InvokeSoftwareCompilationMethod $Context.Runtime.Proxy 'OBJCompileList' @($Context.Connection,([string]::Join(',', $Items)),$Flags,'')
     }
@@ -233,7 +232,7 @@ function CompileSoftwareCompilationBatch($Context, [string[]]$Items, [int]$Offse
 }
 
 function CompileSoftwareCompilationItems($Runtime, $Connection, $Resource, [string[]]$Items, [string]$Destination, [bool]$Classes,
-    [Collections.Generic.List[object]]$Failures, [string[]]$Secrets, [int]$CompletedItems=0, [int]$TotalItems=0) {
+    [Collections.Generic.List[object]]$Failures, [string[]]$Secrets, [int]$CompletedItems=0, [int]$TotalItems=0, [bool]$ForceRebuild=$false) {
     if ($Items.Count -eq 0) { return [pscustomobject]@{Calls=0;Splits=0;DeployedRetries=0} }
     # The installed Aprima proxy forwards a comma-separated list to CompileList.
     # Bound both the protocol size and the work between visible progress updates.
@@ -246,9 +245,11 @@ function CompileSoftwareCompilationItems($Runtime, $Connection, $Resource, [stri
         $group.Add($item); $bytes+=$size
     }
     if ($group.Count -gt 0) { $groups.Add($group.ToArray()) }
-    # Explicit entries must be rebuilt by this manual action. Only already
-    # current dependencies expanded by r/b may be skipped by the compiler.
+    # NTC checks OBJIsUpToDate before each class. Do the equivalent inside the
+    # server's compiler list, without a client round trip for every class.
+    # Routines still compile unconditionally; an IRIS upgrade rebuilds classes.
     $flags='frvkb/display=none/checkuptodate=expandedonly'
+    if ($Classes -and -not $ForceRebuild) { $flags='frvkb/display=none/checkuptodate=all' }
     $context=[pscustomobject]@{Runtime=$Runtime;Connection=$Connection;Resource=$Resource;Destination=$Destination;Classes=$Classes;
         Kind=$(if ($Classes) { 'Klasse' } else { 'Routine' });Failures=$Failures;Secrets=$Secrets;Count=$Items.Count;
         CompletedItems=$CompletedItems;TotalItems=[Math]::Max($TotalItems, $CompletedItems+$Items.Count);Calls=0;Splits=0;DeployedRetries=0}
@@ -302,6 +303,73 @@ function OpenSoftwareCompilationSource($Resource) {
     return $Resource.Assembly.GetManifestResourceStream($Resource.Manifest)
 }
 
+function InvokeSoftwareCompilationStreamStatus($Runtime, $Connection, $Object, [string]$Method, $Argument) {
+    if ($null -ne $Object.PSObject.Properties['NativeObject']) {
+        $arguments=[object[]]@($null)
+        $arguments[0]=$Argument
+        if ($null -ne $Argument -and $null -ne $Argument.PSObject.Properties['NativeObject']) { $arguments[0]=$Argument.NativeObject }
+        $Object.NativeObject.InvokeStatusCode($Method,$arguments)
+        return
+    }
+    # Installed NTC providers can predate NativeObject/NativeAPI. Their public
+    # generated-proxy API supports the same large binary arguments. Borrow the
+    # existing stream reference, without closing it through this extra wrapper.
+    $proxy=[Activator]::CreateInstance($Runtime.Provider.ObjectType)
+    $proxy.Init($Connection,$Object.Oref,$Object.ClassName)
+    $signature=$Connection.GetMtdSignature()
+    try {
+        $signature.SetReturnType($Connection,[Enum]::Parse($Runtime.Provider.ClientType,'tStatus'))
+        if ($Argument -is [byte[]]) { $signature.Add([byte[]]$Argument,$false) }
+        elseif ($Argument -is [string]) { $signature.Add([string]$Argument,$false) }
+        else { $signature.Add($Argument,$Connection,$Argument.GetType(),$false) }
+        $proxy.RunMethodS($Method,$signature)
+        AssertSoftwareDatabaseStatus $signature.ReturnValue.Value $Method
+    } finally { $signature.Clear(); $Connection.PostProcessing() }
+}
+
+function WriteSoftwareCompilationSource($Runtime, $Connection, $Binary, $Source, [string]$Path='') {
+    $length=[long]$Source.Length
+    if ($Path) {
+        $file=$null
+        try {
+            # Both the worker and IRIS are on the target host. Copy an existing
+            # Daten file on the server instead of sending it over TCP again.
+            # LinkToFile preserves the source (RemoveOnClose defaults to false).
+            $file=NewSoftwareDatabaseObject $Runtime.Provider $Connection '%Stream.FileBinary'
+            InvokeSoftwareCompilationStreamStatus $Runtime $Connection $file 'LinkToFile' $Path
+            InvokeSoftwareCompilationStreamStatus $Runtime $Connection $Binary 'CopyFrom' $file
+            if ($Binary.Length -ne $length) { throw 'Serverseitige XML-Kopie ist unvollständig.' }
+            return [pscustomobject]@{Bytes=$length;Writes=0;Mode='Datei auf Zielserver'}
+        } catch {
+            # Service accounts may lack access to the installation's Daten
+            # directory. Clear any partial copy before the binary fallback.
+            AssertSoftwareDatabaseStatus ($Binary.Clear()) 'XML-Binärstream leeren'
+        } finally { if ($null -ne $file) { $file.Close() } }
+    }
+    $buffer=[byte[]]::new(512*1024); $arguments=[object[]]@($null)
+    $done=0L; $writes=0
+    while ($true) {
+        $read=0
+        while ($read -lt $buffer.Length) {
+            $part=$Source.Read($buffer,$read,$buffer.Length-$read)
+            if ($part -eq 0) { break }
+            $read+=$part
+        }
+        if ($read -eq 0) { break }
+        if ($read -eq $buffer.Length) { $arguments[0]=$buffer }
+        else {
+            $tail=[byte[]]::new($read); [Buffer]::BlockCopy($buffer,0,$tail,0,$read)
+            $arguments[0]=$tail
+        }
+        # IRISStream.Write itself splits into 32,000-byte RPCs. The public
+        # native and generated-proxy APIs accept much larger binary blocks.
+        InvokeSoftwareCompilationStreamStatus $Runtime $Connection $Binary 'Write' $arguments[0]
+        $done+=$read; $writes++
+    }
+    if ($done -ne $length -or $Binary.Length -ne $length) { throw 'XML-Binärstream wurde unvollständig übertragen.' }
+    return [pscustomobject]@{Bytes=$done;Writes=$writes;Mode='Binärblöcke'}
+}
+
 function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [string]$Destination,
     [Collections.Generic.List[object]]$Failures=[Collections.Generic.List[object]]::new(), [string[]]$Secrets=@()) {
     $version=$null; $locked=$false; $stream=$null; $binary=$null
@@ -325,8 +393,7 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
         Progress 'Softwarepaket übertragen' ($Destination + ' · übertragen · ' + $Resource.Name) 0
         $stream=OpenSoftwareCompilationSource $Resource
         $binary=[Activator]::CreateInstance($Runtime.Provider.BinaryStreamType, [object[]]@($Connection))
-        $buffer=New-Object byte[] 30720
-        while (($read=$stream.Read($buffer,0,$buffer.Length)) -gt 0) { $binary.Write($buffer,0,$read) }
+        $transfer=WriteSoftwareCompilationSource $Runtime $Connection $binary $stream $Resource.Path
         # Unlike the VB call site, PowerShell forwards an unused return value to
         # the function's success stream. Rewind returns IRISStatus, not void.
         AssertSoftwareDatabaseStatus ($binary.Rewind()) 'XML-Stream zurückspulen'
@@ -360,7 +427,8 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
             if (-not $hasItems) { throw 'Der XML-Import hat keine Klassen oder Routinen zurückgemeldet.' }
             # Classes before routines, using bounded compiler lists.
             $totalItems=$classes.Count+$routines.Count
-            $classStats=CompileSoftwareCompilationItems $Runtime $Connection $Resource $classes.ToArray() $Destination $true $Failures $Secrets 0 $totalItems
+            $forceRebuild=[string]$version.dbversion -cne [string]$Connection.ServerVersion
+            $classStats=CompileSoftwareCompilationItems $Runtime $Connection $Resource $classes.ToArray() $Destination $true $Failures $Secrets 0 $totalItems $forceRebuild
             $routineStats=CompileSoftwareCompilationItems $Runtime $Connection $Resource $routines.ToArray() $Destination $false $Failures $Secrets $classes.Count $totalItems
             $null=InvokeSoftwareCompilationMethod $Runtime.Proxy 'SQLPurge' @($Connection)
         }
@@ -379,13 +447,13 @@ function ImportSoftwareCompilationResource($Runtime, $Connection, $Resource, [st
             }
         }
         if ($Resource.Kind -eq 'Globals') {
-            Progress 'Softwarepaket-Zeiten' (('{0} · {1} · Bereitstellen {2:N2}s · Import {3:N2}s · Gesamt {4:N2}s · nur eingespielt (ohne Kompilierung)' -f
-                $Destination,$Resource.Name,$transferredAt,($loadedAt-$transferredAt),$elapsed.Elapsed.TotalSeconds))
+            Progress 'Softwarepaket-Zeiten' (('{0} · {1} · Bereitstellen {2:N2}s · Import {3:N2}s · Gesamt {4:N2}s · nur eingespielt (ohne Kompilierung) · {5} · {6} Bytes · {7} Schreibaufrufe' -f
+                $Destination,$Resource.Name,$transferredAt,($loadedAt-$transferredAt),$elapsed.Elapsed.TotalSeconds,$transfer.Mode,$transfer.Bytes,$transfer.Writes))
             Progress 'Softwarepaket importiert' ($Destination + ' · Stammdaten importiert · ' + $Resource.Name) 100
         } else {
-            Progress 'Softwarepaket-Zeiten' (('{0} · {1} · Bereitstellen {2:N2}s · Import {3:N2}s · Kompilieren {4:N2}s · Gesamt {5:N2}s · Compileraufrufe {6} · Fehlerteilungen {7} · Deployed-Wiederholungen {8}' -f
+            Progress 'Softwarepaket-Zeiten' (('{0} · {1} · Bereitstellen {2:N2}s · Import {3:N2}s · Kompilieren {4:N2}s · Gesamt {5:N2}s · Compileraufrufe {6} · Fehlerteilungen {7} · Deployed-Wiederholungen {8} · {9} · {10} Bytes · {11} Schreibaufrufe' -f
                 $Destination,$Resource.Name,$transferredAt,($loadedAt-$transferredAt),($compiledAt-$loadedAt),$elapsed.Elapsed.TotalSeconds,
-                ($classStats.Calls+$routineStats.Calls),($classStats.Splits+$routineStats.Splits),($classStats.DeployedRetries+$routineStats.DeployedRetries)))
+                ($classStats.Calls+$routineStats.Calls),($classStats.Splits+$routineStats.Splits),($classStats.DeployedRetries+$routineStats.DeployedRetries),$transfer.Mode,$transfer.Bytes,$transfer.Writes))
         }
         return [pscustomobject]@{ Imported=$true; Skipped=$false; CompilationErrors=@($Failures.ToArray() | Select-Object -Skip $failuresBefore) }
     } catch {

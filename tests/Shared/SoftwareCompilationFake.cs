@@ -9,9 +9,9 @@ namespace CompilationFixture {
         public static List<string> CompiledItems = new List<string>();
         public static Dictionary<string, Record> Versions = new Dictionary<string, Record>();
         public static string Resource = "", FailResource = "", FailNamespace = "", FailItem = "", FailCompileResource = "", CompileErrorMessage = "";
-        public static bool Locked, DenyLock, FailLoad, FailSave, Fallback, AlreadyCurrent, FailBatches, FailRewind, AllClassesCurrent, FailGlobals;
-        public static int Disposed, CompileCalls, CurrencyCalls, GeneratedClasses, GeneratedRoutines, CallDelayMilliseconds, MaximumWrite;
-        public static void Reset() { Calls.Clear(); CompiledItems.Clear(); Versions.Clear(); Resource=FailResource=FailNamespace=FailItem=FailCompileResource=CompileErrorMessage=""; Locked=DenyLock=FailLoad=FailSave=Fallback=AlreadyCurrent=FailBatches=FailRewind=AllClassesCurrent=FailGlobals=false; Disposed=CompileCalls=CurrencyCalls=GeneratedClasses=GeneratedRoutines=CallDelayMilliseconds=MaximumWrite=0; Cache.Connection=null; }
+        public static bool Locked, DenyLock, FailLoad, FailSave, Fallback, AlreadyCurrent, FailBatches, FailRewind, AllClassesCurrent, FailGlobals, DenyFileCopy, FailNativeWrite, TruncateNativeWrite;
+        public static int Disposed, CompileCalls, CurrencyCalls, GeneratedClasses, GeneratedRoutines, CallDelayMilliseconds, MaximumWrite, NativeWrites, LegacyWrites, FileCopies, WriteDelayMilliseconds, ClosedFiles, CompileItemDelayMilliseconds;
+        public static void Reset() { Calls.Clear(); CompiledItems.Clear(); Versions.Clear(); Resource=FailResource=FailNamespace=FailItem=FailCompileResource=CompileErrorMessage=""; Locked=DenyLock=FailLoad=FailSave=Fallback=AlreadyCurrent=FailBatches=FailRewind=AllClassesCurrent=FailGlobals=DenyFileCopy=FailNativeWrite=TruncateNativeWrite=false; Disposed=CompileCalls=CurrencyCalls=GeneratedClasses=GeneratedRoutines=CallDelayMilliseconds=MaximumWrite=NativeWrites=LegacyWrites=FileCopies=WriteDelayMilliseconds=ClosedFiles=CompileItemDelayMilliseconds=0; Cache.Connection=null; }
         public static void Add(string text) { Calls.Add(((Cache.Connection == null) ? "none" : Cache.Connection.Namespace) + ":" + text); }
         public static void ReadResource(string xml) { var match=System.Text.RegularExpressions.Regex.Match(xml,"<!-- Resource:(.*?) -->"); if(match.Success) Resource=match.Groups[1].Value; }
     }
@@ -79,11 +79,47 @@ namespace CompilationFixture {
     }
     public class Binary {
         readonly MemoryStream bytes=new MemoryStream();
-        public Binary(Connection connection) { }
-        public void Write(byte[] buffer,int start,int count) { State.MaximumWrite=Math.Max(State.MaximumWrite,count); bytes.Write(buffer,start,count); }
+        public NativeStream NativeObject { get; private set; }
+        public long Length { get { return bytes.Length; } }
+        public Binary(Connection connection) { NativeObject=new NativeStream(this); }
+        public void Write(byte[] buffer,int start,int count) { State.LegacyWrites++; if(State.WriteDelayMilliseconds>0) System.Threading.Thread.Sleep(State.WriteDelayMilliseconds); WriteBytes(buffer,start,count); }
+        public void WriteBytes(byte[] buffer,int start,int count) { State.MaximumWrite=Math.Max(State.MaximumWrite,count); bytes.Write(buffer,start,count); }
+        public Status Clear() { bytes.SetLength(0); bytes.Position=0; return new Status(); }
         public Status Rewind() { bytes.Position=0; return State.FailRewind ? new Status(1,"rewind failed") : new Status(); }
         public string Text { get { return Encoding.UTF8.GetString(bytes.ToArray()); } }
+        public byte[] ToArray() { return bytes.ToArray(); }
         public void Close() { bytes.Dispose(); }
+    }
+    public class ServerFile : IDisposable {
+        public string Path;
+        public ServerFile NativeObject { get { return this; } }
+        public ServerFile(Connection connection,string cls,object[] args) { if(cls!="%Stream.FileBinary" || args.Length!=0) throw new Exception("unexpected stream class"); }
+        public ServerFile() { }
+        public void InvokeStatusCode(string method,object[] args) {
+            if(method!="LinkToFile" || args.Length!=1) throw new Exception("unexpected file operation");
+            Path=(string)args[0];
+        }
+        public void Dispose() { State.ClosedFiles++; }
+        public void Close() { Dispose(); }
+    }
+    public class NativeStream {
+        readonly Binary owner;
+        public NativeStream(Binary value) { owner=value; }
+        public void InvokeStatusCode(string method,object[] args) {
+            if(args.Length!=1) throw new Exception("invalid binary argument array");
+            if(method=="CopyFrom") {
+                // Fail after a partial copy to verify that fallback clears it.
+                owner.WriteBytes(new byte[] { 1,2,3 },0,3);
+                if(State.DenyFileCopy) throw new Exception("service account cannot read the file");
+                owner.Clear(); byte[] data=File.ReadAllBytes(((ServerFile)args[0]).Path);
+                owner.WriteBytes(data,0,data.Length); State.FileCopies++; return;
+            }
+            if(method!="Write" || !(args[0] is byte[])) throw new Exception("native write lost the binary argument");
+            if(State.FailNativeWrite) throw new Exception("native write failed");
+            byte[] bytes=(byte[])args[0]; State.NativeWrites++;
+            if(State.WriteDelayMilliseconds>0) System.Threading.Thread.Sleep(State.WriteDelayMilliseconds);
+            owner.WriteBytes(bytes,0,bytes.Length-(State.TruncateNativeWrite ? 1 : 0));
+        }
     }
     public class Resolver : IDisposable { public void Dispose() { State.Calls.Add("resolver-disposed"); } }
     public static class GlobalImport {
@@ -124,12 +160,17 @@ namespace CompilationFixture {
                 if(name==State.FailItem && (State.FailCompileResource=="" || State.FailCompileResource==State.Resource)) return new Status(1,State.CompileErrorMessage.Length == 0 ? "compile failed" : State.CompileErrorMessage);
             }
             foreach(string name in item.Split(',')) {
-                if(name=="Test.Current.cls" && flags.Contains("/checkuptodate=all")) continue;
+                if((name=="Test.Current.cls" || (State.AllClassesCurrent && name.EndsWith(".cls"))) && flags.Contains("/checkuptodate=all")) continue;
+                if(State.CompileItemDelayMilliseconds>0) System.Threading.Thread.Sleep(State.CompileItemDelayMilliseconds);
                 State.CompiledItems.Add(c.Namespace+":"+State.Resource+":"+name);
             }
             return new Status();
         }
         public static string SQLPurge(Connection c) { State.Add("purge"); return "1"; }
         public static string FileDelete(Connection c,string path) { if(!State.Locked) throw new Exception("cleanup without ownership"); State.Add("delete:"+path); return "1"; }
+    }
+    public class ShortReadStream : MemoryStream {
+        public ShortReadStream(byte[] bytes) : base(bytes,false) { }
+        public override int Read(byte[] buffer,int offset,int count) { return base.Read(buffer,offset,Math.Min(count,997)); }
     }
 }

@@ -58,7 +58,7 @@ function InitializeSoftwareCompilationRuntime {
         $resources += NewSoftwareCompilationEmbeddedResource $data $name
     }
     if($null -ne $script:compilationResources) { $resources=@($script:compilationResources) }
-    [pscustomobject]@{ Resolver=[CompilationFixture.Resolver]::new(); Provider=[pscustomobject]@{BinaryStreamType=[CompilationFixture.Binary]}; Data=$data;
+    [pscustomobject]@{ Resolver=[CompilationFixture.Resolver]::new(); Provider=[pscustomobject]@{BinaryStreamType=[CompilationFixture.Binary];ObjectType=[CompilationFixture.ServerFile]}; Data=$data;
         Cache=[CompilationFixture.Cache]; Update=[CompilationFixture.Update]; Proxy=[CompilationFixture.Proxy]; GlobalImport=[CompilationFixture.GlobalImport]; VersionType=[CompilationFixture.VersionObject];
         VersionObject=[CompilationFixture.VersionObject].GetField('obj',[Reflection.BindingFlags]'Instance,NonPublic'); Resources=$resources }
 }
@@ -101,6 +101,24 @@ Assert (-not $result.Success -and -not $result.Changed -and [CompilationFixture.
 [CompilationFixture.State]::Reset(); [CompilationFixture.State]::AlreadyCurrent=$true; $result=CompileSoftwarePackages $targets
 Assert ($result.Success -and $result.Changed -and @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:load:*' }).Count -eq 10 -and
     [CompilationFixture.State]::CompileCalls -eq 20) 'current XML and server versions no longer suppress a requested compilation'
+Assert (@([CompilationFixture.State]::CompiledItems | Where-Object { $_ -like '*:Test.Current.cls' }).Count -eq 0 -and
+    @([CompilationFixture.State]::CompiledItems | Where-Object { $_ -like '*:Test.Class.cls' }).Count -eq 10 -and
+    @([CompilationFixture.State]::CompiledItems | Where-Object { $_ -like '*:Test.Routine.mac' }).Count -eq 10 -and
+    [CompilationFixture.State]::CurrencyCalls -eq 0 -and
+    @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:compile:*.cls:*/checkuptodate=all' }).Count -eq 10) 'same-engine runs skip current classes inside the compiler while stale classes and all routines still compile without individual currency queries'
+[CompilationFixture.State]::Reset(); [CompilationFixture.State]::AlreadyCurrent=$true; [CompilationFixture.State]::Fallback=$true
+$result=CompileSoftwarePackages $targets
+Assert ($result.Success -and @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:frvk/display=none/checkuptodate=all' }).Count -eq 10 -and
+    @([CompilationFixture.State]::CompiledItems | Where-Object { $_ -like '*:Test.Current.cls' }).Count -eq 0) 'deployed-list retry preserves the server-side current-class check'
+[CompilationFixture.State]::Reset()
+foreach ($namespace in @('USER','PROG-DEV')) {
+    foreach ($name in $expected) {
+        $previousEngine=[CompilationFixture.Record]::new(); $previousEngine.Version='<Export ts="2026-11-05 10:00:00">'; $previousEngine.dbversion='2021.1'
+        [CompilationFixture.State]::Versions[$namespace+'/'+$name]=$previousEngine
+    }
+}
+$result=CompileSoftwarePackages $targets
+Assert ($result.Success -and @([CompilationFixture.State]::CompiledItems | Where-Object { $_ -like '*:Test.Current.cls' }).Count -eq 10) 'an engine-version change forces explicit classes to rebuild even if their ordinary currency check would pass'
 Assert (-not (TestSoftwareCompilationNeeded ([pscustomobject]@{Version='<Export ts="2027-01-01 00:00:00">';dbversion='2022.1'}) ([pscustomobject]@{Version='<Export ts="2026-11-05 10:00:00">';Kind='Classes';NoDowngrade=$true}))) 'newer database timestamps prevent a downgrade'
 Assert (TestSoftwareCompilationNeeded ([pscustomobject]@{Version='<Export ts="2026-11-05 10:00:00">';dbversion='2021.1'}) ([pscustomobject]@{Version='<Export ts="2026-11-05 10:00:00">';Kind='Classes';NoDowngrade=$true})) 'an updated IRIS server version also recompiles'
 [CompilationFixture.State]::Reset()
@@ -151,28 +169,30 @@ Assert (-not $result.Success -and -not $result.Changed -and @([CompilationFixtur
 [CompilationFixture.State]::Reset(); [CompilationFixture.State]::FailSave=$true; $result=CompileSoftwarePackages $targets
 Assert (-not $result.Success -and @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:servicepack-reset' }).Count -eq 0) 'failed version saving is reported without a dialog or ServicePack metadata reset'
 
-# The complete NTC startup set: three assemblies and files beside bin, never in it.
+# The supported startup set: three assemblies and system parameters beside bin.
 $dataDirectory=Join-Path (Split-Path $bin) 'Daten'; [void][IO.Directory]::CreateDirectory($dataDirectory)
 function WriteCompilationGlobalFixture([string]$Name,[string]$Timestamp='2026-11-05 10:00:00') {
     $unicodeText=([string][char]0xC4)+'Test'
     $xml="<?xml version=`"1.0`" encoding=`"UTF-8`"?>`n<Export ts=`"$Timestamp`">`n<!-- Resource:$Name -->`n<Global><Node><Sub>^Fixture</Sub><Data><![CDATA[$unicodeText"+('x'*70000)+"]]></Data></Node></Global></Export>"
     [IO.File]::WriteAllText((Join-Path $dataDirectory $Name),$xml,[Text.UTF8Encoding]::new($false))
 }
-WriteCompilationGlobalFixture 'Aprima-Systemparameter.xml'; WriteCompilationGlobalFixture 'bls-v301-sp1.xml'
+WriteCompilationGlobalFixture 'Aprima-Systemparameter.xml'
 $aprima=[CompilationFixture.Data]::new('Aprima.SysDB'); $systemData=[CompilationFixture.Data]::new('Nov.SysDB'); $ntData=[CompilationFixture.Data]::new()
 $bundle=@(GetSoftwareCompilationResources $aprima $systemData $ntData $bin)
-$allExpected=@('Aprima-Datentypen.xml','Aprima-System.xml','Aprima-System-PLZ-D.xml','Aprima-Systemparameter.xml','Novacom-System.xml','bls-v301-sp1.xml')+$expected
-Assert ($bundle.Count -eq 11 -and ($bundle.Name -join ',') -ceq ($allExpected -join ',') -and
+$allExpected=@('Aprima-Datentypen.xml','Aprima-System.xml','Aprima-System-PLZ-D.xml','Aprima-Systemparameter.xml','Novacom-System.xml')+$expected
+Assert ($bundle.Count -eq 10 -and ($bundle.Name -join ',') -ceq ($allExpected -join ',') -and
     $bundle[0].Manifest -ceq 'AP.SysDB.Aprima-Datentypen.xml' -and $bundle[0].Table -ceq 'Aprima-Datentypen.xml') 'the Datentypen resource is prepared first with its own name and version key'
-Assert ($bundle[3].Path -ceq (Join-Path $dataDirectory 'Aprima-Systemparameter.xml') -and $bundle[5].Path -ceq (Join-Path $dataDirectory 'bls-v301-sp1.xml') -and
-    $bundle[3].Table -ceq '..\Daten\Aprima-Systemparameter.xml' -and $bundle[5].Table -ceq '..\Daten\bls-v301-sp1.xml') 'external globals resolve from the sibling Daten directory with stable relative version keys'
-Remove-Item -LiteralPath $bundle[5].Path
+Assert ($bundle[3].Path -ceq (Join-Path $dataDirectory 'Aprima-Systemparameter.xml') -and
+    $bundle[3].Table -ceq '..\Daten\Aprima-Systemparameter.xml') 'external globals resolve from the sibling Daten directory with stable relative version keys'
+[IO.File]::WriteAllText((Join-Path $dataDirectory 'bls-v301-sp1.xml'),'not XML: BLS must never be read')
+Assert (@(GetSoftwareCompilationResources $aprima $systemData $ntData $bin).Count -eq 10) 'BLS is excluded even when an invalid BLS file exists; an absent BLS file is also allowed'
+Remove-Item -LiteralPath $bundle[3].Path
 $wrongDataDirectory=Join-Path $bin 'Daten'; [void][IO.Directory]::CreateDirectory($wrongDataDirectory)
-[IO.File]::WriteAllText((Join-Path $wrongDataDirectory 'bls-v301-sp1.xml'),'wrong directory, must not be read')
+[IO.File]::WriteAllText((Join-Path $wrongDataDirectory 'Aprima-Systemparameter.xml'),'wrong directory, must not be read')
 [CompilationFixture.State]::Reset(); $rejected=$false
-try { $null=@(GetSoftwareCompilationResources $aprima $systemData $ntData $bin) } catch { $rejected=$_.Exception.Message -match 'bls-v301-sp1.xml' }
+try { $null=@(GetSoftwareCompilationResources $aprima $systemData $ntData $bin) } catch { $rejected=$_.Exception.Message -match 'Aprima-Systemparameter.xml' }
 Assert ($rejected -and [CompilationFixture.State]::Calls.Count -eq 0 -and [CompilationFixture.State]::Disposed -eq 0) 'a missing required Daten file is rejected before DB access even if a misleading bin/Daten file exists'
-WriteCompilationGlobalFixture 'bls-v301-sp1.xml'
+WriteCompilationGlobalFixture 'Aprima-Systemparameter.xml'
 try {
     $script:compilationResources=@(GetSoftwareCompilationResources $aprima $systemData $ntData $bin)
     [CompilationFixture.State]::Reset()
@@ -182,12 +202,12 @@ try {
     }
     $script:progressEvents.Clear()
     $result=CompileSoftwarePackages $targets
-    Assert ($result.Success -and $result.SoftwareCompilationResults[0].ImportedResources -eq 11 -and [CompilationFixture.State]::Versions.Count -eq 24 -and
+    Assert ($result.Success -and $result.SoftwareCompilationResults[0].ImportedResources -eq 10 -and [CompilationFixture.State]::Versions.Count -eq 22 -and
         [CompilationFixture.State]::Versions['USER/Aprima-Daten.xml'].Version -ceq 'legacy data version' -and
         [CompilationFixture.State]::Versions['USER/Aprima-Datentypen.xml'].Version -match '2026-11-05') 'the datatype package gets its own version row even when a legacy Aprima-Daten row already exists, without overwriting that legacy row'
     foreach($namespace in @('USER','PROG-DEV')) {
         $steps=@([CompilationFixture.State]::Calls | Where-Object { $_ -match ('^'+[regex]::Escape($namespace)+':(load|globals):') } | ForEach-Object { $_ -replace ('^'+[regex]::Escape($namespace)+':(load|globals):'),'' })
-        Assert (($steps -join ',') -ceq ($allExpected -join ',')) ('six startup packages precede all five NT packages in '+$namespace)
+        Assert (($steps -join ',') -ceq ($allExpected -join ',')) ('five startup packages precede all five NT packages in '+$namespace)
         foreach($resource in $bundle) {
             $updates=@($script:progressEvents | Where-Object { $null -ne $_.Percent -and $_.Message.StartsWith('IRIS:1972/'+$namespace+' '+[char]0xB7+' ') -and $_.Message.EndsWith(' '+[char]0xB7+' '+$resource.Name) })
             Assert ($updates.Count -ge 2 -and $updates[0].Percent -eq 0 -and $updates[-1].Percent -eq 100) ('every XML has its own progress from start to finish: '+$resource.Name+' / '+$namespace)
@@ -197,30 +217,31 @@ try {
         [CompilationFixture.State]::Versions['USER/Aprima-System.xml'].Application -ceq 'Aprima.SysDB' -and
         [CompilationFixture.State]::Versions['USER/Aprima-System-PLZ-D.xml'].Application -ceq 'Aprima.SysDB' -and
         [CompilationFixture.State]::Versions['USER/Novacom-System.xml'].Application -ceq 'Nov.SysDB' -and
-        [CompilationFixture.State]::Versions['USER/..\Daten\Aprima-Systemparameter.xml'].Application -ceq 'Nov.WaWi' -and
-        [CompilationFixture.State]::Versions['USER/..\Daten\bls-v301-sp1.xml'].Application -ceq 'Nov.WaWi') 'every startup package stores the exact Application and Tabelle association requested for zzzUpdate'
-    Assert (@([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:globals:*' }).Count -eq 6 -and
-        [CompilationFixture.State]::CompileCalls -eq 32 -and [CompilationFixture.State]::MaximumWrite -le 30720) 'three globals per namespace use the native streaming global reader while only the eight class packages reach the compiler'
+        [CompilationFixture.State]::Versions['USER/..\Daten\Aprima-Systemparameter.xml'].Application -ceq 'Nov.WaWi') 'every startup package stores the exact Application and Tabelle association requested for zzzUpdate'
+    Assert (@([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:globals:*' }).Count -eq 4 -and
+        [CompilationFixture.State]::CompileCalls -eq 32 -and [CompilationFixture.State]::FileCopies -eq 2 -and [CompilationFixture.State]::LegacyWrites -eq 0 -and
+        @([CompilationFixture.State]::Versions.Keys | Where-Object { $_ -like '*bls-v301-sp1.xml' }).Count -eq 0 -and
+        @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*bls-v301-sp1.xml*' }).Count -eq 0) 'external globals copy on the server, BLS is never imported or versioned, and only the eight class packages reach the compiler'
     $result=CompileSoftwarePackages $targets
-    Assert ($result.Success -and $result.SoftwareCompilationResults[0].ImportedResources -eq 8 -and $result.SoftwareCompilationResults[0].SkippedResources -eq 3 -and
-        @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:globals:*' }).Count -eq 6) 'repeat runs recompile classes without reimporting once-only PLZ/BLS data or unchanged system parameters'
+    Assert ($result.Success -and $result.SoftwareCompilationResults[0].ImportedResources -eq 8 -and $result.SoftwareCompilationResults[0].SkippedResources -eq 2 -and
+        @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:globals:*' }).Count -eq 4) 'repeat runs process class packages without reimporting once-only PLZ data or unchanged system parameters'
     WriteCompilationGlobalFixture 'Aprima-Systemparameter.xml' '2027-01-01 00:00:00'
     $script:compilationResources=@(GetSoftwareCompilationResources $aprima $systemData $ntData $bin)
     $result=CompileSoftwarePackages $targets
     Assert ($result.Success -and $result.SoftwareCompilationResults[0].ImportedResources -eq 9 -and
         [CompilationFixture.State]::Versions['USER/..\Daten\Aprima-Systemparameter.xml'].Version -match '2027-01-01') 'changed external system parameters are reimported and receive the version header from the actual file'
     $withSeparateData=@(GetSoftwareCompilationResources ([CompilationFixture.Data]::new('Aprima.SysDB',$true)) $systemData $ntData $bin)
-    Assert ($withSeparateData.Count -eq 12 -and $withSeparateData[0].Name -ceq 'Aprima-Datentypen.xml' -and $withSeparateData[1].Name -ceq 'Aprima-Daten.xml' -and
+    Assert ($withSeparateData.Count -eq 11 -and $withSeparateData[0].Name -ceq 'Aprima-Datentypen.xml' -and $withSeparateData[1].Name -ceq 'Aprima-Daten.xml' -and
         $withSeparateData[0].Manifest -cne $withSeparateData[1].Manifest) 'a DLL containing both real resources keeps Daten and Datentypen as independent packages'
     [CompilationFixture.State]::Reset(); $script:compilationResources=@($withSeparateData[0],$withSeparateData[1]); $result=CompileSoftwarePackages $targets
     Assert ($result.Success -and [CompilationFixture.State]::Versions.Count -eq 4 -and
         @([CompilationFixture.State]::CompiledItems | Where-Object { $_ -like '*:Aprima-Datentypen.xml:*' }).Count -gt 0 -and
         @([CompilationFixture.State]::CompiledItems | Where-Object { $_ -like '*:Aprima-Daten.xml:*' }).Count -gt 0) 'when both resources exist each is imported and compiled under its own version key'
-    [CompilationFixture.State]::Reset(); $script:messages.Clear(); $script:compilationResources=@($bundle[5]); $result=CompileSoftwarePackages $targets
+    [CompilationFixture.State]::Reset(); $script:messages.Clear(); $script:compilationResources=@((NewSoftwareCompilationFileResource $bin 'Aprima-Systemparameter.xml')); $result=CompileSoftwarePackages $targets
     Assert ($result.Success -and [CompilationFixture.State]::Versions.Count -eq 2 -and [CompilationFixture.State]::CompileCalls -eq 0 -and
-        @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:globals:bls-v301-sp1.xml' }).Count -eq 2 -and
+        @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:globals:Aprima-Systemparameter.xml' }).Count -eq 2 -and
         @([CompilationFixture.State]::Calls | Where-Object { $_ -like '*:load:*' -or $_ -like '*:compile:*' -or $_ -like '*:purge' }).Count -eq 0 -and
-        @($script:messages | Where-Object { $_ -like '*bls-v301-sp1.xml*ohne Kompilierung*' }).Count -eq 2) 'BLS is imported and versioned in every selected namespace with no compiler call; the log explicitly identifies import-only processing'
+        @($script:messages | Where-Object { $_ -like '*Aprima-Systemparameter.xml*ohne Kompilierung*' }).Count -eq 2) 'system parameters are imported and versioned in every selected namespace with no compiler call; the log explicitly identifies import-only processing'
     [CompilationFixture.State]::Reset(); [CompilationFixture.State]::FailGlobals=$true
     $script:compilationResources=@($bundle[2]); $result=CompileSoftwarePackages $targets
     Assert (-not $result.Success -and $result.Changed -and [CompilationFixture.State]::Versions.Count -eq 0 -and
