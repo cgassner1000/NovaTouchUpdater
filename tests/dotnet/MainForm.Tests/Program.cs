@@ -13,6 +13,7 @@ internal static partial class Program
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
+            if (args.Contains("--host-log")) { HostLogTests(); return 0; }
             if (args.Contains("--run-status")) { RunStatusTests(); return 0; }
             if (args.Contains("--database-targets")) { DatabaseTargetSelectionTests(false); DatabaseTargetSelectionTests(true); return 0; }
             if (args.Contains("--package-drop-native")) { NativePackageDropTests(); return 0; }
@@ -51,6 +52,7 @@ internal static partial class Program
                 Complete(SoftwareCompilationTests());
                 ExpandableSectionTests();
                 FormattingTests();
+                HostLogTests();
                 RunStatusTests();
                 SelectionTests();
                 HostManagementTests();

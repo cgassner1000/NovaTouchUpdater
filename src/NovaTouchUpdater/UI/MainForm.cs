@@ -2238,12 +2238,10 @@ public sealed partial class MainForm : Form
 
     private void ShowHostLog(HostState host)
     {
-        using var window = new Form { Text = "Protokoll – " + host.DisplayName, Width = 920, Height = 520, Padding = new Padding(18), StartPosition = FormStartPosition.CenterParent, Font = UiTheme.BodyFont() };
-        window.SuspendLayout();
-        var text = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, Dock = DockStyle.Fill, Font = new Font("Consolas", 9F), WordWrap = false };
-        lock (logLock) text.Text = string.Join(Environment.NewLine, host.Log);
-        window.Controls.Add(text);
-        WindowLayout.CompleteInitialization(window);
+        using var window = new HostLogDialog(host.DisplayName, offset =>
+        {
+            lock (logLock) return host.Log.Skip(offset).ToArray();
+        });
         window.ShowDialog(this);
     }
 
