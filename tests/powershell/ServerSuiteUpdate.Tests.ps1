@@ -2,6 +2,7 @@
 # Windows PowerShell 5.1. All services/remoting are simulated; only this test's
 # GUID fixture below artifacts/test-results is changed. Dummy EXEs are text files, never executed.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '..\Shared\ServerSuiteRegistryFixture.ps1')
 Set-StrictMode -Version Latest
 function Assert($condition, [string]$message) { if (-not $condition) { throw $message } }
 function AssertLivePhase([string]$phase) {
@@ -14,7 +15,7 @@ $workspace = $RepositoryRoot
 $script:fixture = Join-Path $workspace ('artifacts\test-results\su-' + [guid]::NewGuid().ToString('N').Substring(0,8))
 Assert ($script:fixture.StartsWith($workspace + '\artifacts\test-results\', [StringComparison]::OrdinalIgnoreCase)) 'Fixture must remain below workspace artifacts/test-results'
 [void][IO.Directory]::CreateDirectory($script:fixture)
-. ([scriptblock]::Create((Get-Content -LiteralPath (Join-Path $TestScriptsRoot 'UpdateSteps.ps1') -Raw -Encoding UTF8)))
+. ([scriptblock]::Create((ReplaceSuiteRegistryAccess ([IO.File]::ReadAllText((Join-Path $TestScriptsRoot 'UpdateSteps.ps1'))))))
 . ([scriptblock]::Create((Get-Content -LiteralPath (Join-Path $TestScriptsRoot 'UploadDirectory.ps1') -Raw -Encoding UTF8)))
 . (Join-Path $PSScriptRoot '..\Shared\ServerSuiteProcesses.ps1')
 
@@ -119,7 +120,7 @@ function New-PSSession {
 function Invoke-Command { param($Session, $ScriptBlock, [object[]]$ArgumentList, $ErrorAction) Assert (-not $script:request.LocalExecution) 'Local ZIP updates must not invoke remote commands'; & $ScriptBlock @ArgumentList }
 function Remove-PSSession { param($Session, $ErrorAction) Assert (-not $script:request.LocalExecution) 'Local ZIP updates must not close a WinRM session'; $script:sessionRemoved++ }
 
-$source = Get-Content -LiteralPath (Join-Path $TestScriptsRoot 'RemoteWorker.ps1') -Raw -Encoding UTF8
+$source = ReplaceSuiteRegistryAccess ([IO.File]::ReadAllText((Join-Path $TestScriptsRoot 'RemoteWorker.ps1')))
 $tokens = $null; $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$parseErrors)
 Assert ($parseErrors.Count -eq 0) ($parseErrors | Out-String)
@@ -140,13 +141,15 @@ function ReadInventory {
     if ($script:useRealInventory) { & $script:realInventory; return }
     foreach ($svc in $script:installed) {
         if ($script:inventoryReads -gt 1 -and $script:missingAfter -eq $svc.Name) { continue }
-        $version = if ($svc.Kind -eq 'serversuite') { [IO.File]::ReadAllText((Join-Path $svc.InstallDir 'version.txt')).Trim() }
+        $version = if ($svc.Kind -eq 'serversuite') { ReadFixtureSuiteVersion $svc }
             else { [IO.File]::ReadAllText($svc.ExePath) }
         if ($script:inventoryReads -gt 1 -and $script:staleAfter -eq $svc.Name) { $version = '2025.1.1' }
-        $state = $script:serviceStates[$svc.Name].Status
+        $exists=$script:serviceStates.ContainsKey($svc.Name)
+        $state = if($exists){$script:serviceStates[$svc.Name].Status}else{'Dienst fehlt'}
         if ($script:inventoryReads -gt 1 -and $script:stoppedAfter -eq $svc.Name) { $state = 'Stopped' }
         [pscustomobject]@{ Name=$svc.Name; Kind=$svc.Kind; ExePath=$svc.ExePath; InstallDir=$svc.InstallDir;
-            StartType=$svc.StartType; State=$state; ProductVersion=$version; FileVersion=$(if ($svc.Kind -eq 'serversuite') { '' } else { $version }) }
+            StartType=$svc.StartType; State=$state; ProductVersion=$version; FileVersion=$(if ($svc.Kind -eq 'serversuite') { '' } else { $version }); ServiceExists=$exists;
+            RegistryInstance=$(if($svc.Kind -eq 'serversuite'){$svc.RegistryInstance}else{''});RegistryView='Registry64' }
     }
 }
 '@
@@ -168,6 +171,7 @@ $source = $source.Replace('$requestLine = [Console]::In.ReadLine()', '$requestLi
 $worker = [scriptblock]::Create($source)
 
 function ResetCase([string]$name) {
+    [ServerSuiteRegistryFixture.Registry]::Reset()
     $script:case = Join-Path $script:fixture $name
     [void][IO.Directory]::CreateDirectory($script:case)
     $script:events = [Collections.Generic.List[string]]::new()
@@ -193,6 +197,10 @@ function ResetCase([string]$name) {
 }
 function Service([string]$suffix, [string]$instance, [string]$version='2026.3.9700', [string]$startType='Automatic', [string]$relativeExe='python.exe', [string]$fullName='') {
     $name = if ($fullName) { $fullName } else { 'nt3_server_suite_' + $suffix }
+    $registryInstance=if($name -ieq 'nt3_server_suite'){'nt3_server_suite'}else{$name.Substring('nt3_server_suite_'.Length)}
+    $registryPath='SOFTWARE\Novacom\novatouch3\server.suite\'+$registryInstance
+    [ServerSuiteRegistryFixture.Registry]::Seed('Registry64',$registryPath,'InstallDir',(Join-Path $script:case $instance))
+    [ServerSuiteRegistryFixture.Registry]::Seed('Registry64',$registryPath,'version',$version)
     $root = Join-Path $script:case ($instance + '\apps\nt3-server-suite')
     $exe = Join-Path $script:case ($instance + '\portable_python\' + $relativeExe)
     WriteFixture $exe '3.13.2'
@@ -210,7 +218,7 @@ function Service([string]$suffix, [string]$instance, [string]$version='2026.3.97
         Assert ($this.Status -eq $status) "Service did not reach $status : $($this.Name)"
     }
     $script:serviceStates[$name] = $service
-    $script:installed += [pscustomobject]@{ Name=$name; Kind='serversuite'; ExePath=$exe; InstallDir=$root;
+    $script:installed += [pscustomobject]@{ Name=$name; Kind='serversuite'; ExePath=$exe; InstallDir=$root;RegistryInstance=$registryInstance;
         StartType=$startType; State=$status; ProductVersion=$version; FileVersion='' }
 }
 function Component([string]$kind) {
@@ -226,6 +234,14 @@ function Component([string]$kind) {
     $script:serviceStates[$name] = $service
     $script:installed += [pscustomobject]@{ Name=$name; Kind=$kind; ExePath=$exe; InstallDir=$root;
         StartType='Automatic'; State='Running'; ProductVersion='1.0.0.0'; FileVersion='1.0.0.0' }
+}
+function ReadFixtureSuiteVersion($service) {
+    $registry=[ServerSuiteRegistryFixture.Registry]::Open('Registry64');$key=$null
+    try {
+        $key=$registry.OpenSubKey(('SOFTWARE\Novacom\novatouch3\server.suite\'+$service.RegistryInstance),$false)
+        if($null -eq $key){return 'Version unbekannt'}
+        [string]$key.GetValue('version','Version unbekannt')
+    } finally {if($key){$key.Dispose()};$registry.Dispose()}
 }
 function Package([hashtable]$entries=@{ 'apps/nt3-server-suite/suite.exe'='3.13.2'; 'apps/nt3-server-suite/version.txt'='2026.4.9792.0'; 'apps/nt3-server-suite/new.txt'='new'; 'apps/unrelated/no.txt'='never deploy' }, [string]$kind='serversuite', [switch]$WithoutPython) {
     Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
@@ -383,7 +399,7 @@ try {
     Passed 'all instances copied and verified without deleting client folders or extra files; shared paths once'
     Passed 'stop, installation and start phases reach the UI before their operations execute'
 
-    ResetCase 'real-inventory'; Service 'a' 'one' -fullName 'nt3_server_suite'; Service 'b' 'two' -fullName 'nt3_server_suiteRetail'; Service 'c' 'one' -fullName 'NT3_SERVER_SUITE_C'
+    ResetCase 'real-inventory'; Service 'a' 'one' -fullName 'nt3_server_suite'; Service 'b' 'two' -fullName 'nt3_server_suite_Retail'; Service 'c' 'one' -fullName 'NT3_SERVER_SUITE_C'
     $script:useRealInventory=$true; Package; $result=RunWorker
     Assert ($result.Services.Count -eq 3 -and @($script:events | Where-Object { $_ -like 'stop:nt3_server_suite*' }).Count -eq 3 -and
         @($script:events | Where-Object { $_ -like 'start:nt3_server_suite*' }).Count -eq 3) 'Real inventory must route every prefix-matching service through stop/copy/start'
@@ -391,7 +407,19 @@ try {
         Assert ($svc.ProductVersion -eq '2026.4.9792.0' -and $svc.State -eq 'Running' -and
             [IO.File]::ReadAllText($svc.ExePath) -eq '3.14.0') 'Every EXE-derived installation must receive both payloads and be verified'
     }
-    Passed 'real service-registry inventory through update: all nt3_server_suite prefixes and distinct EXE roots'
+    Passed 'real registry inventory through ZIP update publishes each verified version back to its registry instance'
+
+    ResetCase 'registry-ignores-stale-text';Service 'USER' 'one';Package;$script:useRealInventory=$true
+    WriteFixture (Join-Path $script:installed[0].InstallDir 'version.txt') '2099.1.1'
+    $result=RunWorker
+    Assert ($result.Success -and $result.Services[0].ProductVersion -eq '2026.4.9792.0') 'installed text version cannot suppress an update selected from the older registry version'
+    Passed 'installed registry version is authoritative even when the text file claims a newer version'
+
+    ResetCase 'registry-only-needs-setup';Service 'C4U1' 'one';Package;$script:useRealInventory=$true
+    $script:serviceStates.Remove('nt3_server_suite_C4U1');$script:events.Clear()
+    $null=RunWorker $false 'Dienst.*fehlt.*Setup.*ZIP'
+    NoServiceOrTargetChanges
+    Passed 'ZIP refuses missing services before any mutation and directs recovery through the unchanged setup EXE'
 
     ResetCase 'new-targets'; Service 'a' 'one'; Package; $script:useRealInventory=$true
     Remove-Item -LiteralPath (Join-Path $script:case 'one\apps') -Recurse -Force
@@ -415,7 +443,7 @@ try {
         Assert ([IO.File]::ReadAllText($svc.ExePath) -eq '3.14.0') 'Registered Python executable must be replaced at its original path'
         Assert ([IO.File]::ReadAllText((Join-Path $svc.InstallDir 'version.txt')) -eq '2026.4.9792') 'Suite version must still come from its own version.txt'
     }
-    Passed 'external Python service executable is replaced; suite version.txt remains the version source'
+    Passed 'external Python service executable is replaced; installed suite version is verified through its registry entry'
 
     ResetCase 'missing-client-python'; Service 'a' 'one'; Package
     $pythonRoot=Join-Path $script:case 'one\portable_python'

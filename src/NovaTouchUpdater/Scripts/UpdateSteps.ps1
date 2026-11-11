@@ -154,6 +154,34 @@ function InstallUpdatePackages {
     param([string]$wantedJson, [string]$stageDir, [string]$serverSuiteTarget, [string]$allServicesJson = '')
     $ErrorActionPreference = 'Stop'
     Set-StrictMode -Version Latest
+    function OpenSuiteRegistry([string]$view) {
+        [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,[Enum]::Parse([Microsoft.Win32.RegistryView],$view))
+    }
+    function WriteSuiteRegistryVersion($service) {
+        # ZIPs have no installer to publish the version. Register only a mapped,
+        # verified existing service; missing services require the setup EXE.
+        if ($null -eq $service.PSObject.Properties['RegistryInstance']) { return }
+        $instance=[string]$service.RegistryInstance
+        if (-not $instance -or $instance -match '["\r\n\x00\\/]') { throw "Keine eindeutige Registry-Instanz für '$($service.Name)'; bitte Server-Suite-Setup verwenden." }
+        $root=FullPath ([IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName([string]$service.InstallDir)))
+        $registry=$null; $key=$null
+        try {
+            $view=[string]$service.RegistryView
+            if ($view -notin @('Registry64','Registry32')) { throw 'Server-Suite-Registry-Ansicht fehlt.' }
+            $registry=OpenSuiteRegistry $view
+            $path='SOFTWARE\Novacom\novatouch3\server.suite\'+$instance
+            $key=$registry.OpenSubKey($path,$true)
+            if ($null -ne $key) {
+                $registered=[Environment]::ExpandEnvironmentVariables([string]$key.GetValue('InstallDir',''))
+                if ($registered -and -not (FullPath $registered).Equals($root,[StringComparison]::OrdinalIgnoreCase)) { throw "Registry-InstallDir hat sich geändert: $($service.Name)" }
+            } else { $key=$registry.CreateSubKey($path) }
+            $sourceVersion=Join-Path $stage 'serversuite\apps\nt3-server-suite\version.txt'
+            $version=[regex]::Match([string](Get-Content -LiteralPath $sourceVersion -Raw -Encoding UTF8 -ErrorAction Stop),'\d+\.\d+\.\d+(?:\.\d+)?').Value
+            if (-not $version) { throw 'Version des geprüften ZIP-Pakets fehlt.' }
+            $key.SetValue('InstallDir',$root,[Microsoft.Win32.RegistryValueKind]::String)
+            $key.SetValue('version',$version,[Microsoft.Win32.RegistryValueKind]::String)
+        } finally { if ($null -ne $key) { $key.Dispose() }; if ($null -ne $registry) { $registry.Dispose() } }
+    }
     function UpdateProgress([string]$phase, [string]$message, [Nullable[int]]$percent = $null) {
         # Stream these records through Invoke-Command while the update runs.
         [pscustomobject]@{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent }
@@ -328,6 +356,8 @@ function InstallUpdatePackages {
         $source = FullPath (Join-Path $stage $kind)
         $target = FullPath ([string]$svc.InstallDir)
         if ($kind -eq 'serversuite') {
+            if ($null -ne $svc.PSObject.Properties['ServiceExists'] -and -not [bool]$svc.ServiceExists) { throw "Dienst '$name' fehlt. Für die Wiederherstellung bitte das Server-Suite-Setup statt ZIP verwenden." }
+            if ($null -ne $svc.PSObject.Properties['RegistryInstance'] -and -not $svc.RegistryInstance) { throw "Keine eindeutige Registry-Instanz für '$name'; bitte Server-Suite-Setup verwenden." }
             if ($null -eq $svc.PSObject.Properties['ExePath']) { throw "Dienstpfad fehlt: $name" }
             if ([IO.Path]::GetFileName($target) -ine 'nt3-server-suite') { throw "Kein eindeutiger Ordner nt3-server-suite im Installationspfad: $target" }
             $apps = [IO.Path]::GetDirectoryName($target)
@@ -370,6 +400,7 @@ function InstallUpdatePackages {
             # Instances can share Python/application folders. Keep all suite
             # services stopped until every pending installation is complete.
             foreach ($service in $allSuiteServices) {
+                if ($null -ne $service.PSObject.Properties['ServiceExists'] -and -not [bool]$service.ServiceExists) { continue }
                 if ($service.Name -notin @($stopServices | ForEach-Object Name)) {
                     $stopServices += $service
                     if ($service.StartType -ne 'Disabled') { $servicesToStart += [string]$service.Name }
@@ -389,6 +420,7 @@ function InstallUpdatePackages {
     $startNames = @($servicesToStart | Select-Object -Unique)
     $totalFiles = 0
     $copiedTargets = @{}
+    $startedServices = @{}
     foreach ($plan in $allPlans) { $totalFiles += $plan.Files.Count }
     $copyProgress = [pscustomobject]@{ Total=$totalFiles; Completed=0; LastPercent=-1; Timer=[Diagnostics.Stopwatch]::StartNew() }
     $startEventLog = $false
@@ -461,6 +493,7 @@ function InstallUpdatePackages {
                 Start-Service -Name ([WildcardPattern]::Escape($name)) -ErrorAction Stop
                 (Get-Service -Name ([WildcardPattern]::Escape($name)) -ErrorAction Stop).WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
                 $startedCount++
+                $startedServices[$name]=$true
                 UpdateProgress 'Dienste starten' ("Dienst '$name' läuft ($startedCount/$($startNames.Count))") (50 + [int][Math]::Floor(50.0 * $startedCount / $startNames.Count))
             }
             catch { $restartErrors += "Dienst '$name' konnte nicht wieder gestartet werden: $($_.Exception.Message)" }
@@ -469,6 +502,10 @@ function InstallUpdatePackages {
     foreach ($service in $wanted) {
         $complete = $copiedTargets.ContainsKey((FullPath ([string]$service.InstallDir)))
         if ($service.Kind -eq 'serversuite') { $complete = $complete -and $copiedTargets.ContainsKey((PythonDirectory ([string]$service.ExePath))) }
+        if ($complete -and $service.Kind -eq 'serversuite' -and ($service.StartType -eq 'Disabled' -or $startedServices.ContainsKey([string]$service.Name))) {
+            try { WriteSuiteRegistryVersion $service }
+            catch { $restartErrors += "Registry-Version für '$($service.Name)' konnte nicht gespeichert werden: $($_.Exception.Message)" }
+        }
         if ($complete) { [pscustomobject]@{ Event='service-files-installed'; Name=[string]$service.Name } }
     }
     $errors = @($operationError) + @($restartErrors) | Where-Object { $_ }

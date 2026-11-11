@@ -32,6 +32,18 @@ internal static partial class Program
             Assert(Updates(form, false).Select(host => host.Host).SequenceEqual([component.ToString().ToLowerInvariant() + ".invalid"]),
                 "only known hosts with installed " + component + " are eligible for update WinRM");
         }
+        var registryOnly = new HostState { Host="registry-only.invalid", Scanned=true };
+        var registryService = new ServiceInfo { Name="nt3_server_suite_C4U1", Kind="serversuite", ServiceExists=false, State="Dienst fehlt",
+            RegistryInstance="C4U1", RegistryInstallDir=@"C:\Novacom\novatouch3\C4U1", RegistryView="Registry64", ProductVersion="2.0.0",
+            InstallDir=@"C:\Novacom\novatouch3\C4U1\apps\nt3-server-suite" };
+        Call(form, "ReadScanInventory", registryOnly, new WorkerResult { Success=true, Services=[registryService] });
+        hosts.Add(registryOnly);
+        Call(form, "ClearPackageSelection"); Call(form, "SelectIndividualPackage", Package(UpdateComponents.ServerSuite));
+        Assert(Updates(form,false).Contains(registryOnly) && registryOnly.InstalledComponents == UpdateComponents.ServerSuite &&
+            DisplayText.ServiceInstances(registryOnly.Services).Contains("Dienst fehlt"), "registry-only suite instances remain selectable for repair and show their missing Windows service");
+        var roundtrip = System.Text.Json.JsonSerializer.Deserialize<ServiceInfo>(System.Text.Json.JsonSerializer.Serialize(registryService))!;
+        Assert(!roundtrip.ServiceExists && roundtrip.RegistryInstance == "C4U1" && roundtrip.RegistryInstallDir == registryService.RegistryInstallDir,
+            "registry identity and missing-service state survive the worker JSON boundary");
         Call(form, "ClearPackageSelection");
         Call(form, "SelectIndividualPackage", Package(UpdateComponents.Payment));
         Call(form, "SelectIndividualPackage", Package(UpdateComponents.Fiscal));

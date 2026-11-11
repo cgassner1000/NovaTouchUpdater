@@ -153,9 +153,11 @@ function GetUpdateTargets($request) {
 }
 
 function ReadInventory {
+    function OpenSuiteRegistry([string]$view) {
+        [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Enum]::Parse([Microsoft.Win32.RegistryView],$view))
+    }
     function SuiteDirectory([string]$exe) {
-        # The registered service EXE is authoritative. Do not infer an instance
-        # from command-line arguments or search other installations on disk.
+        # Used only for legacy services without an installation registry entry.
         if ($exe -notmatch '^[A-Za-z]:\\') { throw "Kein absoluter Windows-Dienstpfad: $exe" }
         $cursor = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($exe))
         while ($cursor) {
@@ -166,33 +168,61 @@ function ReadInventory {
         }
         throw "Kein Ordner portable_python im registrierten Dienst-EXE-Pfad: $exe"
     }
+    function ServiceExecutable([string]$name) {
+        $image=[Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\'+$name) -Name ImagePath -ErrorAction Stop).ImagePath)
+        if ($image -match '^\s*"([^"]+?\.exe)"' -or $image -match '^\s*(.+?\.exe)(?:\s|$)') { return $Matches[1] }
+        throw "Executable-Pfad für $name nicht lesbar: $image"
+    }
     $services = @(Get-Service -ErrorAction Stop | Where-Object {
         $_.Name -match '^nt\.(payment|fiscal)' -or $_.Name -match '^nt3_server_suite'
     })
+    $registrations = @{}
+    foreach ($view in $(if ([Environment]::Is64BitOperatingSystem) { @('Registry64','Registry32') } else { @('Registry32') })) {
+        $registry=$null; $base=$null
+        try {
+            $registry=OpenSuiteRegistry $view
+            $base=$registry.OpenSubKey('SOFTWARE\Novacom\novatouch3\server.suite',$false)
+            if ($null -eq $base) { continue }
+            foreach ($instance in $base.GetSubKeyNames()) {
+                if (-not $instance -or $instance -match '["\r\n\x00\\/]') { throw 'Ungültiger Server-Suite-Instanzname in der Registry.' }
+                $key=$base.OpenSubKey($instance,$false)
+                try {
+                    if ($null -eq $key) { throw "Server-Suite-Registry-Eintrag verschwunden: $instance" }
+                    $root=[Environment]::ExpandEnvironmentVariables(([string]$key.GetValue('InstallDir','')).Trim().Trim('"'))
+                    if ($root -notmatch '^[A-Za-z]:\\' -or $root -match '["\r\n\x00]') { throw "Ungültiger Registry-InstallDir für Server-Suite-Instanz '$instance': $root" }
+                    $root=[IO.Path]::GetFullPath($root).TrimEnd('\')
+                    if ($root.Length -le 3) { throw "Laufwerkswurzel ist kein Server-Suite-InstallDir: $instance" }
+                    $name=if ($instance -ieq 'nt3_server_suite') { 'nt3_server_suite' } else { 'nt3_server_suite_'+$instance }
+                    $version=([string]$key.GetValue('version','')).Trim()
+                    if (-not $version) { $version='Version unbekannt' }
+                    if ($registrations.ContainsKey($name)) {
+                        if (-not $registrations[$name].RegistryInstallDir.Equals($root,[StringComparison]::OrdinalIgnoreCase)) { throw "Widersprüchliche Registry-InstallDir für '$name' in 32-/64-Bit-Registry." }
+                        continue # The native 64-bit installer registration has precedence.
+                    }
+                    $registrations[$name]=[pscustomobject]@{ Name=$name; Kind='serversuite'; State='Dienst fehlt'; StartType='Automatic'; ServiceExists=$false;
+                        ExePath=''; InstallDir=([IO.Path]::Combine($root,'apps\nt3-server-suite')); ProductVersion=$version; FileVersion='';
+                        RegistryInstance=$instance; RegistryInstallDir=$root; RegistryView=$view }
+                } finally { if ($null -ne $key) { $key.Dispose() } }
+            }
+        } finally { if ($null -ne $base) { $base.Dispose() }; if ($null -ne $registry) { $registry.Dispose() } }
+    }
     $inventory = @()
     foreach ($svc in $services) {
         $kind = if ($svc.Name -match '^nt\.payment') { 'payment' }
             elseif ($svc.Name -match '^nt\.fiscal') { 'fiscal' } else { 'serversuite' }
-        $imagePath = [Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath ("HKLM:\SYSTEM\CurrentControlSet\Services\" + $svc.Name) -Name ImagePath -ErrorAction Stop).ImagePath)
-        if ($imagePath -match '^\s*"([^"]+?\.exe)"') { $exe = $Matches[1] }
-        elseif ($imagePath -match '^\s*(.+?\.exe)(?:\s|$)') { $exe = $Matches[1] }
-        else { throw "Executable-Pfad für $($svc.Name) nicht lesbar: $imagePath" }
+        if ($kind -eq 'serversuite' -and $registrations.ContainsKey($svc.Name)) {
+            $registration=$registrations[$svc.Name]
+            # The installer's registry root is authoritative even if a partial
+            # update left a broken/obsolete service ImagePath behind.
+            try { $registration.ExePath=ServiceExecutable $svc.Name } catch { $registration.ExePath='' }
+            $registration.State=[string]$svc.Status; $registration.StartType=[string]$svc.StartType; $registration.ServiceExists=$true
+            continue
+        }
+        $exe=ServiceExecutable $svc.Name
         $installDir = [IO.Path]::GetDirectoryName($exe)
         if ($kind -eq 'serversuite') {
             $installDir = SuiteDirectory $exe
-            $versionFile = [IO.Path]::Combine($installDir, 'version.txt')
-            try {
-                if (Test-Path -LiteralPath $versionFile -PathType Leaf -ErrorAction Stop) {
-                    $text = [string](Get-Content -LiteralPath $versionFile -Raw -Encoding UTF8 -ErrorAction Stop)
-                    $productVersion = [regex]::Match($text, '\d+\.\d+\.\d+(?:\.\d+)?').Value
-                    if (-not $productVersion) { throw 'Keine gültige Server-Suite-Version enthalten.' }
-                } else {
-                    # A registered service can outlive its files. Keep it eligible
-                    # for an update that creates the missing target directories.
-                    $productVersion = 'Version unbekannt'
-                }
-            }
-            catch { throw "Server-Suite-Version für '$($svc.Name)' aus '$versionFile' nicht lesbar: $($_.Exception.Message)" }
+            $productVersion = 'Version unbekannt'
             # Never use the Python/service executable's version as a fallback.
             $fileVersion = ''
         } else {
@@ -209,8 +239,14 @@ function ReadInventory {
             InstallDir = $installDir
             ProductVersion = $productVersion
             FileVersion = $fileVersion
+            ServiceExists = $true
+            RegistryInstance = if ($kind -eq 'serversuite' -and $svc.Name -ieq 'nt3_server_suite') { 'nt3_server_suite' }
+                elseif ($kind -eq 'serversuite' -and $svc.Name -imatch '^nt3_server_suite_(.+)$') { $Matches[1] } else { '' }
+            RegistryInstallDir = ''
+            RegistryView = if ([Environment]::Is64BitOperatingSystem) { 'Registry64' } else { 'Registry32' }
         }
     }
+    $inventory += @($registrations.Values | Sort-Object Name)
     return $inventory
 }
 
@@ -287,7 +323,7 @@ function Normalize-Version([string]$version) {
 function IsTargetVersion($svc, [string]$expected) {
     if ([string]::IsNullOrWhiteSpace($expected)) { throw 'Zielversion fehlt.' }
     $target = Normalize-Version $expected
-    # Suite ProductVersion comes exclusively from version.txt; FileVersion stays
+    # Suite ProductVersion comes exclusively from the registry; FileVersion stays
     # empty. Payment/fiscal still use EXE ProductVersion, then FileVersion.
     $installed = if (-not [string]::IsNullOrWhiteSpace([string]$svc.ProductVersion)) {
         [string]$svc.ProductVersion
@@ -720,7 +756,7 @@ try {
                 if ($current.Count -ne 1) { $mistakes += "Dienst verschwunden: $($oldSvc.Name)"; continue }
                 if (-not (IsTargetVersion $current[0] $targets[$oldSvc.Kind])) {
                     if ($oldSvc.Kind -eq 'serversuite') {
-                        $mistakes += "Falsche Version $($oldSvc.Name): version.txt=$($current[0].ProductVersion), erwartet $($targets[$oldSvc.Kind])"
+                        $mistakes += "Falsche Version $($oldSvc.Name): Registry-Version=$($current[0].ProductVersion), erwartet $($targets[$oldSvc.Kind])"
                     } else {
                         $mistakes += "Falsche Version $($oldSvc.Name): Product=$($current[0].ProductVersion), File=$($current[0].FileVersion), erwartet $($targets[$oldSvc.Kind])"
                     }
@@ -729,7 +765,7 @@ try {
                     $mistakes += "Dienst läuft nicht: $($oldSvc.Name)"
                 }
                 if ($oldSvc.Kind -eq 'serversuite' -and $mistakes.Count -eq $previousErrors) {
-                    Progress 'Instanz geprüft' ("$($oldSvc.Name): version.txt=$($current[0].ProductVersion); Status=$($current[0].State); Suite=$($current[0].InstallDir)")
+                    Progress 'Instanz geprüft' ("$($oldSvc.Name): Registry-Version=$($current[0].ProductVersion); Status=$($current[0].State); Suite=$($current[0].InstallDir)")
                 }
                 if ($mistakes.Count -eq $previousErrors) { $completedServiceNames += [string]$oldSvc.Name }
             }

@@ -139,9 +139,13 @@ public sealed class ServiceInfo
     public string State { get; set; } = "";
     public string StartType { get; set; } = "";
     public string ExePath { get; set; } = "";
-    // Suite services use the resolved nt3-server-suite root, even with external Python.
+    public bool ServiceExists { get; set; } = true;
+    public string RegistryInstance { get; set; } = "";
+    public string RegistryInstallDir { get; set; } = "";
+    public string RegistryView { get; set; } = "";
+    // Suite registry InstallDir is the instance root; InstallDir is its app folder.
     public string InstallDir { get; set; } = "";
-    // For server suite this is the version from version.txt; FileVersion stays empty.
+    // For server suite this is the registry version; FileVersion stays empty.
     public string ProductVersion { get; set; } = "";
     public string FileVersion { get; set; } = "";
 }

@@ -88,7 +88,7 @@ Assert ($rejected) 'historical markerless setup is rejected with a warning requi
 function NewState([string[]]$Names=@('nt3_server_suite','nt3_server_suite_ABC','nt3_server_suite_OFF')) {
     $script:trace = [Collections.Generic.List[string]]::new()
     $script:exitCodes = @{}; $script:launchFailure=''; $script:stoppedInstance=''; $script:pendingInstance=''
-    $script:remainingStartFailures=@{}; $script:launchCounts=@{}; $script:missingStartFile=''; $script:disabledInstance=''
+    $script:remainingStartFailures=@{}; $script:launchCounts=@{}; $script:missingStartFile=''; $script:disabledInstance=''; $script:neverCreateService=''
     $script:waitedServices = [Collections.Generic.List[string]]::new()
     $script:activeSetups = [Collections.Generic.List[object]]::new()
     $script:setupProcesses = [Collections.Generic.List[object]]::new()
@@ -97,7 +97,7 @@ function NewState([string[]]$Names=@('nt3_server_suite','nt3_server_suite_ABC','
     foreach ($name in $Names) {
         $root = Join-Path $fixture ('Instanz ' + $name)
         [void][IO.Directory]::CreateDirectory((Join-Path $root 'portable_python'))
-        $script:records += [pscustomobject]@{ Name=$name; Kind='serversuite'; ExePath=(Join-Path $root 'portable_python\nt3_server_suite.exe'); InstallDir=(Join-Path $root 'apps\nt3-server-suite'); StartType=$(if ($name -like '*OFF') { 'Disabled' } else { 'Automatic' }); State='Running'; ProductVersion='1.0.0' }
+        $script:records += [pscustomobject]@{ Name=$name; Kind='serversuite'; ExePath=(Join-Path $root 'portable_python\nt3_server_suite.exe'); InstallDir=(Join-Path $root 'apps\nt3-server-suite'); StartType=$(if ($name -like '*OFF') { 'Disabled' } else { 'Automatic' }); State='Running'; ProductVersion='1.0.0'; RegistryInstallDir=$root; ServiceExists=$true }
         $state = [pscustomobject]@{ Name=$name; Status='Running'; StartType=$script:records[-1].StartType }
         if ($name -like '*OFF') { $state.Status='Stopped' }
         $state | Add-Member ScriptMethod WaitForStatus {
@@ -112,10 +112,20 @@ function NewState([string[]]$Names=@('nt3_server_suite','nt3_server_suite_ABC','
     $eventLog | Add-Member ScriptMethod WaitForStatus { param($state,$timeout) if ([string]$this.Status -ne [string]$state) { throw 'State mismatch' } }
     $script:copyCount=0; $script:staleInstance=''
 }
+function ReadInventory {
+    foreach ($record in $script:records) {
+        $copy=$record | Select-Object *
+        if ($copy.Name -ne $script:staleInstance) { $copy.ProductVersion='2026.4.9999' }
+        $copy.ServiceExists=$script:states.ContainsKey($copy.Name)
+        $copy.State=if($copy.ServiceExists){[string]$script:states[$copy.Name].Status}else{'Dienst fehlt'}
+        $copy
+    }
+}
 function Get-Service {
     [CmdletBinding()]param([string]$Name)
     if (-not $Name) { return @($script:states.Values) }
     if ($Name -eq 'EventLog') { throw 'Windows EventLog must not be accessed by the installer' }
+    if(-not $script:states.ContainsKey($Name)){throw 'simulated missing Windows service'}
     $script:states[$Name]
 }
 function Get-ItemProperty {
@@ -161,6 +171,14 @@ function Start-Process {
     $process | Add-Member ScriptProperty HasExited {
         if ($this.Completed) { return $true }
         if (--$this.Polls -gt 0) { return $false }
+        if($script:neverCreateService -eq $this.Name) {
+            $this.Completed=$true;[void]$script:activeSetups.Remove($this);return $true
+        }
+        if(-not $script:states.ContainsKey($this.Name) -and $this.ExitCode -in @(0,3010)) {
+            $created=[pscustomobject]@{Name=$this.Name;Status='Stopped';StartType='Automatic'}
+            $created | Add-Member ScriptMethod WaitForStatus {param($state,$timeout) if($this.Status -ne $state){throw 'simulated status timeout'}}
+            $script:states[$this.Name]=$created
+        }
         # Only the simulated installer changes its service after completion.
         $script:states[$this.Name].Status = if ($this.ExitCode -in @(0,3010) -and $script:stoppedInstance -ne $this.Name) { 'Running' } else { 'Stopped' }
         if ($script:remainingStartFailures.ContainsKey($this.Name) -and $script:remainingStartFailures[$this.Name] -gt 0) {
@@ -221,6 +239,7 @@ Assert ($rejected -and $trace.Count -eq 0) 'an older setup is blocked before any
 foreach ($package in @($setup,$v2Setup)) {
     NewState
     $records[1].InstallDir=$records[0].InstallDir; $records[1].ExePath=$records[0].ExePath
+    $records[1].RegistryInstallDir=$records[0].RegistryInstallDir
     $result=RunInstall -Package $package -Parallelism 3
     Assert ($result.Errors.Count -eq 0 -and $result.InstalledNames.Count -eq 3 -and $peakSetups -eq 2 -and
         $trace[0] -eq 'setup:nt3_server_suite' -and $trace[1] -eq 'setup:nt3_server_suite_OFF') ('shared directories are serialized while unrelated instances run in parallel: ' + [IO.Path]::GetFileName($package))
@@ -228,6 +247,7 @@ foreach ($package in @($setup,$v2Setup)) {
 NewState
 $nestedRoot=Join-Path ([IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($records[0].InstallDir))) 'nested'
 $records[1].InstallDir=Join-Path $nestedRoot 'apps\nt3-server-suite'; $records[1].ExePath=Join-Path $nestedRoot 'portable_python\nt3_server_suite.exe'
+$records[1].RegistryInstallDir=$nestedRoot
 $result=RunInstall -Parallelism 3
 Assert ($result.Errors.Count -eq 0 -and $peakSetups -eq 2 -and $trace[1] -eq 'setup:nt3_server_suite_OFF') 'nested installation roots are also serialized without blocking an independent queued instance'
 NewState; $script:exitCodes.nt3_server_suite_ABC=4; $script:exitCodes.nt3_server_suite=3010
@@ -296,19 +316,21 @@ function CopyRemoteFileWithProgress($session,$source,$target,$label) {
     $script:copyCount++
     Copy-Item -LiteralPath $source -Destination $target -Force
 }
-function ReadInventory {
-    foreach ($record in $script:records) {
-        $copy=$record | Select-Object *
-        if ($copy.Name -ne $script:staleInstance) { $copy.ProductVersion='2026.4.9999' }
-        $copy.State=[string]$script:states[$copy.Name].Status
-        $copy
-    }
-}
 function IsTargetVersion($service,$target) { $service.ProductVersion -eq $target }
 NewState
 $request=[pscustomobject]@{ ServerSuiteSetup=$setup; ServerSuiteSha256=$hash; ServerSuiteVersion='2026.4.9999'; Parallelism=2; SkipLocalPackageCopy=$true; SkipZipTransfer=$false; RemoteInstallPath='' }
 $result=InvokeServerSuiteSetupUpdate $request 'local' $records $records
 Assert ($result.Success -and $result.CompletedServiceNames.Count -eq 3 -and $copyCount -eq 0 -and $peakSetups -eq 2) 'local direct-source mode uses requested parallelism and verifies every instance without copying setup'
+NewState -Names @('nt3_server_suite_USER','nt3_server_suite_C4U1')
+$script:states.Remove('nt3_server_suite_C4U1'); $records[1].ServiceExists=$false; $records[1].ExePath='';$records[1].State='Dienst fehlt'
+$result=InvokeServerSuiteSetupUpdate $request 'local' @($records[1]) $records
+Assert ($result.Success -and $result.CompletedServiceNames -contains 'nt3_server_suite_C4U1' -and $script:trace.Count -eq 1 -and
+    $script:trace[0] -eq 'setup:nt3_server_suite_C4U1' -and $script:states.nt3_server_suite_C4U1.Status -eq 'Running') 'a registry-only C4U1 instance reaches the unchanged setup flow, which creates its missing Windows service without reinstalling USER'
+NewState -Names @('nt3_server_suite_USER','nt3_server_suite_C4U1')
+$script:states.Remove('nt3_server_suite_C4U1'); $records[1].ServiceExists=$false;$records[1].ExePath='';$script:neverCreateService='nt3_server_suite_C4U1'
+$result=InvokeServerSuiteSetupUpdate $request 'local' @($records[1]) $records
+Assert (-not $result.Success -and $result.AutomaticRetriesExhausted -and $result.CompletedServiceNames.Count -eq 0 -and
+    $script:launchCounts.nt3_server_suite_C4U1 -eq 3 -and $script:trace.Count -eq 3) 'a current registry version cannot falsely complete an instance if the setup never recreates its service'
 NewState
 $request.SkipLocalPackageCopy=$false; $request.RemoteInstallPath=Join-Path $fixture 'remote target'
 $script:copiedSetup=Join-Path $request.RemoteInstallPath ([IO.Path]::GetFileName($setup))

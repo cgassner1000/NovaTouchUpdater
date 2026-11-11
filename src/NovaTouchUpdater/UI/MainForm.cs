@@ -1908,7 +1908,7 @@ public sealed partial class MainForm : Form
         if (result.Services.Length > 0 && action != "probe")
             foreach (var svc in result.Services)
                 Log(host.Host, svc.Kind == "serversuite"
-                    ? $"{svc.Name}: version.txt={svc.ProductVersion}, Status={svc.State}, Suite={svc.InstallDir}, Dienst-EXE={svc.ExePath}"
+                    ? $"{svc.Name}: Registry-Version={svc.ProductVersion}, Status={svc.State}, Registry-InstallDir={svc.RegistryInstallDir}, Suite={svc.InstallDir}, Dienst-EXE={svc.ExePath}"
                     : $"{svc.Name}: Product={svc.ProductVersion}, File={svc.FileVersion}, Status={svc.State}");
         Log(host.Host, action + " => " + (result.Success ? "OK" : "FEHLER") + " " + (result.Success ? result.Message : FriendlyError(result)));
         return result;

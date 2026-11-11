@@ -14,7 +14,7 @@ function AssertServerSuiteSetup {
     if ([version](([string]$info.ProductVersion).Trim()) -ne [version]$Version) { throw "Server-Suite-Setup hat nicht die Zielversion ${Version}: $($info.ProductVersion)" }
 }
 
-# Self-contained except for AssertServerSuiteSetup, serialized into the existing
+# Self-contained except for AssertServerSuiteSetup and ReadInventory, serialized into the existing
 # authenticated session. The setup owns the entire instance update and service lifecycle.
 function InstallServerSuiteSetup {
     param([string]$Setup, [string]$Hash, [string]$Version, [string]$PendingJson, [string]$AllJson, [int]$Parallelism = 1)
@@ -39,25 +39,31 @@ function InstallServerSuiteSetup {
     $pending = @($pending)
     $all = ConvertFrom-Json -InputObject $AllJson
     $all = @($all | Where-Object Kind -eq 'serversuite')
-    $current = @(Get-Service -ErrorAction Stop | Where-Object Name -Match '^nt3_server_suite' | ForEach-Object Name | Sort-Object -Unique)
+    $currentInstances = @(ReadInventory | Where-Object Kind -eq 'serversuite')
+    $current = @($currentInstances | ForEach-Object Name | Sort-Object -Unique)
     $expected = @($all | ForEach-Object Name | Sort-Object -Unique)
-    if ($expected.Count -ne $current.Count -or @($expected | Where-Object { $_ -notin $current }).Count -gt 0) { throw 'Server-Suite-Dienste haben sich geändert. Bitte erneut prüfen.' }
+    if ($expected.Count -ne $current.Count -or @($expected | Where-Object { $_ -notin $current }).Count -gt 0) { throw 'Server-Suite-Instanzen in Registry/Diensten haben sich geändert. Bitte erneut prüfen.' }
     $plans = @()
     foreach ($svc in $pending) {
         if ($svc.Kind -ne 'serversuite' -or $svc.Name -notmatch '^nt3_server_suite(?:_.+)?$' -or
             $svc.Name -match '["\r\n\x00\\/]' -or $svc.Name -notin $expected) { throw 'Ungültige Server-Suite-Instanz.' }
-        $exe = SafePath ([string]$svc.ExePath)
-        $image = [Environment]::ExpandEnvironmentVariables([string](Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\' + $svc.Name) -Name ImagePath -ErrorAction Stop).ImagePath)
-        if ($image -match '^\s*"([^"]+?\.exe)"') { $registered = $Matches[1] }
-        elseif ($image -match '^\s*(.+?\.exe)(?:\s|$)') { $registered = $Matches[1] }
-        else { throw "Dienstpfad nicht lesbar: $($svc.Name)" }
-        if (-not $exe.Equals((SafePath $registered), [StringComparison]::OrdinalIgnoreCase)) { throw "Dienstpfad hat sich geändert: $($svc.Name)" }
-        $python = [IO.Path]::GetDirectoryName($exe)
-        while ($python -and [IO.Path]::GetFileName($python) -ine 'portable_python') { $python = [IO.Path]::GetDirectoryName($python) }
-        if (-not $python) { throw "Kein portable_python im Dienstpfad: $($svc.Name)" }
-        $root = SafePath ([IO.Path]::GetDirectoryName($python))
+        $currentInstance=@($currentInstances | Where-Object Name -eq $svc.Name)
+        if ($currentInstance.Count -ne 1) { throw "Server-Suite-Instanz nicht eindeutig: $($svc.Name)" }
+        $actual=$currentInstance[0]
+        if ($null -ne $actual.PSObject.Properties['RegistryInstallDir'] -and $actual.RegistryInstallDir) {
+            $root=SafePath ([string]$actual.RegistryInstallDir)
+        } else {
+            # Legacy services may not yet have an installer registration.
+            $exe=SafePath ([string]$actual.ExePath)
+            if (-not $exe.Equals((SafePath ([string]$svc.ExePath)),[StringComparison]::OrdinalIgnoreCase)) { throw "Dienstpfad hat sich geändert: $($svc.Name)" }
+            $python=[IO.Path]::GetDirectoryName($exe)
+            while ($python -and [IO.Path]::GetFileName($python) -ine 'portable_python') { $python=[IO.Path]::GetDirectoryName($python) }
+            if (-not $python) { throw "Kein portable_python im Dienstpfad: $($svc.Name)" }
+            $root=SafePath ([IO.Path]::GetDirectoryName($python))
+        }
+        $python=SafePath (Join-Path $root 'portable_python')
         $app = SafePath (Join-Path $root 'apps\nt3-server-suite')
-        if (-not $app.Equals((SafePath ([string]$svc.InstallDir)), [StringComparison]::OrdinalIgnoreCase)) { throw "Instanzziel widerspricht Dienstpfad: $($svc.Name)" }
+        if (-not $app.Equals((SafePath ([string]$svc.InstallDir)), [StringComparison]::OrdinalIgnoreCase)) { throw "Instanzziel widerspricht Registry-/Dienstpfad: $($svc.Name)" }
         foreach ($target in @($python, $app)) {
             if ($Setup.StartsWith($target + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Setup liegt innerhalb eines zu ersetzenden Installationsordners.' }
         }
@@ -171,7 +177,7 @@ function InvokeServerSuiteSetupUpdate($request, $session, $pending, $services) {
         CopyRemoteFileWithProgress $session $source $target 'Server-Suite-Setup'
     }
     $parallelism = if ($null -ne $request.PSObject.Properties['Parallelism']) { [int]$request.Parallelism } else { 1 }
-    $script = 'param($setup,$hash,$version,$pendingJson,$allJson,$parallelism); function AssertServerSuiteSetup {' + ${function:AssertServerSuiteSetup}.ToString() + '}; function InstallServerSuiteSetup {' + ${function:InstallServerSuiteSetup}.ToString() + '}; InstallServerSuiteSetup $setup $hash $version $pendingJson $allJson $parallelism'
+    $script = 'param($setup,$hash,$version,$pendingJson,$allJson,$parallelism); function ReadInventory {' + ${function:ReadInventory}.ToString() + '}; function AssertServerSuiteSetup {' + ${function:AssertServerSuiteSetup}.ToString() + '}; function InstallServerSuiteSetup {' + ${function:InstallServerSuiteSetup}.ToString() + '}; InstallServerSuiteSetup $setup $hash $version $pendingJson $allJson $parallelism'
     $argsList = @($target, $hash, $version, (ConvertTo-Json -InputObject @($pending) -Depth 12 -Compress), (ConvertTo-Json -InputObject @($services) -Depth 12 -Compress), $parallelism)
     $outcome = InvokeWorkerCommand -Session $session -ArgumentList $argsList -ScriptBlock ([scriptblock]::Create($script)) -ErrorAction Stop | ForEach-Object {
         if ($_.Event -eq 'progress') { Progress ([string]$_.Phase) ([string]$_.Message) } else { $_ }

@@ -1,116 +1,86 @@
-﻿. (Join-Path $PSScriptRoot '..\Shared\TestEnvironment.ps1')
-# Only the real inventory function runs. Services, registry and file reads are mocked.
-$ErrorActionPreference = 'Stop'
-function Assert($condition, [string]$message) { if (-not $condition) { throw $message } }
-$tokens = $null; $parseErrors = $null
-$ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $TestScriptsRoot 'RemoteWorker.ps1'), [ref]$tokens, [ref]$parseErrors)
-Assert ($parseErrors.Count -eq 0) ($parseErrors | Out-String)
-$reader = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ReadInventory' }, $true).Body.GetScriptBlock()
+. (Join-Path $PSScriptRoot '..\Shared\TestEnvironment.ps1')
+. (Join-Path $PSScriptRoot '..\Shared\ServerSuiteRegistryFixture.ps1')
+$ErrorActionPreference='Stop'; Set-StrictMode -Version Latest
+function Assert($condition,[string]$message) { if(-not $condition){throw $message};Write-Output ('PASS '+$message) }
+$source=ReplaceSuiteRegistryAccess ([IO.File]::ReadAllText((Join-Path $TestScriptsRoot 'RemoteWorker.ps1')))
+$ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$null,[ref]$null)
+$reader=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ReadInventory'},$true).Body.GetScriptBlock()
+foreach($name in @('Normalize-Version','IsTargetVersion','SelectUpdateServices')) {
+    $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+    . ([scriptblock]::Create($definition.Extent.Text))
+}
 function Get-Service {
-    [CmdletBinding()] param()
-    if ($script:providerError) { Write-Error 'Simulated service provider error'; return }
+    [CmdletBinding()]param()
+    if($script:providerError){throw 'simulated service provider error'}
     $script:services
 }
-function Get-ItemProperty { param($LiteralPath, $Name, $ErrorAction)
-    $prefix = 'HKLM:\SYSTEM\CurrentControlSet\Services\'
-    Assert ($LiteralPath.StartsWith($prefix) -and $Name -eq 'ImagePath') 'Only the service image path may be read'
-    $key = $LiteralPath.Substring($prefix.Length)
-    Assert ($script:images.ContainsKey($key)) "Unexpected service registry read: $key"
-    [pscustomobject]@{ ImagePath=$script:images[$key] }
+function Get-ItemProperty {
+    param($LiteralPath,$Name,$ErrorAction)
+    $prefix='HKLM:\SYSTEM\CurrentControlSet\Services\'
+    if(-not $LiteralPath.StartsWith($prefix) -or $Name -ne 'ImagePath'){throw 'Unexpected registry provider read'}
+    [pscustomobject]@{ImagePath=$script:images[$LiteralPath.Substring($prefix.Length)]}
 }
-function Get-Item { param($LiteralPath, $ErrorAction)
-    $script:exeReads += $LiteralPath
-    if (-not $script:versions.ContainsKey($LiteralPath)) { throw 'Simulated missing service executable' }
-    [pscustomobject]@{ VersionInfo=$script:versions[$LiteralPath] }
+function Get-Item {
+    param($LiteralPath,$ErrorAction)
+    $script:exeReads.Add($LiteralPath)
+    if(-not $script:versions.ContainsKey($LiteralPath)){throw 'Unexpected executable version read'}
+    [pscustomobject]@{VersionInfo=$script:versions[$LiteralPath]}
 }
-function Test-Path {
-    param($LiteralPath, $PathType, $ErrorAction)
-    Assert ($PathType -eq 'Leaf' -and [IO.Path]::GetFileName($LiteralPath) -eq 'version.txt') 'Inventory must not search directories for other instances'
-    $script:versionTexts.ContainsKey($LiteralPath)
-}
-function Get-Content { param($LiteralPath, [switch]$Raw, $Encoding, $ErrorAction)
-    if (-not $script:versionTexts.ContainsKey($LiteralPath)) { throw 'Simulated missing or unreadable version.txt' }
-    $script:versionTexts[$LiteralPath]
-}
+function Get-Content { throw 'Installed version.txt must never be read' }
+function Test-Path { throw 'Inventory must not search installation files' }
 function Reset {
-    $script:services=@(); $script:images=@{}; $script:versions=@{}; $script:versionTexts=@{}; $script:directories=@{}; $script:exeReads=@(); $script:providerError=$false
+    $script:services=@();$script:images=@{};$script:versions=@{};$script:exeReads=[Collections.Generic.List[string]]::new();$script:providerError=$false
+    [ServerSuiteRegistryFixture.Registry]::Reset()
 }
-function SuiteVersion([string]$root, [string]$text) {
-    $script:directories[$root]=$true
-    $script:versionTexts[([IO.Path]::Combine($root, 'version.txt'))]=$text
+function Service([string]$Name,[string]$Exe,[string]$Version='3.13.2') {
+    $script:services += [pscustomobject]@{Name=$Name;Status='Running';StartType='Automatic'}
+    $script:images[$Name]='"'+$Exe+'" --service "D:\Misleading\other.py"'
+    $script:versions[$Exe]=[pscustomobject]@{ProductVersion=$Version;FileVersion=$Version}
 }
-function Fails([string]$pattern) {
-    $errorText=''
-    try { $null=@(& $reader) } catch { $errorText=$_.Exception.Message }
-    Assert ($errorText -match $pattern) "Expected inventory error '$pattern', got '$errorText'"
+function Registration([string]$Name,[string]$Root,[string]$Version,[string]$View='Registry64') {
+    $path='SOFTWARE\Novacom\novatouch3\server.suite\'+$Name
+    [ServerSuiteRegistryFixture.Registry]::Seed($View,$path,'InstallDir',$Root)
+    [ServerSuiteRegistryFixture.Registry]::Seed($View,$path,'version',$Version)
 }
-function Service([string]$name, [string]$exe, [string]$version, [string]$fileVersion='') {
-    $script:services += [pscustomobject]@{ Name=$name; Status='Running'; StartType='Automatic' }
-    $script:images[$name] = '"' + $exe + '" --service'
-    $script:versions[$exe] = [pscustomobject]@{ ProductVersion=$version; FileVersion=$fileVersion }
+function Fails([string]$Pattern) {
+    $errorText='';try{$null=@(& $reader)}catch{$errorText=$_.Exception.Message}
+    Assert ($errorText -match $Pattern) ('inventory rejects invalid source: '+$Pattern)
 }
 Reset
-Service 'nt.payment.1' 'C:\payment\payment.exe' '1.2.3.4'
-Service 'nt.fiscal.1' 'C:\fiscal\fiscal.exe' '2.3.4.5'
-Service 'nt3_server_suite_4711' 'C:\Program Files\SuiteA\portable_python\python.exe' '3.13.2'
-Service 'NT3_SERVER_SUITE_SHOP_B' 'D:\SuiteB\portable_python\Lib\site-packages\win32\PythonService.exe' '3.12.1'
-SuiteVersion 'C:\Program Files\SuiteA\apps\nt3-server-suite' " 2026.4.9792`r`n"
-SuiteVersion 'D:\SuiteB\apps\nt3-server-suite' 'Version: 2026.3.9700'
-Service 'unrelated' 'C:\other\other.exe' '9.9.9'
-foreach ($name in @('nt3_server_suite','nt3_server_suite_','nt3_server_suiteRetail')) { Service $name 'C:\Extra\portable_python\python.exe' '3.13.2' }
-SuiteVersion 'C:\Extra\apps\nt3-server-suite' '2026.2.9600'
-Service 'nt3_server_suit_other' 'C:\other\other.exe' '9.9.9'
-$result = @(& $reader)
-Assert ($result.Count -eq 7) 'Inventory must include payment, fiscal and every service beginning with nt3_server_suite'
-$suite = @($result | Where-Object Kind -eq 'serversuite')
-Assert ($suite.Count -eq 5 -and $suite[0].Name -eq 'nt3_server_suite_4711' -and $suite[1].Name -eq 'NT3_SERVER_SUITE_SHOP_B' -and
-    'nt3_server_suite' -in $suite.Name -and 'nt3_server_suiteRetail' -in $suite.Name) 'Bare names, arbitrary suffixes and case must not lose suite instances'
-Assert ($suite[0].InstallDir -ceq 'C:\Program Files\SuiteA\apps\nt3-server-suite' -and $suite[1].InstallDir -ceq 'D:\SuiteB\apps\nt3-server-suite' -and
-    $suite[0].ProductVersion -ceq '2026.4.9792' -and $suite[1].ProductVersion -ceq '2026.3.9700') 'Every suite instance must retain its own directory and version.txt version'
-Assert ($suite[0].FileVersion -eq '' -and $suite[1].FileVersion -eq '' -and $script:exeReads.Count -eq 2) 'Suite inventory must never read or fall back to Python EXE versions'
-Assert ($result[0].ProductVersion -eq '1.2.3.4' -and $result[1].ProductVersion -eq '2.3.4.5') 'Payment/fiscal EXE version detection must be unchanged'
-Write-Output 'PASS per-instance version.txt takes precedence over portable Python; payment/fiscal unchanged'
+Service 'nt.payment.1' 'C:\Payment\payment.exe' '1.2.3.4';Service 'nt.fiscal.1' 'C:\Fiscal\fiscal.exe' '2.3.4.5'
+Service 'nt3_server_suite_USER' 'C:\novacom\novatouch3\USER\portable_python\nt3_server_suite_USER.exe'
+Registration 'USER' 'C:\novacom\novatouch3\USER' '2026.4.9809.25670'
+Registration 'C4U1' 'C:\novacom\novatouch3\C4U1' '2026.4.9808.123'
+$result=@(& $reader);$existing=@($result|Where-Object Name -eq 'nt3_server_suite_USER')[0];$missing=@($result|Where-Object Name -eq 'nt3_server_suite_C4U1')[0]
+Assert ($result.Count -eq 4 -and $existing.ProductVersion -ceq '2026.4.9809.25670' -and $existing.RegistryInstallDir -ceq 'C:\novacom\novatouch3\USER' -and $existing.ServiceExists) 'registry version and InstallDir take precedence and an existing service is merged once'
+Assert (-not $missing.ServiceExists -and $missing.State -eq 'Dienst fehlt' -and $missing.ExePath -eq '' -and $missing.InstallDir -ceq 'C:\novacom\novatouch3\C4U1\apps\nt3-server-suite') 'registry-only instance remains visible and repairable without inventing a service executable'
+Assert ($script:exeReads.Count -eq 2 -and $result[0].ProductVersion -eq '1.2.3.4' -and $result[1].ProductVersion -eq '2.3.4.5' -and $existing.FileVersion -eq '') 'payment and fiscal retain EXE versions while suite reads neither Python nor installed text versions'
+Assert ([ServerSuiteRegistryFixture.Registry]::Writes.Count -eq 0 -and [ServerSuiteRegistryFixture.Registry]::Disposed -gt 0) 'inventory is read-only and disposes all registry handles'
+Registration 'C4U1' 'C:\novacom\novatouch3\C4U1' '2026.4.9809.25670'
+$pending=@(SelectUpdateServices @(& $reader) @{serversuite='2026.4.9809.25670'} $false)
+Assert ($pending.Count -eq 1 -and $pending[0].Name -eq 'nt3_server_suite_C4U1') 'a registry-only instance is repaired even at the target version while a running current USER instance is left alone'
 Reset
-Service 'nt3_server_suite_1' 'C:\SharedSuite\portable_python\python.exe' '3.13.2'
-Service 'nt3_server_suite_2' 'C:\SharedSuite\portable_python\python.exe' '3.13.2'
-SuiteVersion 'C:\SharedSuite\apps\nt3-server-suite' '2026.4.9792'
-$result = @(& $reader)
-Assert ($result.Count -eq 2 -and $result[0].InstallDir -ceq $result[1].InstallDir) 'Services sharing one installation must still remain two inventory records'
-Write-Output 'PASS suite instances sharing the same EXE are preserved'
-Reset
-Service 'nt3_server_suite_a' 'C:\Shop A\portable_python\python.exe' '3.13.2'
-Service 'nt3_server_suite_b' 'D:\ShopB\portable_python\python.exe' '3.13.2'
-$script:images['nt3_server_suite_a']='"C:\Shop A\portable_python\python.exe" "D:\Wrong\apps\nt3-server-suite\main.py"'
-$script:images['nt3_server_suite_b']='D:\ShopB\portable_python\python.exe "C:\Wrong\apps\nt3-server-suite\main.py"'
-SuiteVersion 'C:\Shop A\apps\nt3-server-suite' '2026.4.9792'
-SuiteVersion 'D:\ShopB\apps\nt3-server-suite' '2026.3.9700'
+Registration 'nt3_server_suite' 'D:\Default' '2026.4.1';Registration 'HKS' 'D:\Shared' '2026.4.2';Registration 'TAC' 'D:\Shared' '2026.4.3'
 $result=@(& $reader)
-Assert ($result[0].ProductVersion -eq '2026.4.9792' -and $result[1].ProductVersion -eq '2026.3.9700' -and $script:exeReads.Count -eq 0) 'Only each registered EXE may determine its installation, regardless of misleading arguments'
-Write-Output 'PASS quoted/unquoted service EXEs select their own instances; misleading arguments are ignored'
+Assert ($result.Count -eq 3 -and 'nt3_server_suite' -in $result.Name -and 'nt3_server_suite_HKS' -in $result.Name -and 'nt3_server_suite_TAC' -in $result.Name) 'default and named registry instances sharing a root remain distinct setup targets'
 Reset
-Service 'nt3_server_suite_a' 'C:\ShopA\PORTABLE_PYTHON\python.exe' '3.13.2'
-Service 'nt3_server_suite_b' 'D:\ShopB\portable_python\python.exe' '3.13.2'
-SuiteVersion 'C:\ShopA\apps\nt3-server-suite' '2026.4.9792'
-SuiteVersion 'D:\ShopB\apps\nt3-server-suite' '2026.3.9700'
-$result=@(& $reader)
-Assert ($result[0].ProductVersion -eq '2026.4.9792' -and $result[1].ProductVersion -eq '2026.3.9700') 'Portable Python beside apps must use the matching installation root'
-Write-Output 'PASS sibling portable Python resolves apps/nt3-server-suite/version.txt for each installation'
-foreach ($invalid in @('missing','empty','invalid')) {
-    Reset
-    Service 'nt3_server_suite_a' 'C:\ShopA\portable_python\python.exe' '3.13.2'
-    if ($invalid -ne 'missing') { SuiteVersion 'C:\ShopA\apps\nt3-server-suite' $(if ($invalid -eq 'empty') { " `r`n" } else { 'unavailable' }) }
-    if ($invalid -eq 'missing') {
-        $result=@(& $reader)
-        Assert ($result.Count -eq 1 -and $result[0].ProductVersion -eq 'Version unbekannt' -and $result[0].FileVersion -eq '') 'Missing files must leave the registered instance eligible for repair without Python fallback'
-    } else { Fails 'nt3_server_suite_a.*version.txt' }
-    Assert ($script:exeReads.Count -eq 0) 'Invalid version.txt must not trigger an EXE version fallback'
-    Write-Output ('PASS missing/invalid version.txt never falls back to Python: ' + $invalid)
-}
+Registration 'USER' 'C:\Suite' '2026.4.2' 'Registry32'
+$result=@(& $reader);Assert ($result.Count -eq 1 -and $result[0].RegistryView -eq 'Registry32') '32-bit registry registrations are discoverable independently of worker bitness'
+Registration 'USER' 'C:\Suite' '2026.4.3' 'Registry64'
+$result=@(& $reader);Assert ($result.Count -eq 1 -and $result[0].ProductVersion -eq '2026.4.3' -and $result[0].RegistryView -eq 'Registry64') 'duplicate registration is merged with native 64-bit version precedence'
+Registration 'USER' 'D:\Different' '2026.4.2' 'Registry32';Fails 'Widerspr.chliche Registry-InstallDir'
 Reset
-Service 'nt3_server_suite_a' 'C:\Python\python.exe' '3.13.2'
-$script:images['nt3_server_suite_a']='"C:\Python\python.exe" "D:\A\apps\nt3-server-suite\main.py"'
-Fails 'portable_python'
-Write-Output 'PASS service EXE outside portable_python is rejected rather than guessing another installation'
+Service 'nt3_server_suite_USER' 'D:\Other\portable_python\python.exe';Registration 'USER' 'C:\Suite' '2026.4.3'
+$result=@(& $reader);Assert ($result[0].InstallDir -ceq 'C:\Suite\apps\nt3-server-suite' -and $result[0].ExePath -ceq 'D:\Other\portable_python\python.exe') 'registry root stays authoritative when a stale service path needs setup repair'
+$script:images.nt3_server_suite_USER='broken image path';$result=@(& $reader)
+Assert ($result[0].ServiceExists -and $result[0].ExePath -eq '' -and $result[0].RegistryInstallDir -eq 'C:\Suite') 'broken service image paths do not hide a registry instance from the repairing setup'
+foreach($bad in @('relative\path','C:\','C:\Suite"bad')){Reset;Registration 'USER' $bad '2026.4.3';Fails 'InstallDir'}
+Reset;Registration 'USER' 'C:\Suite' ''
+$result=@(& $reader);Assert ($result[0].ProductVersion -eq 'Version unbekannt') 'missing registry version remains eligible for repair'
 Reset
-Assert (@(& $reader).Count -eq 0) 'No optional components must produce an empty, successful inventory'
-Write-Output 'PASS absent components remain optional'
+foreach($name in @('nt3_server_suite','nt3_server_suite_','nt3_server_suiteRetail')){Service $name 'C:\Legacy\portable_python\python.exe'}
+$result=@(& $reader);Assert ($result.Count -eq 3 -and @($result|Where-Object ProductVersion -ne 'Version unbekannt').Count -eq 0 -and $script:exeReads.Count -eq 0) 'legacy services without installer entries remain visible with unknown registry version and no file fallback'
+Reset;Service 'nt3_server_suite_USER' 'C:\Python\python.exe';Fails 'portable_python'
+Reset;[ServerSuiteRegistryFixture.Registry]::Denied='Registry64';Fails 'access denied'
+Reset;$script:providerError=$true;Fails 'service provider'
+Reset;Assert (@(& $reader).Count -eq 0) 'absent optional services and registry instances produce an empty successful inventory'
