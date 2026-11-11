@@ -95,6 +95,7 @@ function GetSoftwareCompilationResources($Aprima, $System, $Data, [string]$Direc
     NewSoftwareCompilationEmbeddedResource $Aprima 'Aprima-System-PLZ-D.xml' 'Globals' $true
     NewSoftwareCompilationFileResource $Directory 'Aprima-Systemparameter.xml'
     NewSoftwareCompilationEmbeddedResource $System 'Novacom-System.xml'
+    NewSoftwareCompilationFileResource $Directory 'bls-v301-sp1.xml' $true
     foreach ($name in @('Novacom-NT-Daten.xml','Novacom-NT-BOH.xml','Novacom-NT-POS.xml','Novacom-NT-POS-API.xml','Novacom-NT-QRY.xml')) {
         NewSoftwareCompilationEmbeddedResource $Data $name
     }

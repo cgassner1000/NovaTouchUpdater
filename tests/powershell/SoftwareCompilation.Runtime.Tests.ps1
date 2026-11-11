@@ -24,7 +24,7 @@ $systemXml=Join-Path $fixture 'Novacom-System.xml'
 & $compiler '/nologo' '/target:library' '/platform:x86' ('/out:'+(Join-Path $fixture 'Nov.SysDB.dll')) $source ('/resource:'+$systemXml+',Nov.SysDB.Novacom-System.xml')
 if($LASTEXITCODE -ne 0) { throw 'Could not build the Novacom system resource fixture' }
 $dataDirectory=Join-Path $fixtureRoot 'Daten'; [void][IO.Directory]::CreateDirectory($dataDirectory)
-foreach($name in @('Aprima-Systemparameter.xml')) {
+foreach($name in @('Aprima-Systemparameter.xml','bls-v301-sp1.xml')) {
     [IO.File]::WriteAllText((Join-Path $dataDirectory $name),"<?xml version=`"1.0`"?>`n<Export ts=`"2026-11-05 10:00:00`"><Global><Node><Sub>^FixtureOnly</Sub></Node></Global></Export>")
 }
 $child=Join-Path $fixture 'Inspect.ps1'
@@ -36,10 +36,12 @@ function Progress { param($phase,$message,$percent) }
 if([Environment]::Is64BitProcess) { throw 'Expected a 32-bit metadata inspection process' }
 $runtime=InitializeSoftwareCompilationRuntime $Directory
 try {
-    if($runtime.Resources.Count -ne 10 -or $runtime.Resources[0].Name -cne 'Aprima-Datentypen.xml' -or $runtime.Resources[0].Table -cne 'Aprima-Datentypen.xml' -or
-        $runtime.Resources[0].Manifest -cne 'AP.SysDB.Aprima-Datentypen.xml' -or $runtime.Resources[5].Name -cne 'Novacom-NT-Daten.xml' -or
-        @($runtime.Resources | Where-Object { $_.Kind -eq 'Globals' }).Count -ne 2) { throw 'Incorrect startup resource preflight or order' }
+    if($runtime.Resources.Count -ne 11 -or $runtime.Resources[0].Name -cne 'Aprima-Datentypen.xml' -or $runtime.Resources[0].Table -cne 'Aprima-Datentypen.xml' -or
+        $runtime.Resources[0].Manifest -cne 'AP.SysDB.Aprima-Datentypen.xml' -or $runtime.Resources[6].Name -cne 'Novacom-NT-Daten.xml' -or
+        @($runtime.Resources | Where-Object { $_.Kind -eq 'Globals' }).Count -ne 3) { throw 'Incorrect startup resource preflight or order' }
     if($runtime.Resources[3].Application -cne 'Nov.WaWi' -or $runtime.Resources[3].Table -cne '..\Daten\Aprima-Systemparameter.xml') { throw 'Incorrect file version identity' }
+    if($runtime.Resources[4].Name -cne 'Novacom-System.xml' -or $runtime.Resources[5].Name -cne 'bls-v301-sp1.xml' -or
+        $runtime.Resources[5].Table -cne '..\Daten\bls-v301-sp1.xml' -or -not $runtime.Resources[5].Once) { throw 'Incorrect BLS import order or once-only identity' }
     if($runtime.Cache.GetField('Connection').FieldType -ne $runtime.Provider.ConnectionType) { throw 'Installed provider and Aprima connection types do not match' }
     if($runtime.Provider.BinaryStreamType.GetMethod('Rewind').ReturnType.FullName -cne 'InterSystems.Data.IRISTypes.IRISStatus') { throw 'Rewind must return a checked IRISStatus, matching the regression fixture' }
     $signatureType=$runtime.Provider.ConnectionType.GetMethod('GetMtdSignature').ReturnType
@@ -52,8 +54,15 @@ try {
     foreach($method in @('FileWriteImportXML','OBJLoad','OBJIsUpToDate','OBJCompileList','SQLPurge','FileDelete')) {
         if($null -eq $runtime.Proxy.GetMethod($method)) { throw ('Missing Aprima DB proxy: '+$method) }
     }
-    'PASS actual Aprima DLLs load in x86; ten startup sources without a BLS file, native global-stream ABI, by-reference API and connection types match. No database was opened.'
+    'PASS actual Aprima DLLs load in x86; eleven startup sources including BLS in its original position, native global-stream ABI, by-reference API and connection types match. No database was opened.'
 } finally { $runtime.Resolver.Dispose() }
+$bls=Join-Path (Split-Path $Directory) 'Daten\bls-v301-sp1.xml'
+$blsBytes=[IO.File]::ReadAllBytes($bls); Remove-Item -LiteralPath $bls
+$rejected=$false
+try { $unexpected=InitializeSoftwareCompilationRuntime $Directory; $unexpected.Resolver.Dispose() } catch { $rejected=$_.Exception.Message -match 'bls-v301-sp1.xml' }
+if(-not $rejected){throw 'Missing BLS file was not rejected during runtime preflight'}
+[IO.File]::WriteAllBytes($bls,$blsBytes)
+'PASS real x86 runtime requires BLS before opening a database.'
 $parameters=Join-Path (Split-Path $Directory) 'Daten\Aprima-Systemparameter.xml'
 Remove-Item -LiteralPath $parameters
 $rejected=$false
