@@ -167,6 +167,7 @@ public sealed class WorkerResult
     public bool Success { get; set; }
     public string Message { get; set; } = "";
     public string Error { get; set; } = "";
+    public bool AutomaticRetriesExhausted { get; set; }
     public string Tcp { get; set; } = "Nicht getestet";
     public string Session { get; set; } = "Nicht getestet";
     public string Command { get; set; } = "Nicht getestet";

@@ -61,7 +61,7 @@ function InstallServerSuiteSetup {
         foreach ($target in @($python, $app)) {
             if ($Setup.StartsWith($target + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Setup liegt innerhalb eines zu ersetzenden Installationsordners.' }
         }
-        $plans += [pscustomobject]@{ Name=[string]$svc.Name; Root=$root }
+        $plans += [pscustomobject]@{ Name=[string]$svc.Name; Root=$root; Attempt=0; RequireRunning=($svc.StartType -ne 'Disabled') }
     }
     if ($plans.Count -eq 0) { throw 'Keine Server-Suite-Instanz für Setup ausgewählt.' }
     $logRoot = Join-Path ([IO.Path]::GetTempPath()) 'NovaTouchUpdater\SetupLogs'
@@ -74,6 +74,13 @@ function InstallServerSuiteSetup {
     $queue = [Collections.Generic.List[object]]::new()
     foreach ($plan in $plans) { $queue.Add($plan) }
     $active = [Collections.Generic.List[object]]::new()
+    function FailedSetup($plan, [string]$detail) {
+        if ($plan.Attempt -lt 3) {
+            Status 'Setup fehlgeschlagen' $detail
+            Status 'Setup wiederholen' ("$($plan.Name) · Installation wird erneut versucht (Versuch $($plan.Attempt+1) von 3)")
+            $queue.Add($plan)
+        } else { $errors.Add($detail) }
+    }
     Status 'Setup planen' ("Server Suite · $($plans.Count) Instanz(en) vorbereiten")
     try {
         while ($queue.Count -gt 0 -or $active.Count -gt 0) {
@@ -88,6 +95,7 @@ function InstallServerSuiteSetup {
                 })
                 if ($conflicts.Count -gt 0) { $index++; continue }
                 $queue.RemoveAt($index)
+                $plan.Attempt++
                 $log = Join-Path $logRoot (($plan.Name -replace '[^a-zA-Z0-9_.-]', '_') + '-' + [guid]::NewGuid().ToString('N') + '.log')
                 try {
                     Status 'Setup installieren' ("$($plan.Name) · Version $Version installieren")
@@ -98,7 +106,7 @@ function InstallServerSuiteSetup {
                     # Retain the native handle so ExitCode remains available even
                     # if a fast setup exits before the next polling pass.
                     $null = $process.Handle
-                } catch { $errors.Add("$($plan.Name): $($_.Exception.Message); Setup-Log: $log") }
+                } catch { FailedSetup $plan "$($plan.Name): $($_.Exception.Message); Setup-Log: $log" }
             }
             foreach ($job in $active.ToArray()) {
                 if (-not $job.Process.HasExited) { continue }
@@ -109,16 +117,20 @@ function InstallServerSuiteSetup {
                     if ($code -eq 3010) { $reboot = $true }
                     elseif ($code -ne 0) { throw "Setup-Exitcode $code" }
                     $changed = $true
+                    foreach ($relative in @('portable_python\python.exe','apps\nt3-server-suite\src\apps\pos_service\script\pos_service_winservice.py')) {
+                        $required = Join-Path $plan.Root $relative
+                        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Startdatei fehlt für $($plan.Name): $required" }
+                    }
                     # Observe the installer-started service without service control.
                     $service = Get-Service -Name ([WildcardPattern]::Escape($plan.Name)) -ErrorAction Stop
-                    if ($service.StartType -ne 'Disabled') {
+                    if ($plan.RequireRunning -or $service.StartType -ne 'Disabled') {
                         Status 'Setup prüfen' ("$($plan.Name): Warte auf den vom Setup gestarteten Dienst")
                         try { $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(60)) }
                         catch { throw "Dienst läuft nicht: $($plan.Name); $($_.Exception.Message)" }
                     }
                     $installed.Add($plan.Name)
                     Status 'Setup abgeschlossen' ("$($plan.Name) · $($installed.Count) von $($plans.Count) Instanzen installiert")
-                } catch { $errors.Add("$($plan.Name): $($_.Exception.Message); Setup-Log: $($job.Log)") }
+                } catch { FailedSetup $plan "$($plan.Name): $($_.Exception.Message); Setup-Log: $($job.Log)" }
                 finally { $job.Process.Dispose(); [void]$active.Remove($job) }
             }
             if ($active.Count -gt 0) { Start-Sleep -Milliseconds 100 }
@@ -130,7 +142,7 @@ function InstallServerSuiteSetup {
         }
     }
     [pscustomobject]@{ Event='setup-result'; InstalledNames=@($installed);
-        RebootRequired=$reboot; Errors=@($errors); Changed=$changed }
+        RebootRequired=$reboot; Errors=@($errors); Changed=$changed; AutomaticRetriesExhausted=($errors.Count -gt 0) }
 }
 
 function InvokeServerSuiteSetupUpdate($request, $session, $pending, $services) {
@@ -172,13 +184,13 @@ function InvokeServerSuiteSetupUpdate($request, $session, $pending, $services) {
             if ($old.Name -notin @($outcome.InstalledNames)) { continue }
             $current = @($after | Where-Object Name -eq $old.Name)
             if ($current.Count -ne 1 -or -not (IsTargetVersion $current[0] $version)) { $errors += "Instanzversion nicht bestätigt: $($old.Name)"; continue }
-            if ($current[0].StartType -ne 'Disabled' -and $current[0].State -ne 'Running') { $errors += "Dienst läuft nicht: $($old.Name)"; continue }
+            if (($old.StartType -ne 'Disabled' -or $current[0].StartType -ne 'Disabled') -and $current[0].State -ne 'Running') { $errors += "Dienst läuft nicht: $($old.Name)"; continue }
             $completed += [string]$old.Name
             Progress 'Instanz geprüft' ("$($old.Name): $version; $($current[0].State)")
         }
     } catch { $errors += $_.Exception.Message }
     if ($completed.Count -ne @($pending).Count -and $errors.Count -eq 0) { $errors += 'Nicht alle Server-Suite-Instanzen konnten verifiziert werden.' }
     return @{ Event='result'; Success=($errors.Count -eq 0); Changed=[bool]$outcome.Changed; RebootRequired=[bool]$outcome.RebootRequired;
-        CompletedServiceNames=@($completed); Services=@($after); Error=($errors -join ' | ');
+        CompletedServiceNames=@($completed); Services=@($after); Error=($errors -join ' | '); AutomaticRetriesExhausted=[bool]$outcome.AutomaticRetriesExhausted;
         Message=$(if ($errors.Count -gt 0) { 'Server-Suite-Setup teilweise fehlgeschlagen' } else { 'Server-Suite-Setup für alle Instanzen verifiziert' }) }
 }

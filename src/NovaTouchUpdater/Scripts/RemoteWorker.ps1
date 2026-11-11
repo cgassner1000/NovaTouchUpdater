@@ -305,12 +305,16 @@ function SelectUpdateServices($services, $targets, [bool]$forceUpdate) {
     $pending = @()
     foreach ($svc in $services) {
         if (-not $targets.ContainsKey($svc.Kind)) { continue }
-        if (-not $forceUpdate -and (IsTargetVersion $svc $targets[$svc.Kind])) { continue }
+        if (-not $forceUpdate -and (IsTargetVersion $svc $targets[$svc.Kind]) -and
+            ($svc.Kind -ne 'serversuite' -or $svc.StartType -eq 'Disabled' -or $svc.State -eq 'Running')) { continue }
         $pending += $svc
     }
     # An instance already on target may share its directory with an older one.
     # Stop and verify ALL suite services whenever any suite instance needs update.
-    if (@($pending | Where-Object Kind -eq 'serversuite').Count -gt 0) {
+    # A service that failed to start may already report the target version.
+    # Repair only that instance; a genuine version update still includes all
+    # suite instances because their deployment directories can be shared.
+    if (@($pending | Where-Object { $_.Kind -eq 'serversuite' -and ($forceUpdate -or -not (IsTargetVersion $_ $targets[$_.Kind])) }).Count -gt 0) {
         $pending = @($pending | Where-Object Kind -ne 'serversuite') + @($services | Where-Object Kind -eq 'serversuite')
     }
     $pending

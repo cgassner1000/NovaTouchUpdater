@@ -58,6 +58,25 @@ internal static partial class Program
                 "a retry passes verified service names so the worker only installs failed service instances, including Force mode");
         }
 
+        var exhaustedSetup = new UpdateRunner();
+        using (var form = UpdateForm(exhaustedSetup))
+        {
+            SetField(form, "serverSuiteZip", "suite.exe");
+            HostState host = Populate(form)[0]; host.Updates = new(UpdateComponents.ZipServices);
+            exhaustedSetup.Outcome = request => exhaustedSetup.Kind(request) == UpdateComponents.ServerSuite
+                ? new WorkerResult { Success=false, AutomaticRetriesExhausted=true, Error="Service did not start after three setup attempts", CompletedServiceNames=["nt3_server_suite_A"] }
+                : exhaustedSetup.Kind(request) == UpdateComponents.Payment && exhaustedSetup.Count(host.Host, UpdateComponents.Payment) == 1
+                    ? new WorkerResult { Success=false, Error="temporary payment error" } : exhaustedSetup.Success(request);
+            Update(form, host);
+            Assert(exhaustedSetup.Count(host.Host, UpdateComponents.ServerSuite) == 1 && exhaustedSetup.Count(host.Host, UpdateComponents.Payment) == 2 &&
+                exhaustedSetup.Count(host.Host, UpdateComponents.Fiscal) == 1 && host.Updates.Pending == UpdateComponents.ServerSuite && host.CanRetryUpdate,
+                "exhausted per-instance setup retries are not multiplied by GUI retries while other components can still recover");
+            exhaustedSetup.Outcome = exhaustedSetup.Success; Update(form, host);
+            Assert(exhaustedSetup.Count(host.Host, UpdateComponents.ServerSuite) == 2 && exhaustedSetup.Count(host.Host, UpdateComponents.Payment) == 2 &&
+                exhaustedSetup.Requests.Last(request => request.Action == "update").CompletedServiceNames.SequenceEqual(["nt3_server_suite_A"]) && !host.CanRetryUpdate,
+                "manual retry remains possible after the automatic limit and preserves every previously successful service instance");
+        }
+
         var permanent = new UpdateRunner();
         using (var form = UpdateForm(permanent))
         {

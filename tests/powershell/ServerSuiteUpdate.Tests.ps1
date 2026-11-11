@@ -627,6 +627,12 @@ try {
     ResetCase 'current'; Service 'a' 'one' '2026.4.9792.0'; Package; $result = RunWorker
     Assert (-not $result.Changed -and $script:events.Count -eq 0) 'Current three/four-part version must avoid all update IO'
     Passed 'already current suite avoids all update operations'
+    ResetCase 'current-but-stopped'; Service 'a' 'one' '2026.4.9792.0'; Service 'b' 'two' '2026.4.9792.0'; Package
+    $script:serviceStates.nt3_server_suite_b.Status='Stopped'
+    $result=RunWorker
+    Assert ($result.Changed -and $result.CompletedServiceNames.Count -eq 1 -and $result.CompletedServiceNames[0] -eq 'nt3_server_suite_b' -and
+        @($script:events | Where-Object { $_ -like ('copy:' + (Join-Path $script:case 'one') + '\*') }).Count -eq 0) 'a stopped current-version instance is reinstalled without recopying a healthy current instance'
+    Passed 'current version cannot hide a failed service start'
     ResetCase 'force'; Service 'a' 'one' '2026.4.9792.0'; Package; $script:request.ForceUpdate=$true; $null=RunWorker
     Assert ('stop:nt3_server_suite_a' -in $script:events) 'Force must reinstall a selected current suite'
     Passed 'force update reinstalls current selected suite'

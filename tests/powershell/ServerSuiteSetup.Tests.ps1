@@ -88,6 +88,7 @@ Assert ($rejected) 'historical markerless setup is rejected with a warning requi
 function NewState([string[]]$Names=@('nt3_server_suite','nt3_server_suite_ABC','nt3_server_suite_OFF')) {
     $script:trace = [Collections.Generic.List[string]]::new()
     $script:exitCodes = @{}; $script:launchFailure=''; $script:stoppedInstance=''; $script:pendingInstance=''
+    $script:remainingStartFailures=@{}; $script:launchCounts=@{}; $script:missingStartFile=''; $script:disabledInstance=''
     $script:waitedServices = [Collections.Generic.List[string]]::new()
     $script:activeSetups = [Collections.Generic.List[object]]::new()
     $script:setupProcesses = [Collections.Generic.List[object]]::new()
@@ -146,6 +147,8 @@ function Start-Process {
     $root=[IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($record.InstallDir))
     Assert ($ArgumentList.Contains('/DIR="' + $root + '"')) 'each instance receives its own exact root, including spaces'
     $script:trace.Add('setup:' + $name)
+    if (-not $script:launchCounts.ContainsKey($name)) { $script:launchCounts[$name]=0 }
+    $script:launchCounts[$name]++
     if ($script:launchFailure -eq $name) { throw 'simulated launch error' }
     Assert ($script:activeSetups.Count -lt $script:expectedLimit) 'setup concurrency stays within the selected limit'
     foreach ($other in $script:activeSetups) {
@@ -160,10 +163,20 @@ function Start-Process {
         if (--$this.Polls -gt 0) { return $false }
         # Only the simulated installer changes its service after completion.
         $script:states[$this.Name].Status = if ($this.ExitCode -in @(0,3010) -and $script:stoppedInstance -ne $this.Name) { 'Running' } else { 'Stopped' }
+        if ($script:remainingStartFailures.ContainsKey($this.Name) -and $script:remainingStartFailures[$this.Name] -gt 0) {
+            $script:remainingStartFailures[$this.Name]--; $script:states[$this.Name].Status='Stopped'
+        }
         if ($this.ExitCode -in @(0,3010)) {
+            foreach ($relative in @('portable_python\python.exe','apps\nt3-server-suite\src\apps\pos_service\script\pos_service_winservice.py')) {
+                $required=Join-Path $this.Root $relative
+                [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($required))
+                [IO.File]::WriteAllText($required,'fixture, never executed')
+            }
             @($script:records | Where-Object Name -eq $this.Name)[0].StartType='Automatic'
             $script:states[$this.Name].StartType='Automatic'
             if ($script:pendingInstance -eq $this.Name) { $script:states[$this.Name].Status='StartPending' }
+            if ($script:disabledInstance -eq $this.Name) { $script:states[$this.Name].StartType='Disabled';$script:states[$this.Name].Status='Stopped' }
+            if ($script:missingStartFile -eq $this.Name) { Remove-Item -LiteralPath (Join-Path $this.Root 'portable_python\python.exe') -ErrorAction SilentlyContinue }
         }
         $this.Completed=$true
         [void]$script:activeSetups.Remove($this)
@@ -225,9 +238,27 @@ NewState; $script:pendingInstance='nt3_server_suite_ABC'
 $result=RunInstall @($records | Where-Object Name -eq 'nt3_server_suite_ABC')
 Assert ($result.Errors.Count -eq 0 -and $states.nt3_server_suite_ABC.Status -eq 'Running' -and
     $script:waitedServices.Count -eq 1 -and $script:waitedServices[0] -eq 'nt3_server_suite_ABC') 'a transient StartPending state is waited out using only read-only service status checks'
+NewState; $script:remainingStartFailures.nt3_server_suite_ABC=1
+$result=RunInstall -Parallelism 2
+Assert ($result.Errors.Count -eq 0 -and $result.InstalledNames.Count -eq 3 -and -not $result.AutomaticRetriesExhausted -and
+    $script:launchCounts.nt3_server_suite_ABC -eq 2 -and $script:launchCounts.nt3_server_suite -eq 1 -and $script:launchCounts.nt3_server_suite_OFF -eq 1 -and
+    @($script:setupProgress | Where-Object Phase -eq 'Setup wiederholen').Count -eq 1 -and $activeSetups.Count -eq 0) 'a failed service start automatically reinstalls only that instance and clears the recovered error'
+NewState; $script:stoppedInstance='nt3_server_suite_ABC'
+$result=RunInstall -Parallelism 2
+Assert ($result.Errors.Count -eq 1 -and $result.AutomaticRetriesExhausted -and $script:launchCounts.nt3_server_suite_ABC -eq 3 -and
+    $script:launchCounts.nt3_server_suite -eq 1 -and $script:launchCounts.nt3_server_suite_OFF -eq 1 -and $result.InstalledNames.Count -eq 2 -and
+    @($setupProcesses | Where-Object { -not $_.Disposed }).Count -eq 0) 'a persistent failed start stops after three installations of only the failed instance and closes every process handle'
+NewState; $script:missingStartFile='nt3_server_suite_ABC'
+$result=RunInstall
+Assert ($result.Errors.Count -eq 1 -and $result.Errors[0] -match 'Startdatei fehlt.*portable_python\\python.exe' -and
+    $script:launchCounts.nt3_server_suite_ABC -eq 3 -and $result.InstalledNames.Count -eq 2) 'missing Python is diagnosed with its exact path and never mistaken for a successful setup'
+NewState; $script:disabledInstance='nt3_server_suite_ABC'
+$result=RunInstall
+Assert ($result.Errors.Count -eq 1 -and $result.Errors[0] -match 'Dienst l.uft nicht' -and $script:launchCounts.nt3_server_suite_ABC -eq 3) 'a formerly enabled service left disabled by a failed setup remains a failed start and is retried'
 NewState; $script:exitCodes.nt3_server_suite_ABC=4
 $result=RunInstall
 Assert ($result.Errors.Count -eq 1 -and $result.Errors[0] -match 'Exitcode 4' -and $result.Errors[0] -match 'Setup-Log:' -and $result.InstalledNames.Count -eq 2) 'failed instance keeps log and does not block other instances'
+Assert ($result.AutomaticRetriesExhausted -and $script:launchCounts.nt3_server_suite_ABC -eq 3) 'setup exit errors share the same three-attempt instance limit'
 Assert ($states.nt3_server_suite_ABC.Status -eq 'Stopped') 'the wrapper does not attempt to repair a failed installer with service commands'
 $script:exitCodes.Clear(); $script:trace.Clear()
 $result=RunInstall @($script:records | Where-Object Name -eq 'nt3_server_suite_ABC')

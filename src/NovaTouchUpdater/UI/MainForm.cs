@@ -1616,9 +1616,10 @@ public sealed partial class MainForm : Form
         HostUpdateState state = host.Updates ?? throw new InvalidOperationException("Update-Komponenten wurden nicht vorbereitet.");
         state.RestrictTo(AllowedUpdateComponents(host) & (host.IsLocal ? UpdateComponents.All : host.InstalledComponents ?? UpdateComponents.All));
         delay ??= (duration, ct) => Task.Delay(duration, ct);
+        UpdateComponents exhaustedAutomaticRetries = UpdateComponents.None;
         try
         {
-            for (int attempt = 1; attempt <= 3 && state.Pending != UpdateComponents.None; attempt++)
+            for (int attempt = 1; attempt <= 3 && (state.Pending & ~exhaustedAutomaticRetries) != UpdateComponents.None; attempt++)
             {
                 token.ThrowIfCancellationRequested();
                 Mark(host, h => { h.Attempt = attempt; h.Phase = "Update: " + HostUpdateState.Label(state.Pending); h.Error = ""; h.Result = "Läuft"; });
@@ -1646,7 +1647,7 @@ public sealed partial class MainForm : Form
                     }
                     Mark(host, h => { h.Scanned = true; h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; });
                 }
-                foreach (UpdateComponents component in HostUpdateState.Each(state.Pending).ToArray())
+                foreach (UpdateComponents component in HostUpdateState.Each(state.Pending & ~exhaustedAutomaticRetries).ToArray())
                 {
                     token.ThrowIfCancellationRequested();
                     bool retry = state.WasAttempted(component);
@@ -1675,12 +1676,13 @@ public sealed partial class MainForm : Form
                         else
                         {
                             state.Fail(component, FriendlyError(result));
+                            if (result.AutomaticRetriesExhausted) exhaustedAutomaticRetries |= component;
                             h.Phase = HostUpdateState.Label(component) + ": Update fehlgeschlagen";
                         }
                         h.Error = result.Success ? "" : FriendlyError(result);
                     });
                 }
-                if (state.Pending != UpdateComponents.None && attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
+                if ((state.Pending & ~exhaustedAutomaticRetries) != UpdateComponents.None && attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
             }
             FinishHostUpdate(host);
         }
