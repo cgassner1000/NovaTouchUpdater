@@ -10,6 +10,17 @@ static void Assert(bool condition, string message)
 }
 
 var now = DateTimeOffset.Now.AddMinutes(1);
+var restarted = new HostState { Result = "Fehler", Error = "earlier scan error", Attempt = 3 };
+restarted.SetProgress(100);
+restarted.BeginRun();
+Assert(restarted.Result == "Läuft" && restarted.Error == "" && restarted.Attempt == 0 && restarted.ProgressPercent is null && restarted.CanRetryUpdate,
+    "starting another run replaces the old displayed result without losing scan retry eligibility");
+restarted.FinishRun(cancelled: true);
+Assert(restarted.Result == "Abgebrochen" && restarted.CanRetryUpdate, "cancelling a later operation retains the earlier retry");
+restarted.BeginRun(); restarted.Result = "Erfolgreich"; restarted.FinishRun(cancelled: true);
+Assert(restarted.Result == "Erfolgreich", "batch cleanup never replaces an already completed host result");
+restarted.BeginRun(); restarted.FinishRun(error: "new failure");
+Assert(restarted.Result == "Fehler" && restarted.Error == "new failure" && restarted.CanRetryUpdate, "unexpected run failures expose the current error");
 var progressEvent = JsonSerializer.Deserialize<WorkerEvent>("{\"Event\":\"progress\",\"Phase\":\"Kopieren\",\"Message\":\"12/20 Dateien\",\"ProgressPercent\":60}")!;
 var progressHost = new HostState();
 progressHost.Error = "Earlier upload failed";

@@ -349,6 +349,8 @@ Die Spaltenreihenfolge lautet: **Checkbox | Hostname | Verbindung | .NET 4.8 | P
 
 Die breite Spalte „Information“ zeigt während der Arbeit den **aktuellen Bearbeitungsschritt**. Beim Fortsetzen, bei einer neuen Komponente oder einem neuen Versuch wird der angezeigte alte Fehler zurückgesetzt. Noch offene Komponentenfehler bleiben intern erhalten und erscheinen nach Abschluss wieder als Fehlerzusammenfassung; die vollständigen Details stehen im Hostprotokoll. Im ersten Versuch steht kein Versuchspräfix davor. Ab dem zweiten Versuch steht davor **Versuch 2/3:** bzw. **Versuch 3/3:**. Eine eigene Spalte „Versuch“ entfällt. „Status“ steht ganz rechts; im HTML-Bericht steht der aufklappbare Protokollbereich davor. Auch dort erscheinen Wiederholungen im Informationstext.
 
+Ein bestätigter Durchlauf setzt alle beteiligten Hosts sofort auf **Läuft**, auch wenn sie noch auf ihren Bearbeitungsplatz warten. Alte Anzeigefehler und Fortschritte werden zurückgesetzt; offene Update-Komponenten und deren Fehler bleiben für gezielte Wiederholungen gespeichert. Abgeschlossene Hosts zeigen ihr aktuelles Ergebnis, abgebrochene und noch nicht gestartete Hosts bleiben nach dem Abbruch nicht auf **Läuft** stehen. **Fehler erneut versuchen** ist anfangs und während eines Durchlaufs ausgeblendet. Der Button erscheint nach Abschluss bei noch wiederholbaren Fehlern und verschwindet nach erfolgreicher Behebung; bei abgewählten Fehlerhosts bleibt er sichtbar, aber deaktiviert.
+
 Die zusätzlichen Scan-Prüfungen lassen sich ohne Netzwerkzugriff mit simulierten Registry- und WinRM-Antworten testen:
 
 ```powershell

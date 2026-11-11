@@ -169,6 +169,8 @@ internal static partial class Program
         SetField(form, "showBetaActivated", new Action(() => { }));
         var gate = Field<BetaFeatureGate>(form, "betaFeatures");
         var logo = All(form).OfType<AppMark>().Single();
+        worker.OnImport = () => Assert(Targets(form).Single(host => host.Host == worker.Requests.Last().Host).Result == "Läuft",
+            "a servicepack host displays running before its new result arrives");
         string? warning = null;
         SetField(form, "showServicePackWarning", new Action<string>(text => warning = text));
         bool confirm = false, emptySelection = false;
@@ -196,6 +198,15 @@ internal static partial class Program
         Assert(warning is null && worker.Requests.Count(request => request.Action == "import-servicepacks") == 4 &&
             Targets(form).Count(host => host.Log.Any(line => line.Contains("Servicepacks: importiert und kompiliert"))) == 4,
             "confirmed servicepacks finish on local and all selected remote hosts with results in the log and no result dialog");
+        Assert(Targets(form).All(host => host.Result == "Abgeschlossen"), "servicepack success replaces all previous host results");
+        worker.FailImports = true;
+        await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
+        Assert(Targets(form).All(host => host.Result == "Fehler" && host.Error == "simulated import error"),
+            "servicepack failures replace running status with the current error");
+        worker.FailImports = false;
+        await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
+        Assert(Targets(form).All(host => host.Result == "Abgeschlossen" && host.Error == ""),
+            "a successful subsequent servicepack run clears the previous failed result");
         Assert(worker.Requests.Where(request => request.Action == "import-servicepacks").All(request => request.ServicePackFiles.Length == 2 &&
             request.DatabaseTargets.All(target => target.Namespaces.All(ns => !ns.StartsWith('%'))) && request.MsiPackages.Length == 0),
             "servicepack requests contain only the selected XMLs and filtered IRIS targets, without MSI operations");
@@ -242,6 +253,7 @@ internal static partial class Program
     {
         internal List<WorkerRequest> Requests { get; } = [];
         internal Action? OnImport { get; set; }
+        internal bool FailImports { get; set; }
         public Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> onProgress, CancellationToken ct)
         {
             Requests.Add(request);
@@ -251,6 +263,7 @@ internal static partial class Program
             Assert(request.Action == "import-servicepacks" && !ct.CanBeCanceled && request.ServicePackFiles.All(file => File.Exists(file.Path)),
                 "an accepted host uses existing XML paths and finishes without forced cancellation");
             OnImport?.Invoke();
+            if (FailImports) return Task.FromResult(new WorkerResult { Success = false, Error = "simulated import error", Message = "Import fehlgeschlagen" });
             return Task.FromResult(new WorkerResult { Success = true, Message = "importiert und kompiliert", ServicePackResults =
                 request.DatabaseTargets.SelectMany(target => target.Namespaces.Select(ns => new ServicePackNamespaceResult {
                     Instance = target.Instance, Namespace = ns, Success = true, Compiled = true, ImportedFiles = request.ServicePackFiles.Length })).ToArray() });

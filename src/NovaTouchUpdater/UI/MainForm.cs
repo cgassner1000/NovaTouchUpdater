@@ -1183,7 +1183,7 @@ public sealed partial class MainForm : Form
             var ready = await PrepareUploadDirectoriesAsync(targets, false, (host, error) =>
             {
                 failures.Add(host.Host + ": " + error);
-                Mark(host, h => { h.Phase = "Uploadvorbereitung fehlgeschlagen"; h.Error = error; });
+                Mark(host, h => { h.Result = "Fehler"; h.Phase = "Uploadvorbereitung fehlgeschlagen"; h.Error = error; });
                 CountCompleted();
             }, ct);
             if (ready is null) return;
@@ -1206,14 +1206,14 @@ public sealed partial class MainForm : Form
                         if (result.Success)
                         {
                             Interlocked.Increment(ref succeeded);
-                            Mark(host, h => { h.Phase = "Dateiübertragung abgeschlossen"; h.SetProgress(100); });
+                            Mark(host, h => { h.FinishRun(); h.Phase = "Dateiübertragung abgeschlossen"; h.SetProgress(100); });
                             Log(host.Host, "TRANSFER => OK " + result.Message);
                         }
                         else
                         {
                             string error = FriendlyError(result);
                             failures.Add(host.Host + ": " + error);
-                            Mark(host, h => { h.Phase = "Dateiübertragung fehlgeschlagen"; h.Error = error; });
+                            Mark(host, h => { h.Result = "Fehler"; h.Phase = "Dateiübertragung fehlgeschlagen"; h.Error = error; });
                             Log(host.Host, "TRANSFER => FEHLER " + error);
                         }
                     }
@@ -1221,7 +1221,7 @@ public sealed partial class MainForm : Form
                     catch (Exception ex)
                     {
                         failures.Add(host.Host + ": " + ex.Message);
-                        Mark(host, h => { h.Phase = "Dateiübertragung fehlgeschlagen"; h.Error = ex.Message; });
+                        Mark(host, h => { h.Result = "Fehler"; h.Phase = "Dateiübertragung fehlgeschlagen"; h.Error = ex.Message; });
                         Log(host.Host, "TRANSFER => FEHLER " + ex);
                     }
                     finally { CountCompleted(); }
@@ -1289,7 +1289,6 @@ public sealed partial class MainForm : Form
                         token.ThrowIfCancellationRequested();
                         Mark(host, h =>
                         {
-                            if (h.Result == "Fehler") Log(h.Host, "Vorheriges Ergebnis: Fehler – " + DisplayText.Information(h.Phase, h.Error));
                             h.BeginCommand(restartTerminals, restartPos);
                         });
                         commandStarted = true;
@@ -1472,7 +1471,7 @@ public sealed partial class MainForm : Form
                 {
                     Mark(host, h =>
                     {
-                        h.Connection = "Prüfung läuft"; h.Phase = "Verbindung"; h.Result = "Offen"; h.Error = ""; h.Scanned = false;
+                        h.Connection = "Prüfung läuft"; h.Phase = "Verbindung"; h.Result = "Läuft"; h.Error = ""; h.Scanned = false;
                         h.DotNet48Installed = null; h.PosVersion = h.NtcVersion = "–";
                     });
                     var result = await DoWorkerAsync(host, "probe", token);
@@ -1481,7 +1480,7 @@ public sealed partial class MainForm : Form
                         h.Connection = result.Success ? (h.IsLocal ? "Lokal" : "Verbunden") : "Nicht erreichbar";
                         h.Phase = result.Success ? "Verbunden" : "Verbindungsfehler";
                         h.Error = result.Success ? "" : FriendlyError(result);
-                        h.Result = result.Success ? "Offen" : "Fehler";
+                        h.Result = result.Success ? "Läuft" : "Fehler";
                     });
                     if (!result.Success)
                     {
@@ -1852,7 +1851,7 @@ public sealed partial class MainForm : Form
             DialogResult choice=dialog.ShowDialog(this);
             if (choice is not DialogResult.Yes and not DialogResult.No)
             {
-                foreach (var host in checks.Keys) Mark(host,h => h.Phase="Upload abgebrochen");
+                foreach (var host in checks.Keys) Mark(host,h => { h.FinishRun(cancelled: true); h.Phase="Upload abgebrochen"; });
                 Log("SYSTEM","Upload vor der Bereinigung abgebrochen.");
                 return null;
             }
@@ -1919,17 +1918,29 @@ public sealed partial class MainForm : Form
     private async Task InBatchAsync(IReadOnlyCollection<HostState> targets, Func<CancellationToken, Task> task)
     {
         busy = true; cancellation = new CancellationTokenSource();
+        foreach (HostState host in targets)
+            Mark(host, h =>
+            {
+                if (h.Result == "Fehler" || h.Error.Length > 0)
+                    Log(h.Host, "Vorheriges Ergebnis: " + h.Result + " – " + DisplayText.Information(h.Phase, h.Error));
+                h.BeginRun();
+            });
         ResetProgress(targets.Count);
         UpdateButtons();
+        bool cancelled = false;
+        string batchError = "";
         try { await task(cancellation.Token); }
-        catch (OperationCanceledException) { Log("SYSTEM", "Verarbeitung abgebrochen"); }
+        catch (OperationCanceledException) { cancelled = true; Log("SYSTEM", "Verarbeitung abgebrochen"); }
         catch (Exception ex)
         {
+            batchError = ex.Message;
             Log("SYSTEM", "FEHLER: " + ex);
             MessageBox.Show(this, ex.Message, "Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
+            foreach (HostState host in targets)
+                Mark(host, h => h.FinishRun(cancelled || cancellation.IsCancellationRequested, batchError));
             cancellation.Dispose(); cancellation = null; busy = false;
             preparedPackageHashes = null;
             activeAdditionalFiles = [];
@@ -2181,6 +2192,7 @@ public sealed partial class MainForm : Form
         betaFeatures?.ApplyVisibility();
         btnTransfer.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnSendCommand.Enabled = idle && selected.Any(h => !h.IsLocal);
+        btnRetry.Visible = !busy && ExecutionHosts().Any(h => h.CanRetryUpdate);
         btnRetry.Enabled = idle && selected.Any(h => h.CanRetryUpdate);
         btnExport.Enabled = idle && hosts.Count > 0;
         btnCancel.Enabled = busy || selfUpdating || loadingPackages;

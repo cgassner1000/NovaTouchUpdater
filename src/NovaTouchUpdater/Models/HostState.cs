@@ -59,6 +59,35 @@ internal sealed class HostState
     public DataGridViewRow? Row { get; set; }
     public List<string> Log { get; } = [];
 
+    public void BeginRun()
+    {
+        // Starting another operation must not discard pending update retries.
+        result = "Läuft";
+        resultFromCommand = false;
+        Error = "";
+        Attempt = 0;
+        Phase = "Verarbeitung wird vorbereitet";
+    }
+
+    public void FinishRun(bool cancelled = false, string error = "")
+    {
+        // A host may already have its own final result while others still run.
+        if (Result != "Läuft") return;
+        if (error.Length > 0)
+        {
+            Result = "Fehler";
+            Error = error;
+            Phase = "Verarbeitung fehlgeschlagen";
+        }
+        else
+        {
+            result = cancelled ? "Abgebrochen" : "Abgeschlossen";
+            resultFromCommand = false;
+            Error = "";
+            Phase = cancelled ? "Verarbeitung abgebrochen" : "Verarbeitung abgeschlossen";
+        }
+    }
+
     public void BeginCommand(bool restartTerminals, bool restartPos = false)
     {
         Phase = restartTerminals ? "Windows-Neustart wird angefordert" : restartPos ? "KassaPreh wird gestartet / neu gestartet" : "Dienste werden neu gestartet";

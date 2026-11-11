@@ -41,8 +41,9 @@ public sealed partial class MainForm
             {
                 foreach (ServicePackHostPlan plan in plans)
                 {
+                    bool cancelledBeforeStart = ct.IsCancellationRequested;
                     WorkerResult result;
-                    if (ct.IsCancellationRequested) result = new() { Success = false, Message = "Abgebrochen; Host wurde nicht gestartet." };
+                    if (cancelledBeforeStart) result = new() { Success = false, Message = "Abgebrochen; Host wurde nicht gestartet." };
                     else if (plan.Targets.Length == 0) result = new() { Success = true, Skipped = true, Message = "Keine IRIS-Namespaces ohne %-Präfix; übersprungen." };
                     else
                     {
@@ -67,7 +68,7 @@ public sealed partial class MainForm
                     Log(plan.Host.Host, "Softwarepakete kompilieren: " + result.Message + (result.Error.Length > 0 ? " | " + result.Error : ""));
                     Mark(plan.Host, host =>
                     {
-                        host.Result = result.Success ? "Abgeschlossen" : "Fehler";
+                        host.Result = result.Success ? (result.Skipped ? "Übersprungen" : "Abgeschlossen") : cancelledBeforeStart ? "Abgebrochen" : "Fehler";
                         host.Phase = result.Message;
                         host.Error = result.Error;
                         if (result.Success && !result.Skipped) host.SetProgress(100);

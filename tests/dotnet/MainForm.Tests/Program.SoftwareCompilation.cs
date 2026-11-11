@@ -17,6 +17,7 @@ internal static partial class Program
         {
             Application.DoEvents();
             HostState host = ((HostState[])Call(form, "SelectedHosts")!).Single(host => host.Host == request.Host);
+            Assert(host.Result == "Läuft", "each new compilation replaces a previous failure with running status before progress arrives");
             Assert(host.ProgressPercent == 40 && host.Phase == "IRIS:1972/USER · Klasse 101 von 250 · Novacom-NT-BOH.xml" &&
                 host.Row?.Cells["information"].Tag is 40 && host.Row.Cells["information"].Value?.ToString() == "40 % · IRIS:1972/USER · Klasse 101 von 250 · Novacom-NT-BOH.xml",
                 "the information cell shows percentage, database destination, class count and XML filename last; timing details stay in the log");

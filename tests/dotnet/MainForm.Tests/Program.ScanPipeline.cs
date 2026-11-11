@@ -10,7 +10,7 @@ internal static partial class Program
         {
             _ = form.Handle;
             HostState[] hosts = [
-                new() { Host = "SLOW.invalid" }, new() { Host = "FAST.invalid" },
+                new() { Host = "SLOW.invalid", Result = "Fehler", Error = "earlier failed run" }, new() { Host = "FAST.invalid" },
                 new() { Host = "OFFLINE.invalid" }, new() { Host = "SCAN-ERROR.invalid" },
                 new() { Host = "EXCLUDED.invalid", IsSelected = false }
             ];
@@ -21,6 +21,8 @@ internal static partial class Program
             try
             {
                 Complete(worker.FastScanStarted.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+                Assert(hosts.Take(4).All(host => host.Result == "Läuft") && hosts[0].Error == "",
+                    "a fresh scan shows running during connection, inventory and the queue instead of an earlier failure");
                 Assert(!worker.SlowProbeRelease.Task.IsCompleted && !scan.IsCompleted &&
                     worker.Requests.Any(r => r.Host == "FAST.invalid" && r.Action == "scan"),
                     "a connected host starts reading versions while another host is still connecting");
@@ -67,6 +69,7 @@ internal static partial class Program
             !Field<bool>(cancelledForm, "busy") && !Field<DataGridView>(cancelledForm, "table").Columns["include"].ReadOnly &&
             !Field<bool>(cancelledForm, "connectionScanPaused"),
             "cancellation stops an active connection without starting versions or queued hosts, and restores the UI and monitoring");
+        Assert(Targets(cancelledForm).All(host => host.Result == "Abgebrochen"), "cancelled scans leave no active or queued host stuck in running status");
     }
 
     private static async Task WaitForPipelineAsync(Func<bool> condition)
