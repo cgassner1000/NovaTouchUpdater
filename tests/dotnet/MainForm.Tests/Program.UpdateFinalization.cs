@@ -107,8 +107,8 @@ internal static partial class Program
             var packages = Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages");
             packages.Clear(); NewRun();
             FinishUpdates(form, hosts);
-            Assert(worker.Requests.Count == 0 && hosts.All(host => host.Phase.Contains("keine MSI-Pakete")) && hosts.Skip(1).All(host => !host.Updates!.PosRestartCompleted),
-                "enabled upload without selected MSIs visibly explains its skip and never restarts POS");
+            Assert(worker.Requests.Count == 0 && hosts.All(host => !host.Phase.Contains("zzzSoftware") && host.Updates!.DatabaseUploadMessage.Length == 0) && hosts.Skip(1).All(host => !host.Updates!.PosRestartCompleted),
+                "updates without MSIs keep their actual result free of unrelated database upload notices and never restart POS");
 
             File.WriteAllText(msi, "fixture payload, never installed");
             packages.Add(UpdateComponents.Pos, new() { Kind="pos", ProductName="NovaTouch POS", ProductVersion="2.0.0", PayloadPath=msi });

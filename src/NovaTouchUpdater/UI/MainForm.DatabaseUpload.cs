@@ -70,9 +70,17 @@ public sealed partial class MainForm
 
     private async Task<bool> PublishLocalSoftwarePackagesAsync(HostState host, CancellationToken ct)
     {
-        if (!activeUploadToZzzSoftware || msiPackages.Count == 0)
+        if (msiPackages.Count == 0)
         {
-            string reason = !activeUploadToZzzSoftware ? "zzzSoftware: Upload ausgeschaltet." : "zzzSoftware: keine MSI-Pakete ausgewählt; kein Upload.";
+            // Service and Server Suite updates have no MSI publication step.
+            // Keep their verified update result free of unrelated upload notices.
+            if (host.Updates is { } skipped) skipped.DatabaseUploadMessage = "";
+            Log(host.Host, "zzzSoftware: Für die ausgewählten Updates ist kein Datenbank-Upload erforderlich. Nur MSI-Installationspakete werden in zzzSoftware gespeichert.");
+            return true;
+        }
+        if (!activeUploadToZzzSoftware)
+        {
+            const string reason = "zzzSoftware: Upload ausgeschaltet.";
             if (host.Updates is { } skipped) skipped.DatabaseUploadMessage = reason;
             Log(host.Host, reason);
             return true;
