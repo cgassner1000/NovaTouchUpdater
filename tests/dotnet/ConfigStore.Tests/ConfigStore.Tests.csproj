@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="$(RepositoryRoot)tests/Shared/TestWorkspace.cs" Link="TestWorkspace.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Configuration/AppConfigStore.cs" Link="AppConfigStore.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Configuration/AppDataPaths.cs" Link="AppDataPaths.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/BuildChannels.cs" Link="BuildChannels.cs" />
   </ItemGroup>
 </Project>

@@ -22,6 +22,8 @@ public sealed partial class MainForm : Form
     private bool connectionClosing;
     private int connectionGeneration;
     private readonly string logFile;
+    private readonly AppDataPaths userDataPaths;
+    private readonly string? startupConfigPath;
     private CancellationTokenSource? cancellation;
     private bool busy;
     private bool fittingColumns;
@@ -126,8 +128,9 @@ public sealed partial class MainForm : Form
 
     // Off-screen design previews use synthetic rows and never load the user's
     // config, start monitoring, check releases or write an application log.
-    internal MainForm(bool preview, IWorkerRunner? worker = null, IWorkerRunner? monitoringWorker = null, HttpClient? appReleaseHttp = null)
+    internal MainForm(bool preview, IWorkerRunner? worker = null, IWorkerRunner? monitoringWorker = null, HttpClient? appReleaseHttp = null, AppDataPaths? dataPaths = null)
     {
+        userDataPaths = dataPaths ?? AppDataPaths.ForCurrentUser();
         releaseHttp = appReleaseHttp ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         runner = worker ?? new WorkerRunner();
         connectionRunner = monitoringWorker ?? new WorkerRunner("NovaTouchUpdater.ConnectionWorker.ps1");
@@ -144,13 +147,17 @@ public sealed partial class MainForm : Form
         ClientSize = new Size(1710, 980);
         MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterScreen;
-        string logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NovaTouchUpdater", "Logs");
-        if (!preview) Directory.CreateDirectory(logDir);
-        logFile = preview ? "" : Path.Combine(logDir, "Update-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
+        AppDataMigration? migration = preview ? null : userDataPaths.InitializeAndMigrate(AppContext.BaseDirectory);
+        startupConfigPath = migration?.ConfigLoadPath;
+        logFile = preview ? "" : Path.Combine(userDataPaths.LogsDirectory, "Update-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".log");
         ConstructUi();
         WindowLayout.CompleteInitialization(this);
         executionMode.SelectedIndexChanged += (_, _) => UpdateExecutionSelection();
-        if (!preview) LoadStartupConfig();
+        if (!preview)
+        {
+            foreach (string message in migration!.Messages) Log("SYSTEM", message);
+            LoadStartupConfig();
+        }
         UpdateExecutionSelection();
         // Erst nach dem ersten Layout die endgültigen Spaltenbreiten berechnen.
         connectionTimer.Tick += async (_, _) => await RefreshConnectionsAsync();
@@ -213,7 +220,7 @@ public sealed partial class MainForm : Form
 
     private void LoadStartupConfig()
     {
-        string configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
+        string configPath = startupConfigPath ?? userDataPaths.ConfigFile;
         if (!File.Exists(configPath)) return;
 
         try
@@ -226,7 +233,7 @@ public sealed partial class MainForm : Form
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             MessageBox.Show(this,
-                $"Die Einstellungen aus config.json konnten nicht vollständig geladen werden.\n{ex.Message}",
+                $"Die Einstellungen aus {configPath} konnten nicht vollständig geladen werden.\n{ex.Message}",
                 "Konfiguration", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
@@ -309,9 +316,10 @@ public sealed partial class MainForm : Form
     private void SaveConfig()
     {
         if (busy || selfUpdating) return;
-        string configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
+        string configPath = userDataPaths.ConfigFile;
         try
         {
+            Directory.CreateDirectory(userDataPaths.RootDirectory);
             AppConfigStore.Save(configPath, CaptureConfig(), txtPassword.Text);
             Log("SYSTEM", $"Konfiguration gespeichert: {configPath} ({hosts.Count} Hosts)");
             MessageBox.Show(this, "Konfiguration gespeichert",
@@ -550,7 +558,7 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen und bei Bedarf starten, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Ohne Remote-Auswahl wird nur lokal getestet. Für Dienststart und TrustedHosts den Updater über das Schutzschild im Header mit erhöhten Rechten starten, auch bei einem Administratorkonto.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für die WinRM-Konfiguration und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
-        tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, use Build, Ausführungsmodus, Zielpfad, lokale und beide Remote-Paketoptionen, Benutzer, Passwort, HTTPS, IRIS-TLS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
+        tips.SetToolTip(btnSaveConfig, "Einstellungen in %LOCALAPPDATA%\\novacom software gmbh\\NovaTouchUpdater\\config.json speichern. Diese Konfiguration wird beim Start geladen. Das gespeicherte Passwort ist auf diesem Rechner für Benutzer mit Lesezugriff auf die Datei nutzbar.");
         tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Ablage für Update-Pakete. Leer: LOKAL verwendet die gewählten Quellen direkt; Remote-Hosts verwenden C:\\install\\Novacom. Mit dem lokalen Kopierschalter wird dieser Pfad für lokale Updates nicht verwendet.");

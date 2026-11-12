@@ -14,6 +14,7 @@ internal static partial class Program
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             if (args.Contains("--host-log")) { HostLogTests(); return 0; }
+            if (args.Contains("--user-data")) { UserDataConfigTests(); return 0; }
             if (args.Contains("--parallel-compile")) { ParallelCompilationTests(); return 0; }
             if (args.Contains("--auto-compile")) { AutoCompilationTests(); return 0; }
             if (args.Contains("--run-status")) { RunStatusTests(); return 0; }
@@ -37,7 +38,7 @@ internal static partial class Program
             if (args.Contains("--suite-setup")) { Complete(ServerSuiteSetupTests()); return 0; }
             if (args.Contains("--columns")) { ColumnSizingTests(); return 0; }
             if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
-            if (args.Contains("--startup")) { StartupChecksTests(); return 0; }
+            if (args.Contains("--startup")) { UserDataConfigTests(); StartupChecksTests(); return 0; }
             if (args.Contains("--winrm")) { WinRmPreparationTests(); return 0; }
             if (args.Contains("--database")) { DatabaseCheckTests(); return 0; }
             if (args.Contains("--iris-provider")) { BundledIrisProviderTests(); return 0; }
@@ -59,6 +60,7 @@ internal static partial class Program
                 SelectionTests();
                 HostManagementTests();
                 StartupChecksTests();
+                UserDataConfigTests();
                 WinRmPreparationTests();
                 DatabaseCheckTests();
                 BundledIrisProviderTests();
