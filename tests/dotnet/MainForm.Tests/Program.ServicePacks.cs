@@ -16,6 +16,7 @@ internal static partial class Program
         var compile = Field<Button>(form, "btnCompileSoftware");
         var check = Field<Button>(form, "btnDatabaseCheck");
         var tls = Field<CheckBox>(form, "chkIrisTls");
+        var autoCompile = Field<CheckBox>(form, "chkCompileAfterInstallation");
         var tlsParent = (TableLayoutPanel)tls.Parent!;
         var tlsCell = tlsParent.GetCellPosition(tls);
         var betaDivider = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "erweitertSettingsDivider");
@@ -23,8 +24,11 @@ internal static partial class Program
         var buildPreference = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "buildPreference");
         var generalDivider = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "allgemeinSettingsDivider");
         Assert(tlsParent.GetRow(betaDivider) < tlsParent.GetRow(buildPreference) &&
-            tlsParent.GetRow(buildPreference) < tlsParent.GetRow(tls) && tlsParent.GetRow(tls) < tlsParent.GetRow(generalDivider),
-            "the Erweitert settings group contains use Build and IRIS TLS before Allgemein");
+            tlsParent.GetRow(buildPreference) < tlsParent.GetRow(tls) && tlsParent.GetRow(tls) < tlsParent.GetRow(autoCompile) &&
+            tlsParent.GetRow(autoCompile) < tlsParent.GetRow(generalDivider),
+            "the Erweitert settings group contains use Build, IRIS TLS and automatic compilation before Allgemein");
+        var autoCompileCell = tlsParent.GetCellPosition(autoCompile);
+        canvas.Controls.Add(autoCompile);
         canvas.Controls.Add(tls);
         canvas.Controls.Add(betaDivider);
         int popups = 0;
@@ -32,16 +36,18 @@ internal static partial class Program
         using var before = new Bitmap(image.Width, image.Height);
         image.DrawToBitmap(before, image.ClientRectangle);
         Cursor cursor = image.Cursor;
-        Assert(!gate.Enabled && !betaDivider.Visible && !button.Visible && !compile.Visible && !tls.Visible && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
+        Assert(!gate.Enabled && !betaDivider.Visible && !button.Visible && !compile.Visible && !tls.Visible && !autoCompile.Visible &&
+            autoCompile is ModernToggleSwitch { Checked: false, Text: "nach Installation kompilieren" } && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
             "servicepacks and IRIS TLS are hidden initially while Check Database remains a regular function");
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         gate.RegisterClick(check, true);
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         Assert(!gate.Enabled && popups == 0 && !button.Visible, "another control resets the five consecutive logo clicks");
         var fifth = Message.Create(image.Handle, 0x0203, IntPtr.Zero, IntPtr.Zero);
-        Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && betaDivider.Visible && button.Visible && compile.Visible && tls.Visible,
+        Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && betaDivider.Visible && button.Visible && compile.Visible && tls.Visible && autoCompile.Visible,
             "the fifth logo click activates both servicepacks and IRIS TLS without consuming the click");
         tlsParent.Controls.Add(tls, tlsCell.Column, tlsCell.Row);
+        tlsParent.Controls.Add(autoCompile, autoCompileCell.Column, autoCompileCell.Row);
         tlsParent.Controls.Add(betaDivider, betaCell.Column, betaCell.Row);
         for (int click = 0; click < 8; click++) gate.RegisterClick(image, true);
         Assert(popups == 1, "further logo clicks do not repeat the activation popup");

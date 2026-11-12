@@ -93,6 +93,12 @@ try
     Assert(loaded.Settings.SkipLocalPackageCopy && loaded.Settings.SkipZipTransfer, "both independent package-copy settings survive saving and loading");
     Assert(loaded.Settings.SkipRemotePackageCopy, "remote direct-package mode survives saving and loading");
     Assert(loaded.Settings.IrisUseTls, "enabled IRIS TLS survives saving and loading");
+    settings.CompileAfterInstallation = true;
+    AppConfigStore.Save(path, settings, password);
+    Assert(AppConfigStore.Load(path).Settings.CompileAfterInstallation, "automatic compilation after NTC installation can be enabled and persisted");
+    settings.CompileAfterInstallation = false;
+    AppConfigStore.Save(path, settings, password);
+    Assert(!AppConfigStore.Load(path).Settings.CompileAfterInstallation, "automatic compilation after NTC installation can be disabled and persisted");
     Assert(!loaded.Settings.UploadToZzzSoftware && loaded.Settings.RestartPosAfterUpdate, "database upload and POS restart settings survive saving and loading");
     settings.UploadToZzzSoftware=true; settings.RestartPosAfterUpdate=false;
     settings.ScanOnStartup=false;
@@ -118,6 +124,7 @@ try
     Assert(old.Settings.ScanOnStartup, "configs without a startup setting enable automatic scanning by default");
     Assert(old.Settings.UploadToZzzSoftware && !old.Settings.RestartPosAfterUpdate, "older configs enable database upload and leave POS restart disabled");
     Assert(!old.Settings.IrisUseTls, "older configs use IRIS without TLS by default");
+    Assert(!old.Settings.CompileAfterInstallation, "older configs leave automatic compilation after NTC installation disabled");
     Assert(!old.Settings.SkipLocalPackageCopy && !old.Settings.SkipZipTransfer, "older configs retain package copying and remote uploads by default");
     Assert(!old.Settings.SkipRemotePackageCopy, "older configs retain persistent remote packages by default");
     Assert(old.Password==password && old.Settings.HttpsPort==5986 && !old.Settings.UseSsl && old.Settings.ExecutionMode == "Remote","legacy plaintext configs remain readable and missing settings keep remote-mode defaults");

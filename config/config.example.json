@@ -5,6 +5,7 @@
   "EncryptedPassword": "",
   "UseSsl": false,
   "IrisUseTls": false,
+  "CompileAfterInstallation": false,
   "UploadToZzzSoftware": true,
   "RestartPosAfterUpdate": false,
   "ScanOnStartup": true,

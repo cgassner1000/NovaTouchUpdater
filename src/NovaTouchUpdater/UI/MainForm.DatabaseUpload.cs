@@ -163,9 +163,12 @@ public sealed partial class MainForm
                 if (host.UpdateFailed && host.Updates!.Pending != UpdateComponents.None && host.Updates.ErrorText.Length == 0 && host.Error.Length > 0)
                     foreach (UpdateComponents component in HostUpdateState.Each(host.Updates.Pending)) host.Updates.Fail(component, host.Error);
                 if (!activeUploadToZzzSoftware) host.Updates!.DatabaseUploadError = "";
+                if (!activeCompileAfterInstallation) host.Updates!.SoftwareCompilationError = "";
                 host.Updates!.PosRestartSkipMessage = "";
                 if (!activeRestartPosAfterUpdate) host.Updates.PosRestartError = "";
             }
+            foreach (HostState host in targets.Where(host => host.IsLocal))
+                await CompileAfterNtcInstallationAsync(host, ct);
             await ParallelPhaseAsync(targets, activeDatabaseUploadParallelism, async (host, token) =>
             {
                 await PublishLocalSoftwarePackagesAsync(host, token);

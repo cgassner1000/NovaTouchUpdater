@@ -63,6 +63,7 @@ public sealed partial class MainForm : Form
     private readonly NumericUpDown nHttpsPort = new();
     private readonly CheckBox chkSsl = new ModernToggleSwitch();
     private readonly CheckBox chkIrisTls = new ModernToggleSwitch { Name = "irisUseTls", Text = "IRIS-Verbindung mit TLS", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkCompileAfterInstallation = new ModernToggleSwitch { Name = "compileAfterInstallation", Text = "nach Installation kompilieren", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkUploadToZzzSoftware = new ModernToggleSwitch { Name = "uploadToZzzSoftware", Text = "Installationspakete in Datenbank hochladen", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkRestartPosAfterUpdate = new ModernToggleSwitch { Name = "restartPosAfterUpdate", Text = "NovaTouch POS nach Datenbank-upload neu starten", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly CheckBox chkForceUpdate = new ModernToggleSwitch();
@@ -236,6 +237,7 @@ public sealed partial class MainForm : Form
         txtUser.Text = config.Username ?? "";
         chkSsl.Checked = config.UseSsl;
         chkIrisTls.Checked = config.IrisUseTls;
+        chkCompileAfterInstallation.Checked = config.CompileAfterInstallation;
         chkUploadToZzzSoftware.Checked = config.UploadToZzzSoftware;
         chkRestartPosAfterUpdate.Checked = config.RestartPosAfterUpdate;
         chkScanOnStartup.Checked = config.ScanOnStartup;
@@ -296,6 +298,7 @@ public sealed partial class MainForm : Form
         Hosts = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
         Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
         IrisUseTls = chkIrisTls.Checked,
+        CompileAfterInstallation = chkCompileAfterInstallation.Checked,
         UploadToZzzSoftware = chkUploadToZzzSoftware.Checked, RestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked,
         SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(), UseBuild = BuildChannels.Normalize(useBuild.SelectedItem as string),
         ScanOnStartup = chkScanOnStartup.Checked,
@@ -415,6 +418,7 @@ public sealed partial class MainForm : Form
         betaFeatures.Register(btnServicePacks);
         betaFeatures.Register(btnCompileSoftware);
         betaFeatures.Register(chkIrisTls);
+        betaFeatures.Register(chkCompileAfterInstallation);
         betaFeatures.Activated += () =>
         {
             if (showBetaActivated is { } show) show();
@@ -556,6 +560,7 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(chkSkipZipTransfer, "REMOTE: ZIP- und MSI-Pakete müssen bereits im Zielpfad des Clients liegen. Dateiname und SHA256 müssen zur gewählten Quelle passen. Die Einstellung betrifft keine lokalen Updates.");
         tips.SetToolTip(chkSkipRemotePackageCopy, "REMOTE: Pakete für die Installation nur temporär auf dem Client bereitstellen und danach entfernen. Der eingestellte Zielordner wird weder befüllt noch bereinigt. MSI-Pakete für zzzSoftware werden über WinRM gestreamt. Hat Vorrang vor der Verwendung vorhandener Update-Dateien.");
         tips.SetToolTip(chkIrisTls, "TLS für den MSI-Upload zu erkannten IRIS-Instanzen auf lokalen und entfernten Hosts verwenden. Mit 'Konfiguration speichern' für den nächsten Start merken.");
+        tips.SetToolTip(chkCompileAfterInstallation, "Nach einer erfolgreichen lokalen NovaTouch-Control-Installation die Softwarepakete automatisch in allen lokalen IRIS-Namespaces ohne %-Präfix kompilieren. Bei gleicher/neuerer NTC-Version kein automatisches Kompilieren. Standard: ausgeschaltet. In der Konfiguration speicherbar.");
         tips.SetToolTip(useBuild, "Bei einem Softwareordner mit dem Namen builds nur ALPHA, BETA oder STABLE einlesen. Mit 'Konfiguration speichern' für zukünftige Abfragen und den nächsten Start merken.");
         tips.SetToolTip(chkUploadToZzzSoftware, "Ausgewählte MSI-Pakete nach den Updates in zzzSoftware hochladen. Standard: eingeschaltet. In der Konfiguration speicherbar.");
         tips.SetToolTip(chkRestartPosAfterUpdate, "Nur ältere Remote-POS nach einem neu gespeicherten POS-MSI in zzzSoftware starten / neu starten. Kein Neustart ohne POS-Paket, bei gleicher/neuerer POS-Version oder wenn das POS-MSI bereits in zzzSoftware vorhanden ist. LOKAL wird ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen.");
@@ -579,7 +584,7 @@ public sealed partial class MainForm : Form
         var betaDivider = SettingsDivider("Erweitert");
         betaFeatures.Register(betaDivider);
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
-        var settingsContent = Stack(betaDivider, buildPreference, chkIrisTls,
+        var settingsContent = Stack(betaDivider, buildPreference, chkIrisTls, chkCompileAfterInstallation,
             SettingsDivider("ALLGEMEIN"), chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
             login, optionBar, chkUploadToZzzSoftware, chkForceUpdate, chkRestartPosAfterUpdate, CreateSoftwareSourcePath(), targetPath,
             SettingsDivider("LOKAL"), chkSkipLocalPackageCopy,
@@ -832,7 +837,7 @@ public sealed partial class MainForm : Form
             // Even the longest option must remain readable if a vertical scrollbar
             // reduces the available width at very large text sizes.
             int width = main.Padding.Horizontal + configuration.Margin.Horizontal + configuration.Padding.Horizontal
-                + new Control[] { chkSkipLocalPackageCopy, chkSkipRemotePackageCopy, chkSkipZipTransfer, chkIrisTls, chkUploadToZzzSoftware, chkRestartPosAfterUpdate, httpsOptions }
+                + new Control[] { chkSkipLocalPackageCopy, chkSkipRemotePackageCopy, chkSkipZipTransfer, chkIrisTls, chkCompileAfterInstallation, chkUploadToZzzSoftware, chkRestartPosAfterUpdate, httpsOptions }
                     .Max(control => control.PreferredSize.Width + control.Margin.Horizontal) + settings.Padding.Horizontal;
             if (main.MinimumSize.Width != width) main.MinimumSize = new Size(width, 0);
         };
@@ -1376,6 +1381,7 @@ public sealed partial class MainForm : Form
         activeUpdateParallelism = (int)nUpdate.Value;
         activeDatabaseUploadParallelism = activeUpdateParallelism;
         activeIrisUseTls = chkIrisTls.Checked;
+        activeCompileAfterInstallation = chkCompileAfterInstallation.Checked;
         activeUploadToZzzSoftware = chkUploadToZzzSoftware.Checked;
         activeRestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked;
         activeStreamDatabasePackages = chkSkipLocalPackageCopy.Checked || activeSkipRemotePackageCopy;
@@ -1519,7 +1525,8 @@ public sealed partial class MainForm : Form
             selected = selected.Where(host => NeedsAdditionalFiles(host, onlyFailed) || ComponentsForUpdate(host, onlyFailed) != UpdateComponents.None ||
                 (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0 && (!onlyFailed || host.Updates?.DatabaseUploadCompleted != true)) ||
                 (chkRestartPosAfterUpdate.Checked && !host.IsLocal && (!onlyFailed || host.Updates?.PosRestartCompleted != true)) ||
-                (onlyFailed && host.Updates is { } state && (state.DatabaseUploadError.Length > 0 || state.PosRestartError.Length > 0))).ToArray();
+                (onlyFailed && host.Updates is { } state && (state.DatabaseUploadError.Length > 0 || state.PosRestartError.Length > 0 || state.SoftwareCompilationError.Length > 0 ||
+                    (chkCompileAfterInstallation.Checked && host.IsLocal && state.NtcInstalled && !state.SoftwareCompilationCompleted)))).ToArray();
             if (selected.Length == 0)
             {
                 MessageBox.Show(this, "Remote sind ausschließlich Payment, Fiscal und Server Suite erlaubt. POS, NTC, SOL und NTV können nur lokal aktualisiert werden.",
@@ -1710,6 +1717,7 @@ public sealed partial class MainForm : Form
                     h.Result = "Fehler";
                     h.Phase = state.Pending != UpdateComponents.None ? "Maximal 3 Versuche: " + HostUpdateState.Label(state.Pending)
                         : state.AdditionalFilesError.Length > 0 ? "Übertragung zusätzlicher Dateien fehlgeschlagen"
+                        : state.SoftwareCompilationError.Length > 0 ? "Softwarepakete kompilieren fehlgeschlagen"
                         : state.DatabaseUploadError.Length > 0 ? "zzzSoftware-Upload fehlgeschlagen" : "POS-Neustart fehlgeschlagen";
                 }
                 else
@@ -1722,7 +1730,7 @@ public sealed partial class MainForm : Form
                         ? (state.Changed ? "zzzSoftware-Upload abgeschlossen" : "zzzSoftware geprüft – kein Upload erforderlich")
                         : state.AllSkipped ? "Keine ausgewählten Komponenten installiert – übersprungen" : h.RebootRequired ? "Verifiziert – Windows-Neustart erforderlich" : "Verifiziert";
                 }
-                h.Phase = string.Join(" · ", new[] { h.Phase, state.DatabaseUploadMessage, state.PosRestartSkipMessage, state.AdditionalFilesMessage }
+                h.Phase = string.Join(" · ", new[] { h.Phase, state.SoftwareCompilationMessage, state.DatabaseUploadMessage, state.PosRestartSkipMessage, state.AdditionalFilesMessage }
                     .Where(message => message.Length > 0).Distinct());
                 if (!h.UpdateFailed && state.Changed) h.SetProgress(100);
             });
@@ -2205,6 +2213,7 @@ public sealed partial class MainForm : Form
         chkSkipLocalPackageCopy.Enabled = idle;
         chkSkipRemotePackageCopy.Enabled = idle;
         chkIrisTls.Enabled = idle;
+        chkCompileAfterInstallation.Enabled = idle;
         useBuild.Enabled = idle;
         chkUploadToZzzSoftware.Enabled = idle;
         chkRestartPosAfterUpdate.Enabled = idle;

@@ -427,6 +427,9 @@ public sealed partial class MainForm
                 ? $"Das Inno-Setup führt je Instanz das reguläre Update mit explizitem Dienstnamen und Installationspfad durch, einschließlich Dienstinstallation und Dienststart. Maximal {nUpdate.Value} Instanz-Setups parallel je Host; gemeinsame Installationsordner nacheinander. Kein automatischer Windows-Neustart."
                 : "ZIP-Verfahren: Dienste stoppen, verbliebene nt3_server_suite*-Prozesse beenden, Windows EventLog stoppen, Dateien einspielen, EventLog starten und anschließend die Dienste starten. Vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. Konfiguration und Dienstkonten bleiben erhalten. Deaktivierte Suite-Dienste bleiben deaktiviert."));
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
+        if (chkCompileAfterInstallation.Checked && selected.Any(host => host.IsLocal &&
+            ((needed & UpdateComponents.Ntc) != 0 || (onlyFailed && host.Updates is { NtcInstalled: true, SoftwareCompilationCompleted: false }))))
+            text.AppendLine("Nach erfolgreicher NTC-Installation: Softwarepakete automatisch in allen lokalen IRIS-Namespaces ohne Präfix % kompilieren, vor den zzzSoftware-Uploads. Kompilierungsfehler können ohne erneute NTC-Installation wiederholt werden.");
         if (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0)
         {
             text.AppendLine("Nach den Updates: MSI-Pakete in zzzSoftware aller IRIS-Namespaces ohne Präfix % hochladen. Gleiche oder neuere Datenbankversionen überspringen; nur ältere Pakete ersetzen. Uploadfehler bleiben für eine Wiederholung erhalten.");

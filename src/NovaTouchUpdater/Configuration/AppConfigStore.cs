@@ -13,6 +13,7 @@ internal sealed class UpdaterConfig
     public string? Username { get; set; }
     public bool UseSsl { get; set; }
     public bool IrisUseTls { get; set; }
+    public bool CompileAfterInstallation { get; set; }
     public bool UploadToZzzSoftware { get; set; } = true;
     public bool RestartPosAfterUpdate { get; set; }
     public bool ScanOnStartup { get; set; } = true;
@@ -73,6 +74,7 @@ internal static class AppConfigStore
             Hosts = NormalizeHosts(settings.Hosts), RemotePath = settings.RemotePath,
             Username = settings.Username, UseSsl = settings.UseSsl, HttpsPort = settings.HttpsPort,
             IrisUseTls = settings.IrisUseTls,
+            CompileAfterInstallation = settings.CompileAfterInstallation,
             UploadToZzzSoftware = settings.UploadToZzzSoftware, RestartPosAfterUpdate = settings.RestartPosAfterUpdate,
             ExecutionMode = settings.ExecutionMode, SoftwarePath = settings.SoftwarePath, UseBuild = settings.UseBuild,
             ScanOnStartup = settings.ScanOnStartup,

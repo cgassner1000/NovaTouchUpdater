@@ -16,6 +16,18 @@ internal sealed class HostUpdateState(UpdateComponents components)
     internal UpdateComponents Attempted { get; private set; }
     internal bool Changed { get; private set; }
     internal bool AllSkipped { get; private set; } = true;
+    internal bool NtcInstalled { get; private set; }
+    internal bool SoftwareCompilationCompleted { get; private set; }
+    internal string SoftwareCompilationMessage { get; private set; } = "";
+    internal string SoftwareCompilationError { get; set; } = "";
+    internal void CompleteSoftwareCompilation(WorkerResult result)
+    {
+        SoftwareCompilationCompleted = true;
+        SoftwareCompilationError = "";
+        SoftwareCompilationMessage = "Softwarepakete nach NTC-Installation kompiliert";
+        Changed |= result.Changed;
+        AllSkipped &= result.Skipped;
+    }
     internal bool DatabaseUploadCompleted { get; set; }
     internal bool DatabaseUploadChanged { get; private set; }
     internal bool SuccessfulPosUploadInRun { get; set; }
@@ -95,7 +107,7 @@ internal sealed class HostUpdateState(UpdateComponents components)
             errors.Remove(component);
     }
     internal string ErrorText => string.Join(" | ", Each(Pending).Where(errors.ContainsKey).Select(c => Label(c) + ": " + errors[c])
-        .Concat(new[] { DatabaseUploadError, PosRestartError, AdditionalFilesError }.Where(error => error.Length > 0)));
+        .Concat(new[] { SoftwareCompilationError, DatabaseUploadError, PosRestartError, AdditionalFilesError }.Where(error => error.Length > 0)));
 
     internal void Complete(UpdateComponents component, WorkerResult result)
     {
@@ -104,6 +116,7 @@ internal sealed class HostUpdateState(UpdateComponents components)
         errors.Remove(component);
         Changed |= result.Changed;
         AllSkipped &= result.Skipped;
+        NtcInstalled |= (component & UpdateComponents.Ntc) != 0 && result.Changed && !result.Skipped;
     }
 
     internal void Fail(UpdateComponents component, string error) => errors[component] = error;
