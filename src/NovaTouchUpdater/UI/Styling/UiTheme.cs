@@ -250,7 +250,8 @@ internal sealed class AppToggleSwitch : CheckBox
         e.Graphics.FillPath(trackBrush, shape);
         float inset = 3 * scale, diameter = trackHeight - inset * 2;
         float thumbX = Checked != rtl ? track.Right - inset - diameter : track.Left + inset;
-        using var thumbBrush = new SolidBrush(Enabled ? UiTheme.Thumb : UiTheme.IsDark ? UiTheme.DisabledText : Color.FromArgb(247, 248, 250));
+        using var thumbBrush = new SolidBrush(Enabled ? Checked ? UiTheme.ToggleOnThumb : UiTheme.Thumb
+            : UiTheme.IsDark ? UiTheme.DisabledText : Color.FromArgb(247, 248, 250));
         e.Graphics.FillEllipse(thumbBrush, thumbX, track.Top + inset, diameter, diameter);
         int labelSpace = (int)Math.Ceiling(trackWidth + 10 * scale) + 2;
         var textBounds = new Rectangle(Padding.Left + (rtl ? 0 : labelSpace), Padding.Top,
@@ -277,6 +278,7 @@ internal class AppButton : Button
     private bool hovered;
     private bool pressed;
     internal ButtonRole Role { get => role; set { role = value; Invalidate(); } }
+    internal bool AccentInDarkMode { get; set; }
 
     internal AppButton()
     {
@@ -294,15 +296,22 @@ internal class AppButton : Button
     protected override void OnPaint(PaintEventArgs e)
     {
         if (SystemInformation.HighContrast) { base.OnPaint(e); return; }
-        Color fill = role switch
+        ButtonRole displayRole = UiTheme.IsDark && AccentInDarkMode && role == ButtonRole.Normal ? ButtonRole.Accent : role;
+        Color fill = displayRole switch
         {
             ButtonRole.Primary => hovered ? UiTheme.PrimaryHover : UiTheme.Primary,
             ButtonRole.Accent => hovered ? UiTheme.AccentHover : UiTheme.AccentSoft,
             ButtonRole.Danger => hovered ? UiTheme.DangerHover : UiTheme.DangerSoft,
             _ => hovered ? UiTheme.Hover : UiTheme.Surface
         };
-        Color foreground = role switch { ButtonRole.Primary => UiTheme.PrimaryText, ButtonRole.Accent => UiTheme.Accent, ButtonRole.Danger => UiTheme.Danger, _ => UiTheme.Text };
-        Color border = role == ButtonRole.Normal ? UiTheme.Border : fill;
+        Color foreground = displayRole switch
+        {
+            ButtonRole.Primary => UiTheme.PrimaryText,
+            ButtonRole.Accent => UiTheme.AccentButtonText,
+            ButtonRole.Danger => UiTheme.Danger,
+            _ => UiTheme.Text
+        };
+        Color border = displayRole == ButtonRole.Normal ? UiTheme.Border : fill;
         if (!Enabled) { fill = UiTheme.Disabled; foreground = UiTheme.DisabledText; border = fill; }
         else if (pressed) fill = ControlPaint.Dark(fill, .06F);
         e.Graphics.Clear(Parent?.BackColor ?? UiTheme.Background);
@@ -328,7 +337,7 @@ internal class AppButton : Button
         if (Focused && ShowFocusCues)
         {
             using var focusShape = UiTheme.RoundRectangle(new RectangleF(3 * scale, 3 * scale, Width - 6 * scale, Height - 6 * scale), 4 * scale);
-            using var focusPen = new Pen(role == ButtonRole.Primary ? Color.White : UiTheme.Accent, Math.Max(1, scale)) { DashStyle = DashStyle.Dot };
+            using var focusPen = new Pen(displayRole == ButtonRole.Primary ? UiTheme.PrimaryText : UiTheme.Accent, Math.Max(1, scale)) { DashStyle = DashStyle.Dot };
             e.Graphics.DrawPath(focusPen, focusShape);
         }
     }

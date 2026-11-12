@@ -647,6 +647,7 @@ public sealed partial class MainForm : Form
         ((AppButton)btnCancel).Role = ButtonRole.Danger;
         foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnServicePacks, btnCompileSoftware, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
         {
+            ((AppButton)btn).AccentInDarkMode = true;
             btn.Margin = new Padding(0, 3, 7, 3);
             bar.Controls.Add(btn);
         }
@@ -727,7 +728,7 @@ public sealed partial class MainForm : Form
         table.Columns["result"].CellTemplate = new StatusBadgeCell();
         // Keep existing collection indices stable; group optional software
         // columns with the versions in their visual display order.
-        table.Columns.Add("ksm", "NT3.KSM");
+        table.Columns.Add("ksm", "NT3.ServiceDisplay");
         table.Columns.Add("ntv", "NovaTouch Voucher");
         table.Columns["ksm"].DisplayIndex = table.Columns["serversuite"].DisplayIndex + 1;
         table.Columns["ntv"].DisplayIndex = table.Columns["ntc"].DisplayIndex + 1;

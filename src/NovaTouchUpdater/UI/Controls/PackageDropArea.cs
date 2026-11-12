@@ -86,7 +86,7 @@ internal sealed class PackageDropArea : Control
         using var badge = UiTheme.RoundRectangle(new RectangleF(x, y, iconSize, iconSize), 12 * scale);
         using var badgeBrush = new SolidBrush(acceptingDrop ? accent : contrast ? SystemColors.Control : UiTheme.AccentSoft);
         e.Graphics.FillPath(badgeBrush, badge);
-        using var icon = new Pen(acceptingDrop ? contrast ? SystemColors.HighlightText : Color.White : accent, 2 * scale)
+        using var icon = new Pen(acceptingDrop ? contrast ? SystemColors.HighlightText : UiTheme.PrimaryText : accent, 2 * scale)
         { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
         PointF Point(float dx, float dy) => new(x + dx * scale, y + dy * scale);
         e.Graphics.DrawLine(icon, Point(22, 10), Point(22, 27));

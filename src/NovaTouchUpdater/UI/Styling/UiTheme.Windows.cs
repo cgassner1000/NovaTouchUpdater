@@ -110,10 +110,40 @@ internal static partial class UiTheme
 
     internal static void StyleMenu(ContextMenuStrip menu)
     {
-        menu.Renderer = SystemInformation.HighContrast ? new ToolStripSystemRenderer() : new ToolStripProfessionalRenderer(new MenuColors());
+        menu.Renderer = SystemInformation.HighContrast ? new ToolStripSystemRenderer() : new MenuRenderer();
         menu.BackColor = SystemInformation.HighContrast ? SystemColors.Control : Surface;
         menu.ForeColor = SystemInformation.HighContrast ? SystemColors.ControlText : Text;
         foreach (ToolStripItem item in menu.Items) { item.BackColor = menu.BackColor; item.ForeColor = menu.ForeColor; }
+    }
+
+    private sealed class MenuRenderer : ToolStripProfessionalRenderer
+    {
+        internal MenuRenderer() : base(new MenuColors()) { }
+
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            if (!IsDark) { base.OnRenderMenuItemBackground(e); return; }
+            using var background = new SolidBrush(Surface);
+            e.Graphics.FillRectangle(background, new Rectangle(Point.Empty, e.Item.Size));
+            if (!e.Item.Enabled || !e.Item.Selected && !e.Item.Pressed) return;
+            using var highlight = new SolidBrush(AccentSoft);
+            using var shape = RoundRectangle(new RectangleF(2, 1, e.Item.Width - 4, e.Item.Height - 2), 3);
+            e.Graphics.FillPath(highlight, shape);
+        }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            if (!IsDark) { base.OnRenderItemText(e); return; }
+            Color foreground = !e.Item.Enabled ? Muted : e.Item.Selected || e.Item.Pressed ? Color.White : Text;
+            TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, e.TextRectangle, foreground, e.TextFormat);
+        }
+
+        protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
+        {
+            if (!IsDark) { base.OnRenderItemCheck(e); return; }
+            ControlPaint.DrawMenuGlyph(e.Graphics, e.ImageRectangle, MenuGlyph.Checkmark,
+                e.Item.Enabled ? Color.White : Muted, e.Item.Selected || e.Item.Pressed ? AccentSoft : Surface);
+        }
     }
 
     private sealed class MenuColors : ProfessionalColorTable

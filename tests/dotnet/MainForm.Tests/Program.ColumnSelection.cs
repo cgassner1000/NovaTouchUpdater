@@ -59,8 +59,10 @@ internal static partial class Program
                     host.Row!.Cells["ntv"].Value?.ToString() == host.NtvVersion && host.Row.Cells["ksm"].Value?.ToString() == host.KsmVersion &&
                     host.Row.Cells["ksm"].ToolTipText.Contains("nt3_server_suite_USER") && host.Row.Cells["ntv"].ToolTipText.Contains("NovaTouch Voucher"),
                     "optional columns show complete KSM metadata and Windows Voucher versions with instance/product details");
-                Assert(table.Columns["ksm"].Width == table.Columns["payment"].Width && table.Columns["ntv"].Width >= table.Columns["ntv"].GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true),
-                    "KSM uses the same content sizing as Payment and Voucher respects its longer header");
+                Assert(table.Columns["ksm"].Width >= table.Columns["payment"].Width &&
+                    table.Columns["ksm"].Width >= table.Columns["ksm"].GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true) &&
+                    table.Columns["ntv"].Width >= table.Columns["ntv"].GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true),
+                    "ServiceDisplay uses the same content sizing as Payment while both optional columns fit their complete headings");
                 int shortKsm = table.Columns["ksm"].Width;
                 host.Row.Cells["ksm"].Value = "2026.4.9785.14868, 2026.4.9800.12345"; Settle();
                 Assert(table.Columns["ksm"].Width > shortKsm && table.HorizontalScrollingOffset == 0, "multiple KSM versions grow dynamically without horizontal scrolling");

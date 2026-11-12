@@ -17,7 +17,7 @@ internal sealed class AdministratorButton : Button
         FlatAppearance.MouseOverBackColor = UiTheme.AccentSoft;
         FlatAppearance.MouseDownBackColor = UiTheme.AccentSoft;
         BackColor = UiTheme.Background;
-        ForeColor = UiTheme.Accent;
+        ForeColor = UiTheme.AccentButtonText;
         Font = new Font("Segoe UI", 8.5F);
         Cursor = Cursors.Hand;
         Padding = new Padding(6, 2, 6, 2);
@@ -45,7 +45,7 @@ internal sealed class AdministratorButton : Button
         FlatStyle = FlatStyle.Flat;
         FlatAppearance.MouseOverBackColor = FlatAppearance.MouseDownBackColor = UiTheme.AccentSoft;
         BackColor = UiTheme.Background;
-        ForeColor = UiTheme.Accent;
+        ForeColor = UiTheme.AccentButtonText;
         UpdateShield();
     }
 

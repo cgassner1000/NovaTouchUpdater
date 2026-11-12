@@ -75,6 +75,25 @@ internal static partial class Program
             { log.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "theme-dark-log.png")); }
             var menu = Field<ContextMenuStrip>(form, "hostColumnsMenu");
             Assert(menu.BackColor == UiTheme.Surface && menu.ForeColor == UiTheme.Text, "host column menus follow the active theme");
+            menu.Show(form, new Point(360, 300));
+            try
+            {
+                var choice = (ToolStripMenuItem)menu.Items["hostname"]!;
+                choice.Select();
+                Application.DoEvents();
+                using var bitmap = new Bitmap(menu.Width, menu.Height);
+                menu.DrawToBitmap(bitmap, menu.ClientRectangle);
+                bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "theme-dark-column-menu-hover.png"));
+                Rectangle bounds = choice.Bounds;
+                Assert(bitmap.GetPixel(bounds.Right - 12, bounds.Top + bounds.Height / 2).ToArgb() == UiTheme.AccentSoft.ToArgb(),
+                    "hovered column choices use the dark violet action background instead of the Windows blue highlight");
+                int whitePixels = 0;
+                for (int y = bounds.Top + 3; y < bounds.Bottom - 3; y++)
+                    for (int x = bounds.Left + 36; x < bounds.Right - 12; x++)
+                        if (bitmap.GetPixel(x, y).ToArgb() == Color.White.ToArgb()) whitePixels++;
+                Assert(whitePixels > 10, "hovered column choices render their captions in white");
+            }
+            finally { menu.Close(); }
             combo.SelectedIndex = 0;
             Assert(!UiTheme.IsDark && form.BackColor == Color.FromArgb(244, 247, 251) && log.BackColor == UiTheme.Background && confirmation.BackColor == UiTheme.Background,
                 "switching back to Light refreshes all open windows without restarting");

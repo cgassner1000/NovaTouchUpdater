@@ -30,7 +30,7 @@ internal sealed class WinRmTestForm : Form
         {
             Action = "winrm-test", Host = host, Username = username, Password = password, UseSsl = useSsl, HttpsPort = httpsPort
         }).ToArray();
-        Text = "Test WinRM – " + (useSsl ? "HTTPS" : "HTTP");
+        Text = "WinRM Konfiguration";
         Size = new Size(1100, 700);
         MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterParent;
