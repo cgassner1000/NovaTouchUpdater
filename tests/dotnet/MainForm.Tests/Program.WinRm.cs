@@ -70,6 +70,8 @@ internal static partial class Program
         using var visibility = new Panel();
         var winRm = Field<Button>(form, "btnWinRm");
         visibility.Controls.Add(winRm);
+        var upload = Field<Button>(form, "btnTransfer");
+        visibility.Controls.Add(upload);
         HostState[] hosts = Populate(form);
         var mode = Field<ComboBox>(form, "executionMode");
         var https = Field<CheckBox>(form, "chkSsl");
@@ -89,8 +91,9 @@ internal static partial class Program
         {
             mode.SelectedIndex = execution;
             Call(form, "UpdateButtons");
-            Assert(winRm.Visible == (execution != (int)UpdateExecutionMode.Local) && Field<Button>(form, "btnScan").Text == "Versionen prüfen",
-                $"WinRM visibility follows local/remote mode {execution} and the scan button is named Versionen prüfen");
+            Assert(winRm.Visible == (execution != (int)UpdateExecutionMode.Local) && upload.Visible == winRm.Visible &&
+                winRm.Text == "WinRM\nkonfigurieren" && Field<Button>(form, "btnScan").Text == "Versionen prüfen",
+                $"the two-line WinRM configuration button and upload follow local/remote mode {execution}; the scan button is named Versionen prüfen");
             Assert(settings.All(control => control.Enabled) && port.Enabled && Field<Button>(form, "btnWinRm").Enabled,
                 $"all settings remain editable in execution mode {execution}");
             var config = (UpdaterConfig)Call(form, "CaptureConfig")!;

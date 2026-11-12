@@ -9,6 +9,7 @@ internal static partial class Program
 {
     private static void AdministratorTests()
     {
+        RenderAdministratorShield();
         ProcessElevationTests();
         var start = AppElevation.CreateStartInfo();
         Assert(start.FileName == Environment.ProcessPath && start.UseShellExecute && start.Verb == "runas" &&
@@ -71,6 +72,29 @@ internal static partial class Program
         }
         finally { if (!form.IsDisposed) form.Dispose(); }
         FeedbackHeaderTests();
+    }
+
+    private static void RenderAdministratorShield()
+    {
+        using var canvas = new Panel { Size = new Size(640, 300), BackColor = UiTheme.Background };
+        int top = 16;
+        foreach (float scale in new[] { 1F, 1.5F, 2F })
+        {
+            canvas.Controls.Add(new Label { Text = $"{scale:P0}", Location = new Point(16, top + 8), AutoSize = true, Font = UiTheme.BodyFont() });
+            var button = new AdministratorButton { AutoSize = false, Location = new Point(92, top),
+                Font = new Font("Segoe UI", 8.5F * scale),
+                Padding = new Padding((int)(6 * scale), (int)(2 * scale), (int)(6 * scale), (int)(2 * scale)) };
+            Image? previous = button.Image;
+            button.Image = AdministratorButton.CreateShield((int)(24 * scale));
+            previous?.Dispose();
+            button.Size = button.GetPreferredSize(Size.Empty);
+            canvas.Controls.Add(button);
+            top += button.Height + 18;
+        }
+        canvas.CreateControl();
+        using var bitmap = new Bitmap(canvas.Width, canvas.Height);
+        canvas.DrawToBitmap(bitmap, canvas.ClientRectangle);
+        bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "administrator-shield.png"));
     }
 
     private static void ProcessElevationTests()

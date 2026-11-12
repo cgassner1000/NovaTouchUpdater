@@ -78,7 +78,8 @@ public sealed partial class MainForm : Form
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
     private readonly Button btnServerSuite = Button("Server-Suite-Paket wählen");
-    private readonly Button btnWinRm = Button("Test WinRM");
+    private readonly Button btnWinRm = new ModernButton { Text = "WinRM\nkonfigurieren", AccessibleName = "WinRM konfigurieren", AutoSize = false,
+        Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private readonly Button btnScan = Button("Versionen prüfen");
     private readonly Button btnDatabaseCheck = Button("Check Database");
     private readonly Button btnUpdate = Button("2. Updates starten");
@@ -551,7 +552,7 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(btnScan, "Nur Verbindung und installierte Versionen prüfen. Es werden keine Update-Dateien kopiert und keine Programme installiert.");
         tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen und bei Bedarf starten, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Ohne Remote-Auswahl wird nur lokal getestet. Für Dienststart und TrustedHosts den Updater über das Schutzschild im Header mit erhöhten Rechten starten, auch bei einem Administratorkonto.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
-        tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für Test WinRM und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
+        tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für die WinRM-Konfiguration und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
         tips.SetToolTip(btnSaveConfig, "Remote-Hosts, Softwareordner, use Build, Ausführungsmodus, Zielpfad, lokale und beide Remote-Paketoptionen, Benutzer, Passwort, HTTPS, IRIS-TLS und Startprüfung speichern. Das Passwort ist für alle Benutzer mit Lesezugriff auf diesem Rechner nutzbar. config.json neben der EXE wird beim Start geladen.");
         tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Mit 'Konfiguration speichern' für den nächsten Start merken.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
@@ -639,7 +640,7 @@ public sealed partial class MainForm : Form
             btn.Margin = new Padding(0, 3, 7, 3);
             bar.Controls.Add(btn);
         }
-        bar.Layout += (_, _) => btnCompileSoftware.Height = btnServicePacks.Height = btnUpdate.Height;
+        bar.Layout += (_, _) => btnCompileSoftware.Height = btnServicePacks.Height = btnWinRm.Height = btnUpdate.Height;
         updateToolTip.SetToolTip(btnCompileSoftware, "Softwarepakete aus der installierten NovaTouch Control in allen IRIS-Namespaces ohne %-Präfix der ausgewählten Hosts importieren und kompilieren.");
         updateToolTip.SetToolTip(btnServicePacks, "XML-Servicepacks in alle IRIS-Namespaces ohne %-Präfix der ausgewählten Hosts importieren und mit ckbf kompilieren.");
         var filterBar = FlowRow();
@@ -2201,6 +2202,7 @@ public sealed partial class MainForm : Form
         btnServicePacks.Enabled = idle && selected.Length > 0;
         btnCompileSoftware.Enabled = idle && selected.Length > 0;
         betaFeatures?.ApplyVisibility();
+        btnTransfer.Visible = Mode != UpdateExecutionMode.Local;
         btnTransfer.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnSendCommand.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnRetry.Visible = !busy && ExecutionHosts().Any(h => h.CanRetryUpdate);
