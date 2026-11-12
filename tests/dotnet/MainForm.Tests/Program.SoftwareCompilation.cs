@@ -118,8 +118,10 @@ internal static partial class Program
         var apply = All(dialog).OfType<Button>().Single(button => button.Name == "applySelectedNamespaces");
         Assert(dialog.Text.StartsWith(servicePacks ? "Servicepacks einspielen" : "Softwarepakete kompilieren") &&
             apply.Text == (servicePacks ? "Einspielen" : "Kompilieren") && apply.DialogResult == DialogResult.OK &&
-            (!servicePacks || All(dialog).OfType<Label>().Any(label => label.Text.Contains("2 XML-Servicepack(s)") && label.Text.Contains("fck"))),
-            "the shared namespace picker describes and confirms the requested operation");
+            All(dialog).OfType<Label>().Any(label => label.Text == (servicePacks
+                ? "2 XML-Servicepack(s) in die ausgewählten Namespaces einspielen?"
+                : "Softwarepakete in den ausgewählten Namespaces kompilieren?")),
+            "the namespace picker confirms the selected operation with one short question");
         Assert(tree.CheckBoxes && tree.Nodes.Count == 3 && tree.Nodes[0].Nodes.Count == 2 &&
             tree.Nodes[0].Nodes[0].Nodes.Count == 3 && tree.Nodes[0].Nodes[0].Nodes.ContainsKey("PROG-DEV"),
             "the picker groups servers, instances and checked namespaces like Check Database, excluding percent namespaces");

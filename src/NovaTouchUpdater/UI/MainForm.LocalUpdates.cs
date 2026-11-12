@@ -412,42 +412,17 @@ public sealed partial class MainForm
             };
             text.AppendLine($"{HostUpdateState.Label(component)} {version}: {selected.Count(h => (ComponentsForUpdate(h, onlyFailed) & component) != 0)} Host(s)");
         }
-        if (onlyFailed) text.AppendLine("\nBereits verifizierte Komponenten werden nicht wiederholt.");
-        if (additionalFiles.Count > 0)
+        if (additionalFiles.Count > 0) text.AppendLine($"Zusätzliche Dateien: {additionalFiles.Count}");
+        if (needed == UpdateComponents.None)
         {
-            text.AppendLine($"\nZusätzliche Dateien: {additionalFiles.Count} Datei(en) nach '{RemoteDestinationPath()}'. Nur kopieren, nicht ausführen.");
-            foreach (string path in additionalFiles) text.AppendLine("Datei: " + Path.GetFileName(path));
-            text.AppendLine("Diese Dateien werden unabhängig von den Paket-Kopieroptionen übertragen. Bestehende Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt.");
+            if (chkCompileAfterInstallation.Checked && selected.Any(host => host.IsLocal && host.Updates is { NtcInstalled: true, SoftwareCompilationCompleted: false }))
+                text.AppendLine("Softwarepakete kompilieren");
+            if (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0 && selected.Any(host => host.Updates?.DatabaseUploadCompleted != true))
+                text.AppendLine("MSI-Pakete in zzzSoftware hochladen");
+            if (chkRestartPosAfterUpdate.Checked && selected.Any(host => !host.IsLocal && host.Updates?.PosRestartCompleted != true))
+                text.AppendLine("NovaTouch POS neu starten");
         }
-        text.AppendLine("\nNur bereits installierte Komponenten werden aktualisiert.");
-        if ((needed & UpdateComponents.ZipServices) != 0)
-            text.AppendLine("ZIPs: " + (chkForceUpdate.Checked ? "Force Up-Downgrade" : "Gleiche Version überspringen") + ". Payment/Fiscal: zusätzliche Client-Dateien bleiben erhalten.");
-        if ((needed & UpdateComponents.ServerSuite) != 0) text.AppendLine("Server Suite: alle Instanzen. " +
-            (ServerSuiteInstaller.IsSetup(serverSuiteZip)
-                ? $"Das Inno-Setup führt je Instanz das reguläre Update mit explizitem Dienstnamen und Installationspfad durch, einschließlich Dienstinstallation und Dienststart. Maximal {nUpdate.Value} Instanz-Setups parallel je Host; gemeinsame Installationsordner nacheinander. Kein automatischer Windows-Neustart."
-                : "ZIP-Verfahren: Dienste stoppen, verbliebene nt3_server_suite*-Prozesse beenden, Windows EventLog stoppen, Dateien einspielen, EventLog starten und anschließend die Dienste starten. Vorhandene nt3_server_suite*.exe bleiben unverändert erhalten, auch in Unterordnern. Konfiguration und Dienstkonten bleiben erhalten. Deaktivierte Suite-Dienste bleiben deaktiviert."));
-        if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
-        if (chkCompileAfterInstallation.Checked && selected.Any(host => host.IsLocal &&
-            ((needed & UpdateComponents.Ntc) != 0 || (onlyFailed && host.Updates is { NtcInstalled: true, SoftwareCompilationCompleted: false }))))
-            text.AppendLine("Nach erfolgreicher NTC-Installation: Softwarepakete automatisch in allen lokalen IRIS-Namespaces ohne Präfix % kompilieren, parallel zu den zzzSoftware-Uploads. Kompilierungsfehler können ohne erneute NTC-Installation wiederholt werden.");
-        if (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0)
-        {
-            text.AppendLine("Nach den Updates: MSI-Pakete in zzzSoftware aller IRIS-Namespaces ohne Präfix % hochladen. Gleiche oder neuere Datenbankversionen überspringen; nur ältere Pakete ersetzen. Uploadfehler bleiben für eine Wiederholung erhalten.");
-            foreach (var package in msiPackages.Values) text.AppendLine("Datenbank: " + package.ProductName + " " + package.ProductVersion);
-            if (remoteCount > 0) text.AppendLine(chkSkipLocalPackageCopy.Checked || chkSkipRemotePackageCopy.Checked ? "Remote-Datenbank: MSI-Daten über WinRM streamen, keine Paketkopie auf dem Server." :
-                chkSkipZipTransfer.Checked ? "Remote-Datenbank: bereits vorhandene Paketdateien im Zielpfad verwenden." : "Remote-Datenbank: benötigte MSI-Pakete zuerst in den Zielpfad kopieren.");
-        }
-        if (!chkUploadToZzzSoftware.Checked) text.AppendLine("zzzSoftware-Upload ausgeschaltet.");
-        else if (msiPackages.Count == 0) text.AppendLine("zzzSoftware: keine MSI-Pakete ausgewählt; kein Datenbank-Upload möglich.");
-        if (chkRestartPosAfterUpdate.Checked && remoteCount > 0)
-            text.AppendLine("Zum Schluss: Nur Remote-POS mit vor dem Update kleinerer POS-Version starten / neu starten, nachdem das ausgewählte POS-MSI neu in zzzSoftware gespeichert wurde und alle Uploads erfolgreich abgeschlossen sind. Ohne POS-Paket, bei gleicher/neuerer installierter POS-Version oder bereits vorhandenem gleichen/neuerem POS-MSI in zzzSoftware kein Neustart. LOKAL bleibt ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen. Bereits gestartete Neustarts werden bei Abbruch vollständig abgeschlossen.");
-        if (selected.Any(h => h.IsLocal)) text.AppendLine((UseLocalPackageSources
-            ? "LOKAL: Gewählte Paketquellen direkt verwenden; keine zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt."
-            : "Lokaler Zielpfad: " + txtRemotePath.Text.Trim() + "\nLOKAL: alle gewählten Pakete bereitstellen.") +
-            "\nNur installierte Komponenten aktualisieren. Installationen benötigen Administratorrechte.");
-        if (selected.Any(h => !h.IsLocal)) text.AppendLine("REMOTE: ausschließlich Payment, Fiscal und Server Suite. POS, NTC, SOL und NTV werden remote nicht installiert.\n" +
-            (chkSkipRemotePackageCopy.Checked ? "Pakete nur temporär für die Installation bereitstellen und danach entfernen. Keine zusätzliche Kopie oder Bereinigung im eingestellten Zielverzeichnis." :
-            "Remote-Zielpfad: " + RemoteDestinationPath() + "\nPaketübertragung: " + (chkSkipZipTransfer.Checked ? "deaktiviert; vorhandene Pakete prüfen" : "aktiv")));
+        text.AppendLine(onlyFailed ? "\nAusgewählte Updates erneut starten?" : "\nAusgewählte Updates starten?");
         return text.ToString();
     }
 }

@@ -97,8 +97,8 @@ internal static partial class Program
         WorkerRequest[] ordered = worker.Requests.ToArray();
         Assert(uploads.All(upload => Array.FindIndex(ordered, request => ReferenceEquals(request, upload)) >
             Array.FindLastIndex(ordered, request => request.Host == upload.Host && request.Action == "update")) &&
-            confirmation.Contains("settings.json") && confirmation.Contains("nicht ausführen"),
-            "the confirmation identifies copy-only files and each host receives them after its normal installations");
+            confirmation.Contains("Zusätzliche Dateien: 1") && confirmation.TrimEnd().EndsWith("Ausgewählte Updates starten?"),
+            "the concise confirmation counts additional files and each host receives them after its normal installations");
         HostState local = Targets(form).Single(host => host.IsLocal), remote = remotes[0];
         Assert(local.Updates!.AdditionalFilesCompleted && local.Result == "Erfolgreich" && remote.Updates!.Pending == UpdateComponents.None &&
             remote.CanRetryUpdate && remote.Error.Contains("Zusätzliche Dateien"),

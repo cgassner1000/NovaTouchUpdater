@@ -67,6 +67,9 @@ internal static partial class Program
     private static void SettingsAvailabilityTests()
     {
         using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
+        using var visibility = new Panel();
+        var winRm = Field<Button>(form, "btnWinRm");
+        visibility.Controls.Add(winRm);
         HostState[] hosts = Populate(form);
         var mode = Field<ComboBox>(form, "executionMode");
         var https = Field<CheckBox>(form, "chkSsl");
@@ -85,6 +88,9 @@ internal static partial class Program
         foreach (int execution in new[] { 0, 1, 2 })
         {
             mode.SelectedIndex = execution;
+            Call(form, "UpdateButtons");
+            Assert(winRm.Visible == (execution != (int)UpdateExecutionMode.Local) && Field<Button>(form, "btnScan").Text == "Versionen prüfen",
+                $"WinRM visibility follows local/remote mode {execution} and the scan button is named Versionen prüfen");
             Assert(settings.All(control => control.Enabled) && port.Enabled && Field<Button>(form, "btnWinRm").Enabled,
                 $"all settings remain editable in execution mode {execution}");
             var config = (UpdaterConfig)Call(form, "CaptureConfig")!;

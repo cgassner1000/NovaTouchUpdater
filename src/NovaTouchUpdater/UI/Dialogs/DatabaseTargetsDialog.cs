@@ -11,19 +11,12 @@ internal sealed class DatabaseTargetsDialog : Form
     private bool changingChecks;
 
     internal static DatabaseTargetsDialog ForSoftwareCompilation(ServicePackHostPlan[] plans) => new(plans,
-        "Softwarepakete kompilieren – Namespaces auswählen", "Kompilieren",
-        "Namespaces für die Kompilierung auswählen. Ein Häkchen am Server oder an der Instanz wählt die zugehörigen Namespaces.\n" +
-        "Quelle: installierte NovaTouch Control. Vorab: Aprima → Systemparameter → Novacom-System → BLS.\n" +
-        "Danach: Daten → BOH → POS → POS-API → QRY. Auch aktuelle Klassenpakete werden erneut kompiliert.\n" +
-        "Globale Stammdaten werden wie beim NTC versionsabhängig oder einmalig eingespielt. BLS wird nur eingespielt.\n" +
-        "Namespaces mit Präfix % werden ausgeblendet. Fehler werden zum Abschluss aufgelistet.");
+        "Softwarepakete kompilieren", "Kompilieren",
+        "Softwarepakete in den ausgewählten Namespaces kompilieren?");
 
     internal static DatabaseTargetsDialog ForServicePacks(ServicePackHostPlan[] plans, int fileCount) => new(plans,
-        "Servicepacks einspielen – Namespaces auswählen", "Einspielen",
-        $"{fileCount} XML-Servicepack(s) in die ausgewählten Namespaces einspielen.\n" +
-        "Ein Häkchen am Server oder an der Instanz wählt die zugehörigen Namespaces.\n" +
-        "Klassen und Routinen werden mit fck kompiliert; Globals werden importiert.\n" +
-        "Namespaces mit Präfix % werden ausgeblendet. Bei Import-/Compilerfehlern können Teilimporte vorhanden sein.");
+        "Servicepacks einspielen", "Einspielen",
+        $"{fileCount} XML-Servicepack(s) in die ausgewählten Namespaces einspielen?");
 
     private DatabaseTargetsDialog(ServicePackHostPlan[] plans, string title, string actionText, string instructions)
     {

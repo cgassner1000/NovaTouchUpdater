@@ -79,7 +79,7 @@ public sealed partial class MainForm : Form
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
     private readonly Button btnServerSuite = Button("Server-Suite-Paket wählen");
     private readonly Button btnWinRm = Button("Test WinRM");
-    private readonly Button btnScan = Button("Prüfen");
+    private readonly Button btnScan = Button("Versionen prüfen");
     private readonly Button btnDatabaseCheck = Button("Check Database");
     private readonly Button btnUpdate = Button("2. Updates starten");
     private readonly Button btnServicePacks = new ModernButton { Name = "importServicePacks", Text = "Servicepacks\neinspielen", AutoSize = false,
@@ -2192,6 +2192,7 @@ public sealed partial class MainForm : Form
         if (table.Columns.Contains("include")) table.Columns["include"].ReadOnly = !idle;
         foreach (HostState local in hosts.Where(h => h.IsLocal && h.Row is not null))
             local.Row!.Cells["include"].ReadOnly = !idle || LocalFallback;
+        btnWinRm.Visible = Mode != UpdateExecutionMode.Local;
         btnWinRm.Enabled = idle;
         btnScan.Enabled = idle && selected.Length > 0;
         btnDatabaseCheck.Visible = selected.Length > 0;

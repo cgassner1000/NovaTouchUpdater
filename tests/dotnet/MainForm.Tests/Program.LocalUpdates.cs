@@ -283,8 +283,9 @@ internal static partial class Program
         Assert(preflight.MsiPackage is null && preflight.MsiPackages.Length == 0 && preflight.PaymentZip.Length > 0 && preflight.FiscalZip.Length > 0 && preflight.ServerSuiteZip.Length > 0,
             "remote upload preparation excludes MSIs and retains all allowed service packages");
         string confirmation = (string)Call(form, "UpdateConfirmation", new[] { local, remote }, UpdateComponents.All, false)!;
-        Assert(confirmation.Contains("NovaTouch Control 2.0.0: 1 Host(s)") && confirmation.Contains("nt.payment 2.0.0: 2 Host(s)") && confirmation.Contains("MSIs nur LOKAL"),
-            "the confirmation counts MSI targets locally and clearly states the remote restriction");
+        Assert(confirmation.Contains("NovaTouch Control 2.0.0: 1 Host(s)") && confirmation.Contains("nt.payment 2.0.0: 2 Host(s)") &&
+            confirmation.TrimEnd().EndsWith("Ausgewählte Updates starten?") && !confirmation.Contains("MSIs nur LOKAL"),
+            "the concise confirmation keeps component versions and host counts and ends with the start question");
         remote.Updates = new(UpdateComponents.All);
         Update(form, remote);
         Assert(worker.Requests.Count == 3 && worker.Requests.All(r => !r.LocalExecution && r.MsiPackage is null && r.MsiPackages.Length == 0) && remote.Updates.Pending == UpdateComponents.None,

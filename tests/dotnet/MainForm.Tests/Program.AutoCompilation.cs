@@ -47,7 +47,8 @@ internal static partial class Program
             }));
             SetField(form, "confirmUpdate", new Func<string, bool>(text =>
             {
-                Assert(text.Contains("Softwarepakete automatisch"), "update confirmation describes automatic compilation and its local database scope");
+                Assert(text.Contains("Ausgewählte Updates") && text.TrimEnd().EndsWith('?') && !text.Contains("Namespaces"),
+                    "update confirmation asks to start the selection without technical workflow explanations");
                 return true;
             }));
             worker.OnCompile = (request, progress, ct) =>
