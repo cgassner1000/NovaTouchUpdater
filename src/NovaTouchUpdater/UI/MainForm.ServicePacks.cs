@@ -15,7 +15,7 @@ public sealed partial class MainForm
 
     private async Task ChooseServicePacksAsync()
     {
-        if (betaFeatures?.Enabled != true || busy || selfUpdating || loadingPackages || preparingDatabaseUpload) return;
+        if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload) return;
         using var picker = CreateServicePackFileDialog();
         if (picker.ShowDialog(this) == DialogResult.OK) await ImportServicePackFilesAsync(picker.FileNames);
     }
@@ -46,7 +46,7 @@ public sealed partial class MainForm
 
     private async Task ImportServicePackFilesAsync(string[] paths)
     {
-        if (betaFeatures?.Enabled != true || busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator) return;
+        if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator) return;
         HostState[] selected = SelectedHosts();
         if (selected.Length == 0 || !ValidateCredentials()) return;
         ServicePackSelection? selection = null;

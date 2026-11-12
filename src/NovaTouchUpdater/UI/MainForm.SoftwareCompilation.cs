@@ -65,7 +65,7 @@ public sealed partial class MainForm
 
     private async Task CompileSoftwarePackagesAsync()
     {
-        if (betaFeatures?.Enabled != true || busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator) return;
+        if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator) return;
         HostState[] selected = SelectedHosts();
         if (selected.Length == 0 || !ValidateCredentials()) return;
         try

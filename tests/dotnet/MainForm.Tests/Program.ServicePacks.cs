@@ -24,9 +24,11 @@ internal static partial class Program
         var buildPreference = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "buildPreference");
         var generalDivider = tlsParent.Controls.Cast<Control>().Single(control => control.Name == "allgemeinSettingsDivider");
         Assert(tlsParent.GetRow(betaDivider) < tlsParent.GetRow(buildPreference) &&
-            tlsParent.GetRow(buildPreference) < tlsParent.GetRow(tls) && tlsParent.GetRow(tls) < tlsParent.GetRow(autoCompile) &&
-            tlsParent.GetRow(autoCompile) < tlsParent.GetRow(generalDivider),
-            "the Erweitert settings group contains use Build, IRIS TLS and automatic compilation before Allgemein");
+            tlsParent.GetRow(buildPreference) < tlsParent.GetRow(tls) && tlsParent.GetRow(tls) < tlsParent.GetRow(generalDivider),
+            "the Erweitert settings group contains use Build and IRIS TLS before Allgemein");
+        Assert(autoCompile.Parent == tlsParent && tlsParent.GetRow(autoCompile) > tlsParent.GetRow(generalDivider) &&
+            tlsParent.GetRow(autoCompile) == tlsParent.GetRow(Field<CheckBox>(form, "chkUploadToZzzSoftware")) + 1,
+            "automatic compilation belongs to Allgemein directly below database upload");
         var autoCompileCell = tlsParent.GetCellPosition(autoCompile);
         canvas.Controls.Add(autoCompile);
         canvas.Controls.Add(tls);
@@ -36,16 +38,16 @@ internal static partial class Program
         using var before = new Bitmap(image.Width, image.Height);
         image.DrawToBitmap(before, image.ClientRectangle);
         Cursor cursor = image.Cursor;
-        Assert(!gate.Enabled && !betaDivider.Visible && !button.Visible && !compile.Visible && !tls.Visible && !autoCompile.Visible &&
+        Assert(!gate.Enabled && !betaDivider.Visible && button.Visible && compile.Visible && button.Enabled && compile.Enabled && !tls.Visible && autoCompile.Visible &&
             autoCompile is ModernToggleSwitch { Checked: false, Text: "nach Installation kompilieren" } && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
-            "servicepacks and IRIS TLS are hidden initially while Check Database remains a regular function");
+            "servicepacks, compilation and its automatic option are available without activation while IRIS TLS remains advanced");
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         gate.RegisterClick(check, true);
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
-        Assert(!gate.Enabled && popups == 0 && !button.Visible, "another control resets the five consecutive logo clicks");
+        Assert(!gate.Enabled && popups == 0 && button.Visible && compile.Visible, "another control resets the five logo clicks without hiding regular actions");
         var fifth = Message.Create(image.Handle, 0x0203, IntPtr.Zero, IntPtr.Zero);
         Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && betaDivider.Visible && button.Visible && compile.Visible && tls.Visible && autoCompile.Visible,
-            "the fifth logo click activates both servicepacks and IRIS TLS without consuming the click");
+            "the fifth logo click reveals IRIS TLS while regular actions remain available");
         tlsParent.Controls.Add(tls, tlsCell.Column, tlsCell.Row);
         tlsParent.Controls.Add(autoCompile, autoCompileCell.Column, autoCompileCell.Row);
         tlsParent.Controls.Add(betaDivider, betaCell.Column, betaCell.Row);
@@ -86,7 +88,7 @@ internal static partial class Program
                 for (int pass = 0; pass < 3; pass++) Layout(canvas);
                 Assert(button.Height == update.Height && button.Right <= button.Parent!.ClientSize.Width &&
                     TextRenderer.MeasureText("Servicepacks", button.Font, Size.Empty, TextFormatFlags.NoPadding).Height * 2 <= button.Height,
-                    $"the beta button keeps both lines and the regular button height at {width}px / {scale:P0}");
+                    $"the servicepacks button keeps both lines and the regular button height at {width}px / {scale:P0}");
             }
         }
         using var fresh = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
@@ -95,6 +97,9 @@ internal static partial class Program
 
     private static async Task ServicePackTests()
     {
+        var worker = new ServicePackRunner();
+        using var form = new MainForm(preview: true, worker, new FakeRunner());
+        _ = form.Handle;
         string root = Path.Combine(TestWorkspace.Artifacts, "servicepacks-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         string classes = Path.Combine(root, "classes.xml"), routines = Path.Combine(root, "routines.xml");
@@ -165,16 +170,12 @@ internal static partial class Program
         using var picker = MainForm.CreateServicePackFileDialog();
         Assert(picker.Multiselect && picker.Filter.Contains("*.xml"), "any number of XML servicepacks can be selected together");
 
-        var worker = new ServicePackRunner();
-        using var form = new MainForm(preview: true, worker, new FakeRunner());
         HostState[] selected = Populate(form);
         Field<ComboBox>(form, "executionMode").SelectedIndex = 1;
         Field<TextBox>(form, "txtRemotePath").Text = @"D:\Servicepacks Ziel";
         SetField(form, "readIrisInventory", new Func<CancellationToken, Task<IrisInventoryResult>>(_ => Task.FromResult(
             new IrisInventoryResult([new("LOCAL", "C:\\IRIS", "", "", ["USER", "%SYS", "APP", "PROG-DEV"], SuperServerPort: 1972)], []))));
         SetField(form, "showBetaActivated", new Action(() => { }));
-        var gate = Field<BetaFeatureGate>(form, "betaFeatures");
-        var logo = All(form).OfType<AppMark>().Single();
         worker.OnImport = () => Assert(Targets(form).Single(host => host.Host == worker.Requests.Last().Host).Result == "Läuft",
             "a servicepack host displays running before its new result arrives");
         string? warning = null;
@@ -194,11 +195,9 @@ internal static partial class Program
                 Namespaces = ["USER"], User = target.User, Password = target.Password, Ssl = target.Ssl }])];
         }));
         await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
-        Assert(worker.Requests.Count == 0, "hidden beta servicepacks cannot be invoked before activation");
-        for (int click = 0; click < 5; click++) gate.RegisterClick(logo, true);
-        await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
-        Assert(worker.Requests.All(request => request.Action == "database-inventory") && !Field<bool>(form, "loadingPackages"),
-            "cancelling namespace selection imports no code and restores the UI");
+        Assert(!Field<BetaFeatureGate>(form, "betaFeatures").Enabled && worker.Requests.Any(request => request.Action == "database-inventory") &&
+            worker.Requests.All(request => request.Action == "database-inventory") && !Field<bool>(form, "loadingPackages"),
+            "servicepacks open namespace selection without activation; cancelling imports no code and restores the UI");
         worker.Requests.Clear(); confirm = true;
         await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
         Assert(warning is null && worker.Requests.Count(request => request.Action == "import-servicepacks") == 4 &&

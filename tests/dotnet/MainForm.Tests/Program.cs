@@ -15,15 +15,15 @@ internal static partial class Program
             Application.EnableVisualStyles();
             if (args.Contains("--host-log")) { HostLogTests(); return 0; }
             if (args.Contains("--parallel-compile")) { ParallelCompilationTests(); return 0; }
-            if (args.Contains("--auto-compile")) { BetaFeatureTests(); AutoCompilationTests(); return 0; }
+            if (args.Contains("--auto-compile")) { AutoCompilationTests(); return 0; }
             if (args.Contains("--run-status")) { RunStatusTests(); return 0; }
             if (args.Contains("--database-targets")) { DatabaseTargetSelectionTests(false); DatabaseTargetSelectionTests(true); return 0; }
             if (args.Contains("--package-drop-native")) { NativePackageDropTests(); return 0; }
             if (args.Contains("--additional-files")) { AdditionalFileSelectionTests(); AdditionalFileUpdateTests(); Complete(AdditionalFileCopyTest()); return 0; }
             if (args.Contains("--beta")) { BetaFeatureTests(); return 0; }
             if (args.Contains("--builds")) { Complete(BuildChannelCatalogTests()); BuildChannelSelectionTests(); return 0; }
-            if (args.Contains("--compile-software")) { BetaFeatureTests(); Complete(SoftwareCompilationTests()); return 0; }
-            if (args.Contains("--servicepacks")) { BetaFeatureTests(); Complete(ServicePackTests()); return 0; }
+            if (args.Contains("--compile-software")) { Complete(SoftwareCompilationTests()); return 0; }
+            if (args.Contains("--servicepacks")) { Complete(ServicePackTests()); return 0; }
             if (args.Contains("--administrator")) { AdministratorTests(); return 0; }
             if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
             if (args.Contains("--feedback")) { FeedbackTests(); return 0; }

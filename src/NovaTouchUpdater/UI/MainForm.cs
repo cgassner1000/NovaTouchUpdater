@@ -84,9 +84,9 @@ public sealed partial class MainForm : Form
     private readonly Button btnDatabaseCheck = Button("Check Database");
     private readonly Button btnUpdate = Button("2. Updates starten");
     private readonly Button btnServicePacks = new ModernButton { Name = "importServicePacks", Text = "Servicepacks\neinspielen", AutoSize = false,
-        Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty, Visible = false };
+        Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private readonly Button btnCompileSoftware = new ModernButton { Name = "compileSoftwarePackages", Text = "Softwarepakete\nkompilieren", AutoSize = false,
-        Size = new Size(142, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty, Visible = false };
+        Size = new Size(142, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private BetaFeatureGate? betaFeatures;
     private Action? showBetaActivated = null;
     private readonly Button btnTransfer = Button("Upload");
@@ -416,10 +416,7 @@ public sealed partial class MainForm : Form
         var activationImage = header.Controls.OfType<AppMark>().Single();
         activationImage.Name = "appMark";
         betaFeatures = new BetaFeatureGate(this, activationImage);
-        betaFeatures.Register(btnServicePacks);
-        betaFeatures.Register(btnCompileSoftware);
         betaFeatures.Register(chkIrisTls);
-        betaFeatures.Register(chkCompileAfterInstallation);
         betaFeatures.Activated += () =>
         {
             if (showBetaActivated is { } show) show();
@@ -585,9 +582,9 @@ public sealed partial class MainForm : Form
         var betaDivider = SettingsDivider("Erweitert");
         betaFeatures.Register(betaDivider);
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
-        var settingsContent = Stack(betaDivider, buildPreference, chkIrisTls, chkCompileAfterInstallation,
+        var settingsContent = Stack(betaDivider, buildPreference, chkIrisTls,
             SettingsDivider("ALLGEMEIN"), chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
-            login, optionBar, chkUploadToZzzSoftware, chkForceUpdate, chkRestartPosAfterUpdate, CreateSoftwareSourcePath(), targetPath,
+            login, optionBar, chkUploadToZzzSoftware, chkCompileAfterInstallation, chkForceUpdate, chkRestartPosAfterUpdate, CreateSoftwareSourcePath(), targetPath,
             SettingsDivider("LOKAL"), chkSkipLocalPackageCopy,
             SettingsDivider("REMOTE"), chkSkipRemotePackageCopy, chkSkipZipTransfer, FlowRow(btnSaveConfig));
         var settings = new ExpandableSection("Einstellungen", settingsContent);

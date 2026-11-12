@@ -6,6 +6,7 @@ internal static partial class Program
     {
         var worker = new CompilationRunner();
         using var form = new MainForm(preview: true, worker, new FakeRunner());
+        _ = form.Handle;
         Populate(form);
         Field<ComboBox>(form, "executionMode").SelectedIndex = 1;
         SetField(form, "readIrisInventory", new Func<CancellationToken, Task<IrisInventoryResult>>(_ => Task.FromResult(
@@ -43,12 +44,9 @@ internal static partial class Program
                 Namespaces = ["PROG-DEV"], User = target.User, Password = target.Password, Ssl = target.Ssl }])];
         }));
         await (Task)Call(form, "CompileSoftwarePackagesAsync")!;
-        Assert(worker.Requests.Count == 0, "the hidden compilation beta function cannot execute before activation");
-        var gate = Field<BetaFeatureGate>(form, "betaFeatures");
-        var image = All(form).OfType<AppMark>().Single();
-        for (int click = 0; click < 5; click++) gate.RegisterClick(image, true);
-        await (Task)Call(form, "CompileSoftwarePackagesAsync")!;
-        Assert(worker.Requests.All(request => request.Action == "database-inventory"), "declining confirmation does not compile or load DLLs");
+        Assert(!Field<BetaFeatureGate>(form, "betaFeatures").Enabled && worker.Requests.Any(request => request.Action == "database-inventory") &&
+            worker.Requests.All(request => request.Action == "database-inventory"),
+            "compilation opens namespace selection without activation; declining does not compile or load DLLs");
         worker.Requests.Clear(); confirm = true;
         await (Task)Call(form, "CompileSoftwarePackagesAsync")!;
         Assert(warning is null && worker.Requests.Count(request => request.Action == "compile-software-packages") == 4 &&
