@@ -14,6 +14,7 @@ internal static partial class Program
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
             if (args.Contains("--host-log")) { HostLogTests(); return 0; }
+            if (args.Contains("--parallel-compile")) { ParallelCompilationTests(); return 0; }
             if (args.Contains("--auto-compile")) { BetaFeatureTests(); AutoCompilationTests(); return 0; }
             if (args.Contains("--run-status")) { RunStatusTests(); return 0; }
             if (args.Contains("--database-targets")) { DatabaseTargetSelectionTests(false); DatabaseTargetSelectionTests(true); return 0; }
@@ -27,7 +28,7 @@ internal static partial class Program
             if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
             if (args.Contains("--feedback")) { FeedbackTests(); return 0; }
             if (args.Contains("--formatting")) { FormattingTests(); return 0; }
-            if (args.Contains("--updates")) { UpdateRetryTests(); UpdateFinalizationTests(); UpdateTargetingTests(); AutoCompilationTests(); return 0; }
+            if (args.Contains("--updates")) { UpdateRetryTests(); UpdateFinalizationTests(); UpdateTargetingTests(); AutoCompilationTests(); ParallelCompilationTests(); return 0; }
             if (args.Contains("--targeting")) { UpdateTargetingTests(); return 0; }
             if (args.Contains("--staging")) { PackageCopyOptionsTests(); PackageStagingTests(); PackageHashPreparationTests(); return 0; }
             if (args.Contains("--packages")) { PackageSelectionTests(); PackageRemovalTests(); return 0; }
@@ -66,6 +67,7 @@ internal static partial class Program
                 UpdateRetryTests();
                 UpdateFinalizationTests();
                 AutoCompilationTests();
+                ParallelCompilationTests();
                 Complete(PackageCatalogTests());
                 Complete(BuildChannelCatalogTests());
                 BuildChannelSelectionTests();

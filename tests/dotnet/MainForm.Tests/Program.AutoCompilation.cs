@@ -1,4 +1,5 @@
 using NovaTouchUpdater;
+using System.Collections.Concurrent;
 
 internal static partial class Program
 {
@@ -64,7 +65,7 @@ internal static partial class Program
             };
             worker.FailCompilation = true;
             Complete((Task)Call(form, "RunUpdatesAsync", false)!);
-            Assert(worker.Requests.Select(request => request.Action).SequenceEqual(["update", "compile-software-packages", "publish-msi-packages"]) &&
+            Assert(worker.Requests.Select(request => request.Action).SequenceEqual(["update", "compile-software-packages", "publish-msi-packages"]) && preparations == 1 &&
                 local.Updates is { NtcInstalled: true, Pending: UpdateComponents.None, SoftwareCompilationCompleted: false, DatabaseUploadCompleted: true } &&
                 local.CanRetryUpdate && local.Error.Contains("Synthetic compiler error") && local.Phase.Contains("kompilieren fehlgeschlagen"),
                 "a real update run compiles only after verified NTC installation, preserves compilation failures and still completes the independent database upload");
@@ -72,7 +73,7 @@ internal static partial class Program
                 "automatic compilation failures expose retry and unlock settings when the batch finishes");
             worker.Requests.Clear(); worker.FailCompilation = false;
             Complete((Task)Call(form, "RunUpdatesAsync", true)!);
-            Assert(worker.Requests is [{ Action: "compile-software-packages" }] && local.Updates!.SoftwareCompilationCompleted &&
+            Assert(worker.Requests.ToArray() is [{ Action: "compile-software-packages" }] && local.Updates!.SoftwareCompilationCompleted &&
                 !local.CanRetryUpdate && local.Error.Length == 0 && local.Phase.Contains("nach NTC-Installation kompiliert"),
                 "retrying the full workflow compiles failed packages without reinstalling NTC or repeating the completed upload");
             worker.Requests.Clear();
@@ -90,7 +91,7 @@ internal static partial class Program
             Assert(local.CanRetryUpdate && !local.Updates.DatabaseUploadCompleted, "automatic compilation runs even when zzzSoftware upload is disabled");
             worker.Requests.Clear(); worker.FailCompilation = false;
             Complete((Task)Call(form, "RunUpdatesAsync", true)!);
-            Assert(worker.Requests is [{ Action: "compile-software-packages" }] && !local.CanRetryUpdate,
+            Assert(worker.Requests.ToArray() is [{ Action: "compile-software-packages" }] && !local.CanRetryUpdate,
                 "compiler-only retry works with database upload and POS restart both disabled");
 
             foreach (var test in new[] { (Changed: false, Skipped: false), (Changed: false, Skipped: true) })
@@ -156,12 +157,12 @@ internal static partial class Program
 
     private sealed class AutoCompilationRunner : IWorkerRunner
     {
-        internal List<WorkerRequest> Requests { get; } = [];
+        internal ConcurrentQueue<WorkerRequest> Requests { get; } = new();
         internal bool FailCompilation;
         internal Action<WorkerRequest, Action<WorkerEvent>, CancellationToken>? OnCompile;
         public Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> progress, CancellationToken ct)
         {
-            Requests.Add(request);
+            Requests.Enqueue(request);
             ct.ThrowIfCancellationRequested();
             if (request.Action == "compile-software-packages")
             {

@@ -27,15 +27,15 @@ public sealed partial class MainForm
         }, CancellationToken.None);
     }
 
-    private async Task CompileAfterNtcInstallationAsync(HostState host, CancellationToken ct)
+    private async Task CompileAfterNtcInstallationAsync(HostState host, CancellationToken ct, Lazy<Task<IrisUploadTarget[]>> localTargets)
     {
         HostUpdateState state = host.Updates!;
         if (!activeCompileAfterInstallation || !host.IsLocal || !state.NtcInstalled || state.SoftwareCompilationCompleted) return;
         try
         {
             ct.ThrowIfCancellationRequested();
-            Mark(host, h => { h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "Softwarepakete nach NTC-Installation vorbereiten"; });
-            IrisUploadTarget[] targets = await prepareDatabaseTargets(ct);
+            Mark(host, h => { state.SoftwareCompilationRunning = true; h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "Softwarepakete nach NTC-Installation vorbereiten"; });
+            IrisUploadTarget[] targets = await localTargets.Value;
             ct.ThrowIfCancellationRequested();
             if (targets.Length == 0)
                 throw new InvalidDataException("Keine lokalen IRIS-Namespaces ohne %-Präfix gefunden. Check Database prüfen.");
@@ -44,14 +44,22 @@ public sealed partial class MainForm
             Log(host.Host, "Softwarepakete nach NTC-Installation: " + targets.Sum(target => target.Namespaces.Length) + " lokale IRIS-Namespaces.");
             WorkerResult result = await RunSoftwareCompilationAsync(host, targets);
             if (!result.Success) throw new IOException(FriendlyError(result));
-            state.CompleteSoftwareCompilation(result);
+            Mark(host, h => state.CompleteSoftwareCompilation(result));
             Log(host.Host, "Softwarepakete nach NTC-Installation => OK " + result.Message);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            state.SoftwareCompilationError = "Softwarepakete nach NTC-Installation: " + DisplayText.Clean(ex.Message);
+            Mark(host, h => state.SoftwareCompilationError = "Softwarepakete nach NTC-Installation: " + DisplayText.Clean(ex.Message));
             Log(host.Host, "Softwarepakete nach NTC-Installation => FEHLER " + ex.Message);
+        }
+        finally
+        {
+            Mark(host, h =>
+            {
+                state.SoftwareCompilationRunning = false;
+                if (state.DatabaseUploadRunning) { h.Result = "Läuft"; h.Error = ""; h.Phase = "zzzSoftware-Upload läuft"; }
+            });
         }
     }
 

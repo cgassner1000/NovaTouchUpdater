@@ -18,6 +18,8 @@ internal sealed class HostUpdateState(UpdateComponents components)
     internal bool AllSkipped { get; private set; } = true;
     internal bool NtcInstalled { get; private set; }
     internal bool SoftwareCompilationCompleted { get; private set; }
+    internal bool SoftwareCompilationRunning { get; set; }
+    internal bool DatabaseUploadRunning { get; set; }
     internal string SoftwareCompilationMessage { get; private set; } = "";
     internal string SoftwareCompilationError { get; set; } = "";
     internal void CompleteSoftwareCompilation(WorkerResult result)

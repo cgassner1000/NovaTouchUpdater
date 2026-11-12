@@ -429,7 +429,7 @@ public sealed partial class MainForm
         if ((needed & UpdateComponents.Msi) != 0) text.AppendLine("MSIs nur LOKAL: gleiche oder neuere installierte Versionen immer überspringen. Stille Installation ohne automatischen Windows-Neustart.");
         if (chkCompileAfterInstallation.Checked && selected.Any(host => host.IsLocal &&
             ((needed & UpdateComponents.Ntc) != 0 || (onlyFailed && host.Updates is { NtcInstalled: true, SoftwareCompilationCompleted: false }))))
-            text.AppendLine("Nach erfolgreicher NTC-Installation: Softwarepakete automatisch in allen lokalen IRIS-Namespaces ohne Präfix % kompilieren, vor den zzzSoftware-Uploads. Kompilierungsfehler können ohne erneute NTC-Installation wiederholt werden.");
+            text.AppendLine("Nach erfolgreicher NTC-Installation: Softwarepakete automatisch in allen lokalen IRIS-Namespaces ohne Präfix % kompilieren, parallel zu den zzzSoftware-Uploads. Kompilierungsfehler können ohne erneute NTC-Installation wiederholt werden.");
         if (chkUploadToZzzSoftware.Checked && msiPackages.Count > 0)
         {
             text.AppendLine("Nach den Updates: MSI-Pakete in zzzSoftware aller IRIS-Namespaces ohne Präfix % hochladen. Gleiche oder neuere Datenbankversionen überspringen; nur ältere Pakete ersetzen. Uploadfehler bleiben für eine Wiederholung erhalten.");
