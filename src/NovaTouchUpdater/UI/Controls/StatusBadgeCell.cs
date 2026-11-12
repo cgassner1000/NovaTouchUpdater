@@ -21,7 +21,7 @@ internal sealed class StatusBadgeCell : DataGridViewTextBoxCell
             "Nicht erreichbar" or "Fehler" => (UiTheme.Danger, UiTheme.DangerSoft),
             "Aktuell" => (UiTheme.Accent, UiTheme.AccentSoft),
             "Läuft" or "Neustart angefordert" => (UiTheme.Warning, UiTheme.WarningSoft),
-            _ => (UiTheme.Muted, Color.FromArgb(239, 243, 248))
+            _ => (UiTheme.Muted, UiTheme.NeutralSoft)
         };
         base.Paint(graphics, clipBounds, cellBounds, rowIndex, cellState, value, formattedValue,
             errorText, cellStyle, advancedBorderStyle, paintParts & ~(DataGridViewPaintParts.ContentForeground | DataGridViewPaintParts.ErrorIcon | DataGridViewPaintParts.Focus));

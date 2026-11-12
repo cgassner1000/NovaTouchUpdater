@@ -29,7 +29,7 @@ internal sealed class HostLogDialog : Form
     private readonly Func<int, string[]> readEntries;
     private readonly List<Entry> entries = [];
     private readonly System.Windows.Forms.Timer refreshTimer = new() { Interval = 500 };
-    private readonly ModernToggleSwitch autoRefresh = new() { Name = "autoRefresh", Text = "Auto-Refresh", Checked = true, Margin = new Padding(0, 7, 18, 7) };
+    private readonly AppToggleSwitch autoRefresh = new() { Name = "autoRefresh", Text = "Auto-Refresh", Checked = true, Margin = new Padding(0, 7, 18, 7) };
     private readonly Label summary = new() { Name = "logSummary", AutoSize = true, ForeColor = UiTheme.Muted, Dock = DockStyle.Fill, Margin = new Padding(0, 3, 0, 12) };
     private readonly DataGridView table = new()
     {
@@ -66,8 +66,8 @@ internal sealed class HostLogDialog : Form
         layout.Controls.Add(summary, 0, 1);
 
         var toolbar = new WrappingFlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Margin = new Padding(0, 0, 0, 10) };
-        var refresh = new ModernButton { Name = "refreshLog", Text = "Aktualisieren", AutoSize = true, Padding = new Padding(12, 7, 12, 7), Margin = new Padding(0, 0, 8, 0) };
-        var copy = new ModernButton { Name = "copyLog", Text = "Protokoll kopieren", AutoSize = true, Padding = new Padding(12, 7, 12, 7), Margin = Padding.Empty };
+        var refresh = new AppButton { Name = "refreshLog", Text = "Aktualisieren", AutoSize = true, Padding = new Padding(12, 7, 12, 7), Margin = new Padding(0, 0, 8, 0) };
+        var copy = new AppButton { Name = "copyLog", Text = "Protokoll kopieren", AutoSize = true, Padding = new Padding(12, 7, 12, 7), Margin = Padding.Empty };
         refresh.Click += (_, _) => RefreshLog();
         copy.Click += (_, _) =>
         {
@@ -77,7 +77,7 @@ internal sealed class HostLogDialog : Form
                 if (text.Length == 0) return;
                 Clipboard.SetText(text); summary.Text += " · Protokoll kopiert";
             }
-            catch (System.Runtime.InteropServices.ExternalException) { MessageBox.Show(this, "Die Zwischenablage ist gerade belegt. Bitte erneut versuchen.", "Protokoll kopieren", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+            catch (System.Runtime.InteropServices.ExternalException) { AppMessageBox.Show(this, "Die Zwischenablage ist gerade belegt. Bitte erneut versuchen.", "Protokoll kopieren", MessageBoxButtons.OK, MessageBoxIcon.Information); }
         };
         toolbar.Controls.AddRange([autoRefresh, refresh, copy]);
         layout.Controls.Add(toolbar, 0, 2);
@@ -107,7 +107,7 @@ internal sealed class HostLogDialog : Form
         layout.Controls.Add(table, 0, 3);
         layout.Controls.Add(new Label { Text = "Ausgewählter Eintrag · vollständig und kopierbar", AutoSize = true, Margin = new Padding(0, 12, 0, 6) }, 0, 4);
         layout.Controls.Add(details, 0, 5);
-        var close = new ModernButton { Name = "closeLog", Text = "Schließen", AutoSize = true, Padding = new Padding(16, 7, 16, 7), DialogResult = DialogResult.OK };
+        var close = new AppButton { Name = "closeLog", Text = "Schließen", AutoSize = true, Padding = new Padding(16, 7, 16, 7), DialogResult = DialogResult.OK };
         layout.Controls.Add(SoftwareCompilationResultsDialog.ButtonBar(close), 0, 6);
         CancelButton = close;
         Controls.Add(layout);

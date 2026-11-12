@@ -12,8 +12,8 @@ internal sealed class FeedbackDialog : Form
     private readonly TextBox title = new() { Name = "feedbackTitle", MaxLength = 160, Dock = DockStyle.Fill };
     private readonly TextBox description = new() { Name = "feedbackDescription", MaxLength = 12000, Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, MinimumSize = new Size(0, 200) };
     private readonly Label status = new() { Name = "feedbackStatus", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 8) };
-    private readonly Button send = new ModernButton { Name = "sendFeedback", Text = "Meldung senden", Role = ButtonRole.Primary, AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
-    private readonly Button close = new ModernButton { Text = "Schließen", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.Cancel };
+    private readonly Button send = new AppButton { Name = "sendFeedback", Text = "Meldung senden", Role = ButtonRole.Primary, AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
+    private readonly Button close = new AppButton { Text = "Schließen", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.Cancel };
     private CancellationTokenSource? pending;
     private Guid submissionId = Guid.NewGuid();
     private bool sent;

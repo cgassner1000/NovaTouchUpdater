@@ -50,7 +50,7 @@ internal sealed class UploadDirectoryDialog : Form
             table.Rows[row].Cells["status"].ToolTipText=Convert.ToString(table.Rows[row].Cells["status"].Value);
         }
         layout.Controls.Add(table,0,1);
-        Button Choice(string name, string text, DialogResult result) => new ModernButton
+        Button Choice(string name, string text, DialogResult result) => new AppButton
         {
             Name=name, Text=text, DialogResult=result, AutoSize=true, AutoSizeMode=AutoSizeMode.GrowAndShrink,
             Padding=new Padding(9,6,9,6), Margin=new Padding(5)
@@ -58,8 +58,8 @@ internal sealed class UploadDirectoryDialog : Form
         var clean=Choice("clean","Ja, bereinigen und hochladen",DialogResult.Yes);
         clean.Enabled=directories.Any(item => item.Directory.CanClean);
         var keep=Choice("keep","Ohne Bereinigung hochladen",DialogResult.No);
-        ((ModernButton)keep).Role = ButtonRole.Primary;
-        ((ModernButton)clean).Role = ButtonRole.Danger;
+        ((AppButton)keep).Role = ButtonRole.Primary;
+        ((AppButton)clean).Role = ButtonRole.Danger;
         var cancel=Choice("cancel","Abbrechen",DialogResult.Cancel);
         var buttons=new WrappingFlowLayoutPanel
         {

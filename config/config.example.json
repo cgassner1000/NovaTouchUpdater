@@ -9,6 +9,7 @@
   "UploadToZzzSoftware": true,
   "RestartPosAfterUpdate": false,
   "ScanOnStartup": true,
+  "Theme": "System",
   "SkipLocalPackageCopy": false,
   "SkipRemotePackageCopy": false,
   "SkipZipTransfer": false,

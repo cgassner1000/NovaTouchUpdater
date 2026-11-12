@@ -13,6 +13,9 @@ internal static partial class Program
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             Application.EnableVisualStyles();
+            UiTheme.SystemDarkReader = () => false; // Existing light-theme fixtures are independent of the developer's Windows theme.
+            UiTheme.SetMode("System");
+            if (args.Contains("--theme")) { ThemeTests(); return 0; }
             if (args.Contains("--host-log")) { HostLogTests(); return 0; }
             if (args.Contains("--user-data")) { UserDataConfigTests(); return 0; }
             if (args.Contains("--parallel-compile")) { ParallelCompilationTests(); return 0; }
@@ -48,6 +51,7 @@ internal static partial class Program
             if (!args.Contains("--layout"))
             {
                 TogglePaintingTests();
+                ThemeTests();
                 FeedbackTests();
                 AdministratorTests();
                 BetaFeatureTests();

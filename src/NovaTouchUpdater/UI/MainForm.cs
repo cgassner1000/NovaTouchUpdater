@@ -50,7 +50,7 @@ public sealed partial class MainForm : Form
     private readonly ToolTip updateToolTip = new();
 
     private readonly DataGridView table = new();
-    private readonly ComboBox statusFilter = new();
+    private readonly ComboBox statusFilter = new AppComboBox();
     private readonly Label lblFile = new();
     private readonly Label lblSummary = new();
     private readonly Label lblSelection = new() { Name = "hostSelection", AutoSize = true, Anchor = AnchorStyles.Left };
@@ -60,34 +60,34 @@ public sealed partial class MainForm : Form
     private readonly TextBox txtUser = new();
     private readonly TextBox txtPassword = new();
     private readonly TextBox txtRemotePath = new();
-    private readonly NumericUpDown nScan = new();
-    private readonly NumericUpDown nUpdate = new();
-    private readonly NumericUpDown nHttpsPort = new();
-    private readonly CheckBox chkSsl = new ModernToggleSwitch();
-    private readonly CheckBox chkIrisTls = new ModernToggleSwitch { Name = "irisUseTls", Text = "IRIS-Verbindung mit TLS", AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly CheckBox chkCompileAfterInstallation = new ModernToggleSwitch { Name = "compileAfterInstallation", Text = "nach Installation kompilieren", AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly CheckBox chkUploadToZzzSoftware = new ModernToggleSwitch { Name = "uploadToZzzSoftware", Text = "Installationspakete in Datenbank hochladen", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly CheckBox chkRestartPosAfterUpdate = new ModernToggleSwitch { Name = "restartPosAfterUpdate", Text = "NovaTouch POS nach Datenbank-upload neu starten", AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly CheckBox chkForceUpdate = new ModernToggleSwitch();
-    private readonly CheckBox chkSkipZipTransfer = new ModernToggleSwitch();
-    private readonly CheckBox chkSkipLocalPackageCopy = new ModernToggleSwitch();
-    private readonly CheckBox chkSkipRemotePackageCopy = new ModernToggleSwitch();
-    private readonly CheckBox chkScanOnStartup = new ModernToggleSwitch { Checked = true };
-    private readonly ProgressBar progress = new ModernProgressBar();
+    private readonly NumericUpDown nScan = new AppNumericUpDown();
+    private readonly NumericUpDown nUpdate = new AppNumericUpDown();
+    private readonly NumericUpDown nHttpsPort = new AppNumericUpDown();
+    private readonly CheckBox chkSsl = new AppToggleSwitch();
+    private readonly CheckBox chkIrisTls = new AppToggleSwitch { Name = "irisUseTls", Text = "IRIS-Verbindung mit TLS", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkCompileAfterInstallation = new AppToggleSwitch { Name = "compileAfterInstallation", Text = "nach Installation kompilieren", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkUploadToZzzSoftware = new AppToggleSwitch { Name = "uploadToZzzSoftware", Text = "Installationspakete in Datenbank hochladen", Checked = true, AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkRestartPosAfterUpdate = new AppToggleSwitch { Name = "restartPosAfterUpdate", Text = "NovaTouch POS nach Datenbank-upload neu starten", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly CheckBox chkForceUpdate = new AppToggleSwitch();
+    private readonly CheckBox chkSkipZipTransfer = new AppToggleSwitch();
+    private readonly CheckBox chkSkipLocalPackageCopy = new AppToggleSwitch();
+    private readonly CheckBox chkSkipRemotePackageCopy = new AppToggleSwitch();
+    private readonly CheckBox chkScanOnStartup = new AppToggleSwitch { Checked = true };
+    private readonly ProgressBar progress = new AppProgressBar();
     private readonly Button btnImport = Button("Hostliste laden");
     private readonly Button btnEditHosts = Button("Host bearbeiten");
     private readonly Button btnSaveConfig = Button("Konfiguration speichern");
     private readonly Button btnPayment = Button("Payment-ZIP wählen");
     private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
     private readonly Button btnServerSuite = Button("Server-Suite-Paket wählen");
-    private readonly Button btnWinRm = new ModernButton { Text = "WinRM\nkonfigurieren", AccessibleName = "WinRM konfigurieren", AutoSize = false,
+    private readonly Button btnWinRm = new AppButton { Text = "WinRM\nkonfigurieren", AccessibleName = "WinRM konfigurieren", AutoSize = false,
         Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private readonly Button btnScan = Button("Versionen prüfen");
     private readonly Button btnDatabaseCheck = Button("Check Database");
     private readonly Button btnUpdate = Button("2. Updates starten");
-    private readonly Button btnServicePacks = new ModernButton { Name = "importServicePacks", Text = "Servicepacks\neinspielen", AutoSize = false,
+    private readonly Button btnServicePacks = new AppButton { Name = "importServicePacks", Text = "Servicepacks\neinspielen", AutoSize = false,
         Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
-    private readonly Button btnCompileSoftware = new ModernButton { Name = "compileSoftwarePackages", Text = "Softwarepakete\nkompilieren", AutoSize = false,
+    private readonly Button btnCompileSoftware = new AppButton { Name = "compileSoftwarePackages", Text = "Softwarepakete\nkompilieren", AutoSize = false,
         Size = new Size(142, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private BetaFeatureGate? betaFeatures;
     private Action? showBetaActivated = null;
@@ -188,7 +188,7 @@ public sealed partial class MainForm : Form
             if (busy || selfUpdating || loadingPackages)
             {
                 e.Cancel = true;
-                MessageBox.Show(this, selfUpdating ? "Die neue Updater-Version wird vorbereitet. Bitte den Abschluss abwarten oder 'Abbrechen' klicken." : "Ein Update-/Prüfdurchlauf ist noch aktiv. Bitte zuerst 'Abbrechen' klicken und den Abschluss der aktiven Hosts abwarten.",
+                AppMessageBox.Show(this, selfUpdating ? "Die neue Updater-Version wird vorbereitet. Bitte den Abschluss abwarten oder 'Abbrechen' klicken." : "Ein Update-/Prüfdurchlauf ist noch aktiv. Bitte zuerst 'Abbrechen' klicken und den Abschluss der aktiven Hosts abwarten.",
                     "Aktive Verarbeitung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -229,11 +229,11 @@ public sealed partial class MainForm : Form
             var loaded = AppConfigStore.Load(configPath);
             ApplyLoadedConfig(loaded);
             if (loaded.PasswordWarning is not null)
-                MessageBox.Show(this, loaded.PasswordWarning, "Passwort neu eingeben", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                AppMessageBox.Show(this, loaded.PasswordWarning, "Passwort neu eingeben", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
-            MessageBox.Show(this,
+            AppMessageBox.Show(this,
                 $"Die Einstellungen aus {configPath} konnten nicht vollständig geladen werden.\n{ex.Message}",
                 "Konfiguration", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -242,6 +242,7 @@ public sealed partial class MainForm : Form
     private void ApplyLoadedConfig(LoadedConfig loaded)
     {
         var config = loaded.Settings;
+        ApplyThemePreference(config.Theme);
         ApplyVisibleHostColumns(config.VisibleHostColumns);
         txtRemotePath.Text = config.RemotePath ?? DefaultRemoteInstallPath;
         txtUser.Text = config.Username ?? "";
@@ -313,6 +314,7 @@ public sealed partial class MainForm : Form
         UploadToZzzSoftware = chkUploadToZzzSoftware.Checked, RestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked,
         SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(), UseBuild = BuildChannels.Normalize(useBuild.SelectedItem as string),
         ScanOnStartup = chkScanOnStartup.Checked,
+        Theme = SelectedTheme,
         SkipLocalPackageCopy = chkSkipLocalPackageCopy.Checked, SkipRemotePackageCopy = chkSkipRemotePackageCopy.Checked, SkipZipTransfer = chkSkipZipTransfer.Checked
     };
 
@@ -325,17 +327,17 @@ public sealed partial class MainForm : Form
             Directory.CreateDirectory(userDataPaths.RootDirectory);
             AppConfigStore.Save(configPath, CaptureConfig(), txtPassword.Text);
             Log("SYSTEM", $"Konfiguration gespeichert: {configPath} ({hosts.Count} Hosts)");
-            MessageBox.Show(this, "Konfiguration gespeichert",
+            AppMessageBox.Show(this, "Konfiguration gespeichert",
                 "Konfiguration gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or CryptographicException)
         {
-            MessageBox.Show(this, "Die Konfiguration konnte nicht gespeichert werden. Eine vorhandene Datei bleibt erhalten.\n" + ex.Message,
+            AppMessageBox.Show(this, "Die Konfiguration konnte nicht gespeichert werden. Eine vorhandene Datei bleibt erhalten.\n" + ex.Message,
                 "Konfiguration speichern", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
-    private static Button Button(string text) => new ModernButton
+    private static Button Button(string text) => new AppButton
     {
         Text = text
     };
@@ -431,7 +433,7 @@ public sealed partial class MainForm : Form
         betaFeatures.Activated += () =>
         {
             if (showBetaActivated is { } show) show();
-            else BeginInvoke(() => MessageBox.Show(this, "Erweiterte Einstellungen aktiviert", "Erweitert", MessageBoxButtons.OK, MessageBoxIcon.Information));
+            else BeginInvoke(() => AppMessageBox.Show(this, "Erweiterte Einstellungen aktiviert", "Erweitert", MessageBoxButtons.OK, MessageBoxIcon.Information));
         };
 
         // Keep package cards in their own column, independent of the menu headers.
@@ -594,7 +596,7 @@ public sealed partial class MainForm : Form
         betaFeatures.Register(betaDivider);
         btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(betaDivider, buildPreference, chkIrisTls,
-            SettingsDivider("ALLGEMEIN"), chkScanOnStartup, FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
+            SettingsDivider("ALLGEMEIN"), chkScanOnStartup, CreateThemePreference(), FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
             login, optionBar, chkUploadToZzzSoftware, chkCompileAfterInstallation, chkForceUpdate, chkRestartPosAfterUpdate, CreateSoftwareSourcePath(), targetPath,
             SettingsDivider("LOKAL"), chkSkipLocalPackageCopy,
             SettingsDivider("REMOTE"), chkSkipRemotePackageCopy, chkSkipZipTransfer, FlowRow(btnSaveConfig));
@@ -640,9 +642,9 @@ public sealed partial class MainForm : Form
         };
 
         var bar = FlowRow();
-        ((ModernButton)btnScan).Role = ButtonRole.Accent;
-        ((ModernButton)btnUpdate).Role = ButtonRole.Primary;
-        ((ModernButton)btnCancel).Role = ButtonRole.Danger;
+        ((AppButton)btnScan).Role = ButtonRole.Accent;
+        ((AppButton)btnUpdate).Role = ButtonRole.Primary;
+        ((AppButton)btnCancel).Role = ButtonRole.Danger;
         foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnServicePacks, btnCompileSoftware, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
         {
             btn.Margin = new Padding(0, 3, 7, 3);
@@ -796,7 +798,7 @@ public sealed partial class MainForm : Form
             {
                 var state = e.Graphics!.Save();
                 e.Graphics.SetClip(Rectangle.Intersect(e.CellBounds, e.ClipBounds));
-                using var separator = new Pen(Color.FromArgb(202, 213, 229));
+                using var separator = new Pen(UiTheme.Border);
                 e.Graphics.DrawLine(separator, e.CellBounds.Right - 1, e.CellBounds.Top, e.CellBounds.Right - 1, e.CellBounds.Bottom - 1);
                 e.Graphics.Restore(state);
             }
@@ -958,9 +960,9 @@ public sealed partial class MainForm : Form
         var buttons = FlowRow();
         buttons.FlowDirection = FlowDirection.RightToLeft;
         buttons.Padding = new Padding(8);
-        var add = new ModernButton { Text = "OK", Role = ButtonRole.Primary };
-        var cancel = new ModernButton { Text = "Abbrechen", DialogResult = DialogResult.Cancel };
-        var browse = new ModernButton { Text = "Durchsuchen" };
+        var add = new AppButton { Text = "OK", Role = ButtonRole.Primary };
+        var cancel = new AppButton { Text = "Abbrechen", DialogResult = DialogResult.Cancel };
+        var browse = new AppButton { Text = "Durchsuchen" };
         browse.Click += (_, _) =>
         {
             try
@@ -974,7 +976,7 @@ public sealed partial class MainForm : Form
             }
             catch (Exception ex)
             {
-                MessageBox.Show(dialog,
+                AppMessageBox.Show(dialog,
                     "Die Computersuche konnte nicht geöffnet oder die Auswahl nicht übernommen werden. " +
                     "Computernamen können weiterhin manuell eingegeben werden.\n\n" + ex.Message,
                     "Computer durchsuchen", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -988,7 +990,7 @@ public sealed partial class MainForm : Form
             string[] invalid = values.Where(x => x.Any(char.IsWhiteSpace)).ToArray();
             if (invalid.Length > 0)
             {
-                MessageBox.Show(dialog, "Jede Zeile muss genau einen Computernamen oder eine IP-Adresse enthalten:\n" +
+                AppMessageBox.Show(dialog, "Jede Zeile muss genau einen Computernamen oder eine IP-Adresse enthalten:\n" +
                     string.Join(Environment.NewLine, invalid), "Ungültige Eingabe", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -1097,7 +1099,7 @@ public sealed partial class MainForm : Form
         Match m = ZipFormat.Match(Path.GetFileName(dialog.FileName));
         if (!m.Success || !m.Groups[1].Value.Equals(kind, StringComparison.OrdinalIgnoreCase))
         {
-            ShowIndividualPackageDialog(() => MessageBox.Show(this, $"Ungültiger ZIP-Dateiname. Erwartet: nt.{kind}_VERSION*.zip", "ZIP-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+            ShowIndividualPackageDialog(() => AppMessageBox.Show(this, $"Ungültiger ZIP-Dateiname. Erwartet: nt.{kind}_VERSION*.zip", "ZIP-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning));
             return;
         }
         SelectIndividualPackage(new SoftwarePackage(kind == "payment" ? UpdateComponents.Payment : UpdateComponents.Fiscal,
@@ -1132,7 +1134,7 @@ public sealed partial class MainForm : Form
         catch (Exception ex) when (ex is InvalidDataException or IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
         {
             if (showWarning is not null) showWarning(ex.Message);
-            else ShowIndividualPackageDialog(() => MessageBox.Show(this, ex.Message,
+            else ShowIndividualPackageDialog(() => AppMessageBox.Show(this, ex.Message,
                 "Server-Suite-Update", MessageBoxButtons.OK, MessageBoxIcon.Warning));
             return false;
         }
@@ -1145,7 +1147,7 @@ public sealed partial class MainForm : Form
         string remotePath = RemoteDestinationPath();
         if (!Regex.IsMatch(remotePath, @"^[A-Za-z]:\\"))
         {
-            MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad auf den Clients eingeben, z. B. C:\\install\\Novacom.",
+            AppMessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad auf den Clients eingeben, z. B. C:\\install\\Novacom.",
                 "Zielpfad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
@@ -1162,14 +1164,14 @@ public sealed partial class MainForm : Form
         files = files.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (files.Count == 0)
         {
-            MessageBox.Show(this, "Bitte mindestens eine Datei für den Upload auswählen.",
+            AppMessageBox.Show(this, "Bitte mindestens eine Datei für den Upload auswählen.",
                 "Dateiübertragung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         string[] missing = files.Where(path => !File.Exists(path)).ToArray();
         if (missing.Length > 0)
         {
-            MessageBox.Show(this, "Diese Dateien wurden nicht gefunden:\n" + string.Join(Environment.NewLine, missing),
+            AppMessageBox.Show(this, "Diese Dateien wurden nicht gefunden:\n" + string.Join(Environment.NewLine, missing),
                 "Dateiübertragung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
@@ -1178,11 +1180,11 @@ public sealed partial class MainForm : Form
             .Where(group => group.Count() > 1).Select(group => group.Key).ToArray();
         if (duplicateNames.Length > 0)
         {
-            MessageBox.Show(this, "Mehrere ausgewählte Dateien haben denselben Dateinamen:\n" +
+            AppMessageBox.Show(this, "Mehrere ausgewählte Dateien haben denselben Dateinamen:\n" +
                 string.Join(Environment.NewLine, duplicateNames), "Dateinamen doppelt", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        if (MessageBox.Show(this,
+        if (AppMessageBox.Show(this,
             $"{files.Count} Datei(en) an die ausgewählten Hosts ({targets.Length}) nach '{remotePath}' übertragen?\n\nEs wird nichts installiert. Dateien mit gleichem Namen und abweichendem Inhalt werden ersetzt. Diese Aktion überträgt Dateien auch dann, wenn die Update-Option 'Kein upload, vorhandene Update-Dateien auf dem Zielrechner verwenden' aktiviert ist.",
             "Dateiübertragung bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
@@ -1257,7 +1259,7 @@ public sealed partial class MainForm : Form
             report += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, failures);
         else if (succeeded < targets.Length)
             report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
-        MessageBox.Show(this, report, "Dateiübertragung", MessageBoxButtons.OK,
+        AppMessageBox.Show(this, report, "Dateiübertragung", MessageBoxButtons.OK,
             failures.IsEmpty && succeeded == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
@@ -1275,15 +1277,15 @@ public sealed partial class MainForm : Form
         bool startServerSuite = dialog.StartServerSuite;
         if (!restartTerminals && !restartPos && !restartPayment && !restartFiscal && !startServerSuite)
         {
-            MessageBox.Show(this, "Bitte eine Aktion auswählen.", "Befehl senden", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            AppMessageBox.Show(this, "Bitte eine Aktion auswählen.", "Befehl senden", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (restartTerminals && MessageBox.Show(this,
+        if (restartTerminals && AppMessageBox.Show(this,
             $"Windows-Neustart für die ausgewählten Hosts ({targets.Length}) anfordern?\n\n" +
             "Der Neustart wird je Host mit 30 Sekunden Vorlauf angefordert. Geöffnete Programme werden geschlossen; nicht gespeicherte Daten können verloren gehen.\n\n" +
             "Abbrechen im Updater stoppt weitere Aufträge. Bereits übermittelte Neustartaufträge bleiben bestehen.",
             "Terminal neu starten", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-        if (restartPos && MessageBox.Show(this,
+        if (restartPos && AppMessageBox.Show(this,
             $"KassaPreh auf den ausgewählten Hosts ({targets.Length}) starten / neu starten?\n\n" +
             "Läuft KassaPreh bereits, wird sie sofort per taskkill beendet und im selben Benutzerkonto neu gestartet. Nicht gespeicherte Eingaben können verloren gehen. Läuft sie nicht, wird sie als angemeldeter Benutzer aus dem Standardverzeichnis gestartet. Windows wird dabei nicht neu gestartet.\n\n" +
             "Pfad: C:\\Program Files (x86)\\novatouch\\bin\\KassaPreh.exe\n" +
@@ -1377,7 +1379,7 @@ public sealed partial class MainForm : Form
         if (!failures.IsEmpty) report += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, failures);
         if (succeeded + skipped.Count + failures.Count < targets.Length) report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
         if (restartTerminals && !completedRestart) report += Environment.NewLine + "Bereits bestätigte Neustartaufträge bleiben bestehen.";
-        MessageBox.Show(this, report, title, MessageBoxButtons.OK,
+        AppMessageBox.Show(this, report, title, MessageBoxButtons.OK,
             failures.IsEmpty && succeeded + skipped.Count == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
@@ -1450,7 +1452,7 @@ public sealed partial class MainForm : Form
         if (SelectedRemoteHosts().Length == 0) return true;
         if (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)
         {
-            MessageBox.Show(this, "Bitte das Passwort für den angegebenen Benutzer eingeben. Bei leerem Benutzernamen wird die aktuelle Windows-Anmeldung verwendet.");
+            AppMessageBox.Show(this, "Bitte das Passwort für den angegebenen Benutzer eingeben. Bei leerem Benutzernamen wird die aktuelle Windows-Anmeldung verwendet.");
             return false;
         }
         return true;
@@ -1534,7 +1536,7 @@ public sealed partial class MainForm : Form
         if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator || SelectedHosts().Length == 0) return;
         if (SelectedUpdateComponents() == UpdateComponents.None && additionalFiles.Count == 0)
         {
-            MessageBox.Show(this, "Mindestens ein Update-Paket auswählen oder den Softwareordner einlesen."); return;
+            AppMessageBox.Show(this, "Mindestens ein Update-Paket auswählen oder den Softwareordner einlesen."); return;
         }
         var selected = UpdateTargets(onlyFailed);
         if (selected.Length > 0)
@@ -1546,7 +1548,7 @@ public sealed partial class MainForm : Form
                     (chkCompileAfterInstallation.Checked && host.IsLocal && state.NtcInstalled && !state.SoftwareCompilationCompleted)))).ToArray();
             if (selected.Length == 0)
             {
-                MessageBox.Show(this, "Remote sind ausschließlich Payment, Fiscal und Server Suite erlaubt. POS, NTC, SOL und NTV können nur lokal aktualisiert werden.",
+                AppMessageBox.Show(this, "Remote sind ausschließlich Payment, Fiscal und Server Suite erlaubt. POS, NTC, SOL und NTV können nur lokal aktualisiert werden.",
                     "Keine passenden Update-Pakete", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -1555,24 +1557,24 @@ public sealed partial class MainForm : Form
         if (!EnsureLocalInstallationAccess(selected, onlyFailed)) return;
         if (!IsUpdatePathValid(selected))
         {
-            MessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad für die Update-Dateien eingeben, z. B. C:\\install\\Novacom.",
+            AppMessageBox.Show(this, "Bitte einen absoluten Windows-Zielpfad für die Update-Dateien eingeben, z. B. C:\\install\\Novacom.",
                 "Zielpfad", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         if (selected.Length == 0)
         {
-            MessageBox.Show(this, onlyFailed ? "Keine ausgewählten Hosts mit Prüf- oder Updatefehlern vorhanden." : "Zuerst die ausgewählten Hosts prüfen und Versionen auslesen."); return;
+            AppMessageBox.Show(this, onlyFailed ? "Keine ausgewählten Hosts mit Prüf- oder Updatefehlern vorhanden." : "Zuerst die ausgewählten Hosts prüfen und Versionen auslesen."); return;
         }
         UpdateComponents needed = selected.Aggregate(UpdateComponents.None, (components, host) => components | ComponentsForUpdate(host, onlyFailed));
         UpdateComponents missing = needed & ~SelectedUpdateComponents();
         if (missing != UpdateComponents.None)
         {
-            MessageBox.Show(this, "Für die Wiederholung bitte das Update-Paket auswählen: " + HostUpdateState.Label(missing),
+            AppMessageBox.Show(this, "Für die Wiederholung bitte das Update-Paket auswählen: " + HostUpdateState.Label(missing),
                 "Fehlende Update-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         string confirmation = UpdateConfirmation(selected, needed, onlyFailed);
-        bool confirmed = confirmUpdate?.Invoke(confirmation) ?? MessageBox.Show(this, confirmation,
+        bool confirmed = confirmUpdate?.Invoke(confirmation) ?? AppMessageBox.Show(this, confirmation,
             "Update bestätigen", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
         if (!confirmed) return;
         CaptureCredentials();
@@ -1962,7 +1964,7 @@ public sealed partial class MainForm : Form
         {
             batchError = ex.Message;
             Log("SYSTEM", "FEHLER: " + ex);
-            MessageBox.Show(this, ex.Message, "Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            AppMessageBox.Show(this, ex.Message, "Fehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
@@ -2134,7 +2136,7 @@ public sealed partial class MainForm : Form
     private async Task UpdateApplicationAsync()
     {
         if (!CanUpdateApplication || availableRelease is not { } release) return;
-        bool confirmed = confirmApplicationUpdate?.Invoke(release) ?? MessageBox.Show(this,
+        bool confirmed = confirmApplicationUpdate?.Invoke(release) ?? AppMessageBox.Show(this,
             $"NovaTouch Updater {AppReleaseClient.DisplayVersion(release.Version)} ist verfügbar.\n" +
             $"Aktuelle Version: {AppReleaseClient.DisplayVersion(AppReleaseClient.CurrentVersion)}\n\n" +
             "Soll die neue Version von NovaTouchUpdater heruntergeladen und installiert werden?",
@@ -2169,7 +2171,7 @@ public sealed partial class MainForm : Form
         catch (Exception ex)
         {
             Log("SYSTEM", "Aktualisierung des Updaters fehlgeschlagen: " + ex.Message);
-            if (!IsDisposed) MessageBox.Show(this, ex.Message, "Aktualisierung nicht möglich", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!IsDisposed) AppMessageBox.Show(this, ex.Message, "Aktualisierung nicht möglich", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
@@ -2196,7 +2198,7 @@ public sealed partial class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "Der Updater konnte nicht als Administrator gestartet werden.\n\n" + ex.Message,
+            AppMessageBox.Show(this, "Der Updater konnte nicht als Administrator gestartet werden.\n\n" + ex.Message,
                 "Administratorstart", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
@@ -2238,6 +2240,7 @@ public sealed partial class MainForm : Form
         btnCancel.Enabled = busy || selfUpdating || loadingPackages;
         nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle; chkForceUpdate.Enabled = idle;
         chkScanOnStartup.Enabled = idle;
+        themeMode.Enabled = idle;
         nHttpsPort.Enabled = idle && chkSsl.Checked;
         txtRemotePath.Enabled = idle; chkSkipZipTransfer.Enabled = idle;
         chkSkipLocalPackageCopy.Enabled = idle;
@@ -2304,7 +2307,7 @@ public sealed partial class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "HTML-Bericht konnte nicht erstellt oder geöffnet werden:\n" + ex.Message,
+            AppMessageBox.Show(this, "HTML-Bericht konnte nicht erstellt oder geöffnet werden:\n" + ex.Message,
                 "Berichtsfehler", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }

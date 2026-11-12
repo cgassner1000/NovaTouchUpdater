@@ -10,6 +10,11 @@
   <ItemGroup>
     <Compile Include="$(RepositoryRoot)tests/Shared/TestWorkspace.cs" Link="TestWorkspace.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Styling/UiTheme.cs" Link="UiTheme.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Styling/UiTheme.Palette.cs" Link="UiTheme.Palette.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Styling/UiTheme.Windows.cs" Link="UiTheme.Windows.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/ThemeModes.cs" Link="ThemeModes.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Controls/AdministratorButton.cs" Link="AdministratorButton.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Controls/AppComboBox.cs" Link="AppComboBox.cs" />
     <EmbeddedResource Include="$(RepositoryRoot)src/NovaTouchUpdater/Assets/NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
     <EmbeddedResource Include="$(RepositoryRoot)src/NovaTouchUpdater/Assets/NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Updates/AppReleaseClient.cs" Link="AppReleaseClient.cs" />

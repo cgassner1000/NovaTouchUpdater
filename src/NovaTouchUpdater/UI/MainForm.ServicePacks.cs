@@ -117,7 +117,7 @@ public sealed partial class MainForm
         {
             if (IsDisposed) return;
             if (showServicePackWarning is { } show) show(ex.Message);
-            else MessageBox.Show(this, ex.Message, "Servicepacks einspielen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else AppMessageBox.Show(this, ex.Message, "Servicepacks einspielen", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {

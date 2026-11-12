@@ -148,7 +148,7 @@ internal static partial class Program
         filter.Text = "broken";
         int before = searches;
         Complete(dialog.SearchAsync());
-        Assert(searches == before && !import.Enabled && status.ForeColor == Color.Firebrick, "invalid custom filter is reported before a search starts");
+        Assert(searches == before && !import.Enabled && status.ForeColor == UiTheme.Danger, "invalid custom filter is reported before a search starts");
 
         const string directoryError = "Computer suchen [LDAP://dc.example.test/DC=example,DC=test]: simulated LDAP bind error (0x80072020)";
         using var failed = DomainDialog((_, _) => Task.FromException<LdapSearchResult>(new InvalidOperationException(directoryError)));

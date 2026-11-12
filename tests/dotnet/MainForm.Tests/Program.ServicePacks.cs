@@ -39,7 +39,7 @@ internal static partial class Program
         image.DrawToBitmap(before, image.ClientRectangle);
         Cursor cursor = image.Cursor;
         Assert(!gate.Enabled && !betaDivider.Visible && button.Visible && compile.Visible && button.Enabled && compile.Enabled && !tls.Visible && autoCompile.Visible &&
-            autoCompile is ModernToggleSwitch { Checked: false, Text: "nach Installation kompilieren" } && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
+            autoCompile is AppToggleSwitch { Checked: false, Text: "nach Installation kompilieren" } && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
             "servicepacks, compilation and its automatic option are available without activation while IRIS TLS remains advanced");
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         gate.RegisterClick(check, true);

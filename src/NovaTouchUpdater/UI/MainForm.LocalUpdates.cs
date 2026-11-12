@@ -2,9 +2,9 @@ namespace NovaTouchUpdater;
 
 public sealed partial class MainForm
 {
-    private readonly ComboBox executionMode = new() { Name = "executionMode", DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
+    private readonly ComboBox executionMode = new AppComboBox() { Name = "executionMode", DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly TextBox softwarePath = new() { Name = "softwarePath", Dock = DockStyle.Fill, PlaceholderText = "Paketordner (inkl. Unterordner)" };
-    private readonly ComboBox useBuild = new() { Name = "useBuild", AccessibleName = "use Build", DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
+    private readonly ComboBox useBuild = new AppComboBox() { Name = "useBuild", AccessibleName = "use Build", DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
     private bool applyingBuildPreference;
     private Task buildPreferenceRefresh = Task.CompletedTask;
     private string? loadedPackageFolder;
@@ -145,7 +145,7 @@ public sealed partial class MainForm
                     SelectIndividualPackage(package);
                 }
                 catch (OperationCanceledException) { }
-                catch (Exception ex) { ShowIndividualPackageDialog(() => MessageBox.Show(this, ex.Message, "Update-Paket", MessageBoxButtons.OK, MessageBoxIcon.Warning)); }
+                catch (Exception ex) { ShowIndividualPackageDialog(() => AppMessageBox.Show(this, ex.Message, "Update-Paket", MessageBoxButtons.OK, MessageBoxIcon.Warning)); }
                 finally { packageCancellation = null; loadingPackages = false; if (!IsDisposed) UpdateButtons(); }
             };
             rows.Add(CreateIndividualPackageRow(component, button, label));

@@ -22,7 +22,7 @@ internal sealed class SoftwareCompilationResultsDialog : Form
         layout.Controls.Add(new Label { Name = "summary", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14),
             Text = $"{outcomes.Count} Server · {namespaces.Count(ns => ns.Success)} Namespace(s) erfolgreich · " +
                 $"{namespaces.Count(ns => !ns.Success)} Namespace(s) mit Fehlern · {errors} Kompilierungsfehler" }, 0, 0);
-        var tabs = new TabControl { Dock = DockStyle.Fill };
+        var tabs = new AppTabs { Dock = DockStyle.Fill };
         var namespaceTab = new TabPage("Namespaces") { Padding = new Padding(8) };
         var errorTab = new TabPage($"Kompilierungsfehler ({errors})") { Padding = new Padding(8) };
         var namespaceTable = Table("namespaces", ("Server", 22), ("Instanz", 20), ("Namespace", 18), ("Ergebnis", 22), ("Pakete", 18));
@@ -95,7 +95,7 @@ internal sealed class SoftwareCompilationResultsDialog : Form
     internal static TextBox DetailBox(string text) => new() { Name = "details", Text = text, Dock = DockStyle.Fill,
         Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, BackColor = Color.White, Margin = new Padding(0, 8, 0, 0) };
 
-    internal static Button OkButton() => new ModernButton { Text = "OK", Name = "ok", DialogResult = DialogResult.OK,
+    internal static Button OkButton() => new AppButton { Text = "OK", Name = "ok", DialogResult = DialogResult.OK,
         AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(22, 7, 22, 7), Margin = Padding.Empty, Role = ButtonRole.Primary };
 
     internal static FlowLayoutPanel ButtonBar(Button ok)

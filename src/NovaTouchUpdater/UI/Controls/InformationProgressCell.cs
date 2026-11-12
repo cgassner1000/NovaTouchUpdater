@@ -1,7 +1,7 @@
 namespace NovaTouchUpdater;
 
 // Use the standard text-cell renderer for padding, DPI, ellipsis and focus.
-// Only the background changes; dark text stays readable on both fill colors.
+// The palette keeps progress text readable on both fill colors in either theme.
 internal sealed class InformationProgressCell : DataGridViewTextBoxCell
 {
     protected override void Paint(Graphics graphics, Rectangle clipBounds, Rectangle cellBounds,
@@ -9,7 +9,7 @@ internal sealed class InformationProgressCell : DataGridViewTextBoxCell
         string? errorText, DataGridViewCellStyle cellStyle, DataGridViewAdvancedBorderStyle advancedBorderStyle,
         DataGridViewPaintParts paintParts)
     {
-        if (Tag is not int percent)
+        if (Tag is not int percent || SystemInformation.HighContrast)
         {
             base.Paint(graphics, clipBounds, cellBounds, rowIndex, cellState, value, formattedValue,
                 errorText, cellStyle, advancedBorderStyle, paintParts);
@@ -26,8 +26,8 @@ internal sealed class InformationProgressCell : DataGridViewTextBoxCell
                 Math.Max(0, cellBounds.Width - border.X - border.Width),
                 Math.Max(0, cellBounds.Height - border.Y - border.Height));
             bool selected = (cellState & DataGridViewElementStates.Selected) != 0;
-            using var background = new SolidBrush(selected ? Color.FromArgb(227, 243, 233) : Color.FromArgb(242, 250, 244));
-            using var fill = new SolidBrush(selected ? Color.FromArgb(139, 207, 157) : Color.FromArgb(163, 218, 176));
+            using var background = new SolidBrush(selected ? UiTheme.ProgressSelectedTrack : UiTheme.ProgressTrack);
+            using var fill = new SolidBrush(selected ? UiTheme.ProgressSelectedFill : UiTheme.ProgressFill);
             var state = graphics.Save();
             graphics.SetClip(Rectangle.Intersect(clipBounds, track));
             graphics.FillRectangle(background, track);
@@ -35,7 +35,7 @@ internal sealed class InformationProgressCell : DataGridViewTextBoxCell
             graphics.Restore(state);
         }
         var textStyle = cellStyle.Clone();
-        textStyle.ForeColor = textStyle.SelectionForeColor = Color.FromArgb(20, 45, 29);
+        textStyle.ForeColor = textStyle.SelectionForeColor = UiTheme.ProgressText;
         base.Paint(graphics, clipBounds, cellBounds, rowIndex, cellState, value, formattedValue,
             errorText, textStyle, advancedBorderStyle,
             paintParts & (DataGridViewPaintParts.ContentForeground | DataGridViewPaintParts.ErrorIcon | DataGridViewPaintParts.Focus));

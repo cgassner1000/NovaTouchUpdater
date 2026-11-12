@@ -2,13 +2,13 @@ namespace NovaTouchUpdater;
 
 internal sealed class CommandDialog : Form
 {
-    private readonly CheckBox payment = new ModernToggleSwitch { Name = "payment" };
-    private readonly CheckBox fiscal = new ModernToggleSwitch { Name = "fiscal" };
-    private readonly CheckBox serverSuite = new ModernToggleSwitch { Name = "serverSuite" };
-    private readonly CheckBox terminal = new ModernToggleSwitch { Name = "terminal" };
-    private readonly CheckBox pos = new ModernToggleSwitch { Name = "pos" };
+    private readonly CheckBox payment = new AppToggleSwitch { Name = "payment" };
+    private readonly CheckBox fiscal = new AppToggleSwitch { Name = "fiscal" };
+    private readonly CheckBox serverSuite = new AppToggleSwitch { Name = "serverSuite" };
+    private readonly CheckBox terminal = new AppToggleSwitch { Name = "terminal" };
+    private readonly CheckBox pos = new AppToggleSwitch { Name = "pos" };
     private readonly Label selection = new() { Name = "selection", AutoSize = true, Dock = DockStyle.Fill };
-    private readonly Button execute = new ModernButton
+    private readonly Button execute = new AppButton
     {
         Name = "execute", Text = "Auswahl ausführen", AutoSize = true,
         AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12, 7, 12, 7),
@@ -73,7 +73,7 @@ internal sealed class CommandDialog : Form
         scroll.Controls.Add(content);
         layout.Controls.Add(scroll, 0, 1);
 
-        var cancel = new ModernButton
+        var cancel = new AppButton
         {
             Text = "Abbrechen", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.Cancel
@@ -118,7 +118,7 @@ internal sealed class CommandDialog : Form
         if (StartServerSuite) services.Add("nt3 Server Suite");
         execute.Enabled = RestartTerminals || RestartPos || services.Count > 0;
         execute.Text = RestartTerminals ? "Windows-Neustart bestätigen …" : RestartPos ? "POS-Neustart bestätigen …" : "Auswahl ausführen";
-        ((ModernButton)execute).Role = RestartTerminals ? ButtonRole.Danger : ButtonRole.Primary;
+        ((AppButton)execute).Role = RestartTerminals ? ButtonRole.Danger : ButtonRole.Primary;
         selection.Text = RestartTerminals
             ? "Ausgewählt: vollständiger Windows-Neustart. Eine Bestätigung folgt."
             : RestartPos ? "Ausgewählt: KassaPreh im angemeldeten Benutzerkonto neu starten. Eine Bestätigung folgt."

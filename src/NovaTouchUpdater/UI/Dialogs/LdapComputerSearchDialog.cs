@@ -3,7 +3,7 @@ namespace NovaTouchUpdater;
 internal sealed class LdapComputerSearchDialog : Form
 {
     private readonly ComputerDiscovery discovery;
-    private readonly ComboBox source = new() { Name = "searchSource", Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly ComboBox source = new AppComboBox() { Name = "searchSource", Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox networkRange = new() { Name = "networkRange", Dock = DockStyle.Fill, PlaceholderText = "Leer = aktive IPv4-Netze; z. B. 192.168.1.0/24" };
     private readonly TextBox domain = new() { Name = "domain", Dock = DockStyle.Fill, PlaceholderText = "Leer = aktuelle Domäne" };
     private readonly TextBox searchBase = new() { Name = "searchBase", Dock = DockStyle.Fill, PlaceholderText = "Optional, z. B. OU=Kassen,DC=firma,DC=local" };
@@ -13,7 +13,7 @@ internal sealed class LdapComputerSearchDialog : Form
         Name = "customFilter", Dock = DockStyle.Fill, Multiline = true, ScrollBars = ScrollBars.Both, WordWrap = false,
         Font = new Font("Consolas", 9F), PlaceholderText = "z. B. (&(name=SERVER-*)(operatingSystem=*Windows*))"
     };
-    private readonly TabControl modes = new ModernTabs { Name = "modes", Dock = DockStyle.Fill, Height = 145 };
+    private readonly TabControl modes = new AppTabs { Name = "modes", Dock = DockStyle.Fill, Height = 145 };
     private readonly DataGridView results = new() { Name = "results" };
     private readonly Label status = new() { Name = "searchStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Noch keine Suche gestartet." };
     private readonly Label selection = new() { Name = "selectedCount", AutoSize = true, Anchor = AnchorStyles.Left };
@@ -120,8 +120,8 @@ internal sealed class LdapComputerSearchDialog : Form
         Controls.Add(WindowLayout.CreateScrollArea(layout, results));
         CancelButton = cancel;
         AcceptButton = find;
-        ((ModernButton)find).Role = ButtonRole.Primary;
-        ((ModernButton)import).Role = ButtonRole.Accent;
+        ((AppButton)find).Role = ButtonRole.Primary;
+        ((AppButton)import).Role = ButtonRole.Accent;
 
         find.Click += async (_, _) => await SearchAsync();
         stop.Click += (_, _) => CancelSearch();
@@ -308,10 +308,10 @@ internal sealed class LdapComputerSearchDialog : Form
     private void SetStatus(string message, bool error)
     {
         status.Text = message;
-        status.ForeColor = error ? Color.Firebrick : Color.FromArgb(75, 89, 107);
+        status.ForeColor = error ? UiTheme.Danger : UiTheme.Muted;
     }
 
-    private static Button MakeButton(string text, string name) => new ModernButton { Name = name, Text = text };
+    private static Button MakeButton(string text, string name) => new AppButton { Name = name, Text = text };
     private sealed class SearchProgress(Action<string> report) : IProgress<string>
     {
         public void Report(string value) => report(value);

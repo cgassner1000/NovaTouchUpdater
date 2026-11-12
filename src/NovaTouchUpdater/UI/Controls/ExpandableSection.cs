@@ -342,7 +342,7 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             float offset = spread / 4F;
             // Several low-opacity layers give a soft falloff without a dark border.
-            using var brush = new SolidBrush(Color.FromArgb(3, 28, 42, 62));
+            using var brush = new SolidBrush(UiTheme.IsDark ? Color.FromArgb(9, 0, 0, 0) : Color.FromArgb(3, 28, 42, 62));
             for (int layer = 8; layer > 0; layer--)
             {
                 float distance = spread * layer / 8F;
@@ -364,7 +364,7 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
         }
     }
 
-    private sealed class SectionHeader : ModernButton
+    private sealed class SectionHeader : AppButton
     {
         protected override void OnPaint(PaintEventArgs e)
         {

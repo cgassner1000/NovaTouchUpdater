@@ -40,6 +40,15 @@ internal sealed class AdministratorButton : Button
         previous?.Dispose();
     }
 
+    internal void RefreshTheme()
+    {
+        FlatStyle = FlatStyle.Flat;
+        FlatAppearance.MouseOverBackColor = FlatAppearance.MouseDownBackColor = UiTheme.AccentSoft;
+        BackColor = UiTheme.Background;
+        ForeColor = UiTheme.Accent;
+        UpdateShield();
+    }
+
     internal static Bitmap CreateShield(int size)
     {
         // Render curves at four times the target resolution, then reduce once.
@@ -58,8 +67,8 @@ internal sealed class AdministratorButton : Button
             shield.AddLine(3, 10.5F, 3, 4);
             shield.AddBezier(3, 4, 6, 3.8F, 9, 3.2F, 12, 1.5F);
             shield.CloseFigure();
-            Color blue = SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(42, 105, 193);
-            Color gold = SystemInformation.HighContrast ? SystemColors.Window : Color.FromArgb(255, 202, 54);
+            Color blue = SystemInformation.HighContrast ? SystemColors.Highlight : UiTheme.IsDark ? Color.FromArgb(91, 125, 165) : Color.FromArgb(42, 105, 193);
+            Color gold = SystemInformation.HighContrast ? SystemColors.Window : UiTheme.IsDark ? Color.FromArgb(200, 177, 118) : Color.FromArgb(255, 202, 54);
             using var blueBrush = new SolidBrush(blue);
             using var goldBrush = new SolidBrush(gold);
             graphics.FillPath(blueBrush, shield);

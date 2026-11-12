@@ -7,7 +7,7 @@ internal sealed class WinRmTestForm : Form
     private readonly TextBox details = new();
     private readonly Label summary = new();
     private readonly Label localStatus = new() { Name = "localWinRmStatus", AutoSize = true, Dock = DockStyle.Fill };
-    private readonly Button cancel = new ModernButton { Text = "Abbrechen" };
+    private readonly Button cancel = new AppButton { Text = "Abbrechen" };
     private readonly CancellationTokenSource cancellation = new();
     private bool running = true;
     private int completed;

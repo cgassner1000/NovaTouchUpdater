@@ -8,6 +8,7 @@ internal static class Program
         try
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            UiTheme.SetMode("Light");
             foreach (float scale in new[] { 1F, 1.5F, 2F }) Render(scale, args.FirstOrDefault());
             return 0;
         }

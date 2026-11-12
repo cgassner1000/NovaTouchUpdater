@@ -6,7 +6,7 @@ internal sealed class DatabaseCheckForm : Form
     private readonly TreeView instances = new() { Name = "irisInstances", Dock = DockStyle.Fill, HideSelection = false, BorderStyle = BorderStyle.FixedSingle, MinimumSize = new Size(0, 180) };
     private readonly Label status = new() { Name = "databaseStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "IRIS-Instanzen werden eingelesen …" };
     private readonly TextBox details = new() { Name = "databaseDetails", Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, MinimumSize = new Size(0, 95) };
-    private readonly Button refresh = new ModernButton { Name = "refreshDatabase", Text = "Aktualisieren", AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
+    private readonly Button refresh = new AppButton { Name = "refreshDatabase", Text = "Aktualisieren", AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
     private IrisInventoryResult? lastInventory;
     private CancellationTokenSource? pending;
 
@@ -33,7 +33,7 @@ internal sealed class DatabaseCheckForm : Form
         layout.Controls.Add(instances, 0, 2);
         layout.Controls.Add(details, 0, 3);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
-        var close = new ModernButton { Text = "Schließen", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.Cancel };
+        var close = new AppButton { Text = "Schließen", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.Cancel };
         buttons.Controls.Add(close);
         buttons.Controls.Add(refresh);
         layout.Controls.Add(buttons, 0, 4);

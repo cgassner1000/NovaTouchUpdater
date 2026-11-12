@@ -66,7 +66,7 @@ public sealed partial class MainForm
             string message = "Die Spaltenauswahl gilt für diese Sitzung, konnte aber nicht gespeichert werden.\n" + ex.Message;
             Log("SYSTEM", "Spaltenauswahl speichern fehlgeschlagen: " + ex.Message);
             if (showHostColumnSaveError is { } show) show(message);
-            else MessageBox.Show(this, message, "Spaltenauswahl", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else AppMessageBox.Show(this, message, "Spaltenauswahl", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 }

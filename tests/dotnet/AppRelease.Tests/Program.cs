@@ -139,7 +139,7 @@ internal static class Program
         foreach (float scale in new[] { 1F, 1.25F, 1.5F, 2F })
         {
             using var link = new LinkLabel { Text = "Neue Version verfügbar", Visible = true };
-            using var feedback = new ModernButton { Text = "Report issue" };
+            using var feedback = new AppButton { Text = "Report issue" };
             using var administrator = new Button { Visible = false };
             using var header = new UpdaterHeader(link, feedback, administrator) { Font = new Font("Segoe UI", 9F * scale) };
             header.Controls.OfType<Label>().Single(l => l.Text == "NovaTouch Updater").Font =

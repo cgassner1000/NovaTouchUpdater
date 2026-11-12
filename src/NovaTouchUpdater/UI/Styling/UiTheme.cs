@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace NovaTouchUpdater;
 
-internal static class UiTheme
+internal static partial class UiTheme
 {
     private static readonly Lazy<Icon> ApplicationIcon = new(() =>
     {
@@ -18,25 +18,13 @@ internal static class UiTheme
         return new Bitmap(image);
     });
     internal static Image BrandImage => ApplicationImage.Value;
-    internal static readonly Color Background = Color.FromArgb(244, 247, 251);
-    internal static readonly Color Surface = Color.White;
-    internal static readonly Color Text = Color.FromArgb(28, 42, 62);
-    internal static readonly Color Muted = Color.FromArgb(95, 112, 134);
-    internal static readonly Color Border = Color.FromArgb(220, 228, 238);
-    internal static readonly Color Accent = Color.FromArgb(37, 99, 235);
-    internal static readonly Color AccentSoft = Color.FromArgb(235, 242, 255);
-    internal static readonly Color Success = Color.FromArgb(22, 112, 79);
-    internal static readonly Color SuccessSoft = Color.FromArgb(231, 246, 237);
-    internal static readonly Color Danger = Color.FromArgb(177, 48, 63);
-    internal static readonly Color DangerSoft = Color.FromArgb(253, 236, 239);
-    internal static readonly Color Warning = Color.FromArgb(136, 81, 20);
-    internal static readonly Color WarningSoft = Color.FromArgb(255, 245, 225);
-
     internal static Font BodyFont() => new("Segoe UI", 9.5F);
 
     internal static void Apply(Form form)
     {
+        Register(form);
         form.Icon = ApplicationIcon.Value;
+        ApplyWindowFrame(form);
         if (SystemInformation.HighContrast)
         {
             UseSystemColors(form);
@@ -45,10 +33,16 @@ internal static class UiTheme
         form.BackColor = Background;
         form.ForeColor = Text;
         ApplyChildren(form);
+        form.Invalidate(true);
     }
 
     private static void UseSystemColors(Control control)
     {
+        if (control.ContextMenuStrip is { } menu) StyleMenu(menu);
+        if (control is TextBoxBase or ComboBox or TreeView or ListBox or ScrollBar or ScrollableControl { AutoScroll: true }) StyleNativeControl(control);
+        if (control is AppTabs tabs) tabs.RefreshTheme();
+        if (control is AppComboBox combo) combo.RefreshTheme();
+        if (control is AppProgressBar progress) progress.RefreshTheme();
         control.BackColor = SystemColors.Control;
         control.ForeColor = SystemColors.ControlText;
         if (control is TextBox or ComboBox or NumericUpDown)
@@ -64,6 +58,7 @@ internal static class UiTheme
         if (control is LinkLabel link) link.LinkColor = link.ActiveLinkColor = link.VisitedLinkColor = SystemColors.HotTrack;
         if (control is DataGridView grid)
         {
+            foreach (Control child in grid.Controls) StyleNativeControl(child);
             grid.EnableHeadersVisualStyles = true;
             grid.BackgroundColor = grid.DefaultCellStyle.BackColor = grid.AlternatingRowsDefaultCellStyle.BackColor = SystemColors.Window;
             grid.DefaultCellStyle.ForeColor = SystemColors.WindowText;
@@ -80,29 +75,52 @@ internal static class UiTheme
     {
         foreach (Control control in parent.Controls)
         {
+            control.BackColor = Remap(control.BackColor, background: true, parent.BackColor);
+            control.ForeColor = Remap(control.ForeColor, background: false, parent.ForeColor);
+            if (control.ContextMenuStrip is { } menu) StyleMenu(menu);
+            if (control is TextBoxBase or ComboBox or TreeView or ListBox or ScrollBar or ScrollableControl { AutoScroll: true }) StyleNativeControl(control);
             switch (control)
             {
+                case SurfaceCard card:
+                    if (card.BackColor == Background) card.BackColor = Surface;
+                    card.BorderColor = Remap(card.BorderColor, true, Border);
+                    break;
+                case AppTabs tabs:
+                    tabs.RefreshTheme();
+                    break;
+                case AppProgressBar progress:
+                    progress.RefreshTheme();
+                    break;
+                case AppButton button:
+                    button.FlatStyle = FlatStyle.Flat;
+                    button.UseVisualStyleBackColor = false;
+                    break;
+                case AdministratorButton administrator:
+                    administrator.RefreshTheme();
+                    break;
                 case DataGridView grid:
                     StyleGrid(grid);
+                    foreach (Control child in grid.Controls) StyleNativeControl(child);
                     continue; // Native grid scrollbars and editing controls manage themselves.
                 case TextBox input:
                     input.BorderStyle = BorderStyle.FixedSingle;
-                    input.BackColor = input.ReadOnly ? Color.FromArgb(248, 250, 253) : Surface;
+                    input.BackColor = input.ReadOnly ? ReadOnlySurface : Input;
                     input.ForeColor = Text;
                     break;
                 case ComboBox combo:
+                    if (combo is AppComboBox appCombo) appCombo.RefreshTheme();
                     combo.FlatStyle = FlatStyle.Flat;
-                    combo.BackColor = Surface;
+                    combo.BackColor = Input;
                     combo.ForeColor = Text;
                     break;
                 case NumericUpDown number:
                     number.BorderStyle = BorderStyle.FixedSingle;
-                    number.BackColor = Surface;
+                    number.BackColor = Input;
                     number.ForeColor = Text;
                     continue;
                 case LinkLabel link:
                     link.LinkColor = Accent;
-                    link.ActiveLinkColor = Color.FromArgb(29, 78, 216);
+                    link.ActiveLinkColor = Accent;
                     link.VisitedLinkColor = Accent;
                     link.LinkBehavior = LinkBehavior.HoverUnderline;
                     break;
@@ -110,8 +128,19 @@ internal static class UiTheme
                     page.UseVisualStyleBackColor = false;
                     page.BackColor = Surface;
                     break;
+                case TreeView tree:
+                    tree.BackColor = Input;
+                    tree.ForeColor = Text;
+                    tree.LineColor = Border;
+                    RemapNodes(tree.Nodes);
+                    break;
+                case ListBox list:
+                    list.BackColor = Input;
+                    list.ForeColor = Text;
+                    break;
             }
             ApplyChildren(control);
+            control.Invalidate();
         }
     }
 
@@ -121,14 +150,16 @@ internal static class UiTheme
         grid.BackgroundColor = Surface;
         grid.BorderStyle = BorderStyle.None;
         grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
-        grid.GridColor = Color.FromArgb(220, 228, 238);
+        grid.GridColor = Border;
         grid.EnableHeadersVisualStyles = false;
         grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
-        grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(241, 245, 250);
+        grid.ColumnHeadersDefaultCellStyle.BackColor = Header;
         grid.ColumnHeadersDefaultCellStyle.ForeColor = Muted;
         grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = grid.ColumnHeadersDefaultCellStyle.BackColor;
         grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = Muted;
-        grid.ColumnHeadersDefaultCellStyle.Font = new Font(grid.Font, FontStyle.Bold);
+        if (grid.ColumnHeadersDefaultCellStyle.Font is not Font headerFont || !headerFont.Bold ||
+            headerFont.SizeInPoints != grid.Font.SizeInPoints || headerFont.FontFamily.Name != grid.Font.FontFamily.Name)
+            grid.ColumnHeadersDefaultCellStyle.Font = new Font(grid.Font, FontStyle.Bold);
         grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(10, 11, 10, 11);
         grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
         grid.DefaultCellStyle.BackColor = Surface;
@@ -136,7 +167,16 @@ internal static class UiTheme
         grid.DefaultCellStyle.SelectionBackColor = AccentSoft;
         grid.DefaultCellStyle.SelectionForeColor = Text;
         grid.DefaultCellStyle.Padding = new Padding(10, 9, 10, 9);
-        grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(249, 251, 254);
+        grid.AlternatingRowsDefaultCellStyle.BackColor = Alternate;
+        for (int index = 0; index < grid.Rows.Count; index++)
+        {
+            // Do not unshare/materialize every row of a virtual log table on a theme change.
+            var row = grid.Rows.SharedRow(index);
+            if (row.HasDefaultCellStyle) RemapStyle(row.DefaultCellStyle);
+            foreach (DataGridViewCell cell in row.Cells) if (cell.HasStyle) RemapStyle(cell.Style);
+        }
+        foreach (DataGridViewColumn column in grid.Columns) RemapStyle(column.DefaultCellStyle);
+        grid.Invalidate();
         grid.RowTemplate.MinimumHeight = 38;
     }
 
@@ -157,7 +197,7 @@ internal static class UiTheme
 internal enum ButtonRole { Normal, Primary, Accent, Danger }
 
 // Retain the native checkbox's checked state, keyboard and accessibility behavior.
-internal sealed class ModernToggleSwitch : CheckBox
+internal sealed class AppToggleSwitch : CheckBox
 {
     private bool hovered;
     private float SwitchScale => Math.Max(DeviceDpi / 96F, Font.SizeInPoints / 9.5F);
@@ -166,7 +206,7 @@ internal sealed class ModernToggleSwitch : CheckBox
         (UseMnemonic ? TextFormatFlags.Default : TextFormatFlags.NoPrefix) |
         (RightToLeft == RightToLeft.Yes ? TextFormatFlags.RightToLeft | TextFormatFlags.Right : TextFormatFlags.Default);
 
-    internal ModernToggleSwitch()
+    internal AppToggleSwitch()
     {
         AutoSize = true;
         Cursor = Cursors.Hand;
@@ -201,22 +241,22 @@ internal sealed class ModernToggleSwitch : CheckBox
         float x = rtl ? Width - Padding.Right - trackWidth - 1 : Padding.Left + 1;
         var track = new RectangleF(x, Padding.Top + (Height - Padding.Vertical - trackHeight) / 2F,
             trackWidth, trackHeight);
-        Color fill = !Enabled ? Color.FromArgb(224, 228, 234)
-            : Checked ? (hovered ? Color.FromArgb(217, 94, 14) : Color.FromArgb(234, 111, 25))
-            : hovered ? Color.FromArgb(148, 163, 184) : Color.FromArgb(174, 185, 200);
+        Color fill = !Enabled ? (UiTheme.IsDark ? UiTheme.Disabled : Color.FromArgb(224, 228, 234))
+            : Checked ? (hovered ? UiTheme.ToggleHover : UiTheme.ToggleOn)
+            : hovered ? UiTheme.ToggleOffHover : UiTheme.ToggleOff;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using var shape = UiTheme.RoundRectangle(track, trackHeight / 2F);
         using var trackBrush = new SolidBrush(fill);
         e.Graphics.FillPath(trackBrush, shape);
         float inset = 3 * scale, diameter = trackHeight - inset * 2;
         float thumbX = Checked != rtl ? track.Right - inset - diameter : track.Left + inset;
-        using var thumbBrush = new SolidBrush(Enabled ? Color.White : Color.FromArgb(247, 248, 250));
+        using var thumbBrush = new SolidBrush(Enabled ? UiTheme.Thumb : UiTheme.IsDark ? UiTheme.DisabledText : Color.FromArgb(247, 248, 250));
         e.Graphics.FillEllipse(thumbBrush, thumbX, track.Top + inset, diameter, diameter);
         int labelSpace = (int)Math.Ceiling(trackWidth + 10 * scale) + 2;
         var textBounds = new Rectangle(Padding.Left + (rtl ? 0 : labelSpace), Padding.Top,
             Math.Max(0, Width - Padding.Horizontal - labelSpace), Math.Max(0, Height - Padding.Vertical));
         TextRenderer.DrawText(e.Graphics, Text, Font, textBounds,
-            Enabled ? ForeColor : SystemColors.GrayText, TextFlags | TextFormatFlags.VerticalCenter);
+            Enabled ? ForeColor : UiTheme.DisabledText, TextFlags | TextFormatFlags.VerticalCenter);
         if (Focused && ShowFocusCues)
             ControlPaint.DrawFocusRectangle(e.Graphics, new Rectangle(0, 0, Width - 1, Height - 1), ForeColor, BackColor);
     }
@@ -231,14 +271,14 @@ internal sealed class ModernToggleSwitch : CheckBox
 
 // Keep the native Button's keyboard, mnemonic, DialogResult and accessibility
 // behavior; only its painting changes. Sizes remain driven by text and DPI.
-internal class ModernButton : Button
+internal class AppButton : Button
 {
     private ButtonRole role;
     private bool hovered;
     private bool pressed;
     internal ButtonRole Role { get => role; set { role = value; Invalidate(); } }
 
-    internal ModernButton()
+    internal AppButton()
     {
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
@@ -256,14 +296,14 @@ internal class ModernButton : Button
         if (SystemInformation.HighContrast) { base.OnPaint(e); return; }
         Color fill = role switch
         {
-            ButtonRole.Primary => hovered ? Color.FromArgb(29, 78, 216) : UiTheme.Accent,
-            ButtonRole.Accent => hovered ? Color.FromArgb(220, 233, 255) : UiTheme.AccentSoft,
-            ButtonRole.Danger => hovered ? Color.FromArgb(250, 222, 228) : UiTheme.DangerSoft,
-            _ => hovered ? Color.FromArgb(240, 245, 252) : UiTheme.Surface
+            ButtonRole.Primary => hovered ? UiTheme.PrimaryHover : UiTheme.Primary,
+            ButtonRole.Accent => hovered ? UiTheme.AccentHover : UiTheme.AccentSoft,
+            ButtonRole.Danger => hovered ? UiTheme.DangerHover : UiTheme.DangerSoft,
+            _ => hovered ? UiTheme.Hover : UiTheme.Surface
         };
-        Color foreground = role switch { ButtonRole.Primary => Color.White, ButtonRole.Accent => UiTheme.Accent, ButtonRole.Danger => UiTheme.Danger, _ => UiTheme.Text };
+        Color foreground = role switch { ButtonRole.Primary => UiTheme.PrimaryText, ButtonRole.Accent => UiTheme.Accent, ButtonRole.Danger => UiTheme.Danger, _ => UiTheme.Text };
         Color border = role == ButtonRole.Normal ? UiTheme.Border : fill;
-        if (!Enabled) { fill = Color.FromArgb(239, 242, 247); foreground = Color.FromArgb(142, 154, 173); border = fill; }
+        if (!Enabled) { fill = UiTheme.Disabled; foreground = UiTheme.DisabledText; border = fill; }
         else if (pressed) fill = ControlPaint.Dark(fill, .06F);
         e.Graphics.Clear(Parent?.BackColor ?? UiTheme.Background);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -327,12 +367,31 @@ internal sealed class SurfaceCard : TableLayoutPanel
     }
 }
 
-internal sealed class ModernTabs : TabControl
+internal sealed class AppTabs : TabControl
 {
-    internal ModernTabs()
+    internal AppTabs()
+    {
+        Padding = new Point(16, 8);
+        RefreshTheme();
+    }
+
+    internal void RefreshTheme()
     {
         DrawMode = SystemInformation.HighContrast ? TabDrawMode.Normal : TabDrawMode.OwnerDrawFixed;
-        Padding = new Point(16, 8);
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, !SystemInformation.HighContrast);
+        Invalidate();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (SystemInformation.HighContrast) { base.OnPaint(e); return; }
+        e.Graphics.Clear(UiTheme.Background);
+        using var border = new Pen(UiTheme.Border);
+        var frame = Rectangle.Inflate(DisplayRectangle, 1, 1);
+        e.Graphics.DrawRectangle(border, frame);
+        for (int index = 0; index < TabCount; index++)
+            OnDrawItem(new DrawItemEventArgs(e.Graphics, Font, GetTabRect(index), index,
+                index == SelectedIndex && Focused ? DrawItemState.Focus : DrawItemState.None));
     }
 
     protected override void OnDrawItem(DrawItemEventArgs e)
@@ -353,13 +412,14 @@ internal sealed class ModernTabs : TabControl
     }
 }
 
-internal sealed class ModernProgressBar : ProgressBar
+internal sealed class AppProgressBar : ProgressBar
 {
-    internal ModernProgressBar()
+    internal AppProgressBar()
     {
-        if (!SystemInformation.HighContrast)
-            SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        RefreshTheme();
     }
+
+    internal void RefreshTheme() => SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, !SystemInformation.HighContrast);
 
     protected override void OnPaint(PaintEventArgs e)
     {

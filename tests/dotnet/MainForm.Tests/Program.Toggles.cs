@@ -9,7 +9,7 @@ internal static partial class Program
         {
             using var font = new Font("Segoe UI", 9.5F * scale);
             using var parent = new Panel { BackColor = UiTheme.Surface };
-            using var toggle = new ModernToggleSwitch { Font = font, Text = "Bei Programmstart prüfen", AutoSize = false };
+            using var toggle = new AppToggleSwitch { Font = font, Text = "Bei Programmstart prüfen", AutoSize = false };
             parent.Controls.Add(toggle);
             toggle.Size = toggle.GetPreferredSize(Size.Empty);
             using var reused = new Bitmap(toggle.Width, toggle.Height);
@@ -49,13 +49,13 @@ internal static partial class Program
         }
     }
 
-    private static void PaintToggle(ModernToggleSwitch toggle, Bitmap target)
+    private static void PaintToggle(AppToggleSwitch toggle, Bitmap target)
     {
         using var graphics = Graphics.FromImage(target);
         using var args = new PaintEventArgs(graphics, new Rectangle(Point.Empty, target.Size));
         // ButtonBase sets Opaque: WinForms skips background painting and the
         // foreground painter must replace every pixel of the reused buffer.
-        typeof(ModernToggleSwitch).GetMethod("OnPaint", Private)!.Invoke(toggle, [args]);
+        typeof(AppToggleSwitch).GetMethod("OnPaint", Private)!.Invoke(toggle, [args]);
     }
 
     private static bool SamePixels(Bitmap first, Bitmap second)

@@ -147,7 +147,7 @@ internal static partial class Program
         foreach (bool elevated in new[] { false, true })
         {
             using var notice = new LinkLabel { Text = "Neue Version verfügbar", Visible = true };
-            using var feedback = new ModernButton { Text = "Report issue", AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
+            using var feedback = new AppButton { Text = "Report issue", AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
             using var administrator = new AdministratorButton { Visible = !elevated };
             using var header = new UpdaterHeader(notice, feedback, administrator);
             var fonts = All(header).ToDictionary(control => control, control => control.Font);

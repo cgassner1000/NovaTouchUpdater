@@ -67,8 +67,8 @@ internal sealed class PackageDropArea : Control
         if (Width < 4 * scale || Height < 4 * scale) return;
         bool contrast = SystemInformation.HighContrast;
         Color accent = contrast ? SystemColors.Highlight : UiTheme.Accent;
-        Color fill = contrast ? SystemColors.Window : acceptingDrop ? UiTheme.AccentSoft : Color.FromArgb(248, 250, 255);
-        Color border = acceptingDrop || contrast ? accent : Color.FromArgb(186, 205, 238);
+        Color fill = contrast ? SystemColors.Window : acceptingDrop ? UiTheme.AccentSoft : UiTheme.DropSurface;
+        Color border = acceptingDrop || contrast ? accent : UiTheme.DropBorder;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using var shape = UiTheme.RoundRectangle(new RectangleF(scale, scale, Width - 2 * scale, Height - 2 * scale), 12 * scale);
         using var background = new SolidBrush(fill);
@@ -84,7 +84,7 @@ internal sealed class PackageDropArea : Control
         float contentWidth = Math.Min(textWidth + iconSize + gap, Math.Max(0, Width - 32 * scale));
         float x = (Width - contentWidth) / 2F, y = (Height - iconSize) / 2F;
         using var badge = UiTheme.RoundRectangle(new RectangleF(x, y, iconSize, iconSize), 12 * scale);
-        using var badgeBrush = new SolidBrush(acceptingDrop ? accent : contrast ? SystemColors.Control : Color.FromArgb(231, 239, 255));
+        using var badgeBrush = new SolidBrush(acceptingDrop ? accent : contrast ? SystemColors.Control : UiTheme.AccentSoft);
         e.Graphics.FillPath(badgeBrush, badge);
         using var icon = new Pen(acceptingDrop ? contrast ? SystemColors.HighlightText : Color.White : accent, 2 * scale)
         { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };

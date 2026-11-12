@@ -41,7 +41,7 @@ public sealed partial class MainForm
             "Bitte im Header links von ‚Report issue‘ auf ‚NovaTouchUpdater als Administrator starten‘ klicken.\n\n" +
             "Es wurden noch keine Update-Dateien kopiert und keine Installationen gestartet.";
         if (showLocalAdministratorNotice is { } show) show(message);
-        else MessageBox.Show(this, message, "NovaTouch Updater als Administrator neu starten", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        else AppMessageBox.Show(this, message, "NovaTouch Updater als Administrator neu starten", MessageBoxButtons.OK, MessageBoxIcon.Information);
         return false;
     }
 }

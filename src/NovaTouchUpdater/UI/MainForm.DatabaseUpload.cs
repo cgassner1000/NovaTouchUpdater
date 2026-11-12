@@ -62,7 +62,7 @@ public sealed partial class MainForm
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { return false; }
         catch (Exception ex)
         {
-            if (!IsDisposed) MessageBox.Show(this, ex.Message, "zzzSoftware-Vorbereitung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (!IsDisposed) AppMessageBox.Show(this, ex.Message, "zzzSoftware-Vorbereitung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
         finally { preparingDatabaseUpload = false; if (!IsDisposed) UpdateButtons(); }

@@ -18,6 +18,7 @@ internal sealed class UpdaterConfig
     public bool UploadToZzzSoftware { get; set; } = true;
     public bool RestartPosAfterUpdate { get; set; }
     public bool ScanOnStartup { get; set; } = true;
+    public string Theme { get; set; } = ThemeModes.System;
     public bool SkipLocalPackageCopy { get; set; }
     public bool SkipRemotePackageCopy { get; set; }
     public bool SkipZipTransfer { get; set; }
@@ -80,6 +81,7 @@ internal static class AppConfigStore
             UploadToZzzSoftware = settings.UploadToZzzSoftware, RestartPosAfterUpdate = settings.RestartPosAfterUpdate,
             ExecutionMode = settings.ExecutionMode, SoftwarePath = settings.SoftwarePath, UseBuild = settings.UseBuild,
             ScanOnStartup = settings.ScanOnStartup,
+            Theme = settings.Theme,
             VisibleHostColumns = settings.VisibleHostColumns,
             SkipLocalPackageCopy = settings.SkipLocalPackageCopy, SkipRemotePackageCopy = settings.SkipRemotePackageCopy, SkipZipTransfer = settings.SkipZipTransfer,
             PasswordProtectionScope = nameof(DataProtectionScope.LocalMachine),
@@ -89,8 +91,14 @@ internal static class AppConfigStore
     }
 
     public static void SaveVisibleHostColumns(string path, IEnumerable<string> columns, string? fallbackConfigPath = null)
+        => SavePreference(path, nameof(UpdaterConfig.VisibleHostColumns), JsonSerializer.SerializeToNode(HostColumnSettings.Normalize(columns)), fallbackConfigPath);
+
+    public static void SaveTheme(string path, string theme, string? fallbackConfigPath = null)
+        => SavePreference(path, nameof(UpdaterConfig.Theme), JsonValue.Create(ThemeModes.Normalize(theme)), fallbackConfigPath);
+
+    private static void SavePreference(string path, string name, JsonNode? value, string? fallbackConfigPath)
     {
-        // Change only the view preference: retain saved credentials, unknown
+        // Change only this preference: retain saved credentials, unknown
         // settings and unsaved form edits without decrypting/re-encrypting them.
         string source = File.Exists(path) ? path : fallbackConfigPath ?? path;
         JsonObject config;
@@ -99,11 +107,11 @@ internal static class AppConfigStore
             config = File.Exists(source) ? JsonNode.Parse(File.ReadAllText(source)) as JsonObject
                 ?? throw new JsonException("Die Konfiguration enthält keine Einstellungen.") : new JsonObject();
             foreach (string key in config.Select(property => property.Key)
-                .Where(key => key.Equals(nameof(UpdaterConfig.VisibleHostColumns), StringComparison.OrdinalIgnoreCase)).ToArray())
+                .Where(key => key.Equals(name, StringComparison.OrdinalIgnoreCase)).ToArray())
                 config.Remove(key);
         }
         catch (ArgumentException ex) { throw new JsonException("Die Konfiguration enthält doppelte Einträge.", ex); }
-        config[nameof(UpdaterConfig.VisibleHostColumns)] = JsonSerializer.SerializeToNode(HostColumnSettings.Normalize(columns));
+        config[name] = value;
         // As with a normal config save, keep the host list at the end.
         var hosts = config.Where(property => property.Key.Equals(nameof(UpdaterConfig.Hosts), StringComparison.OrdinalIgnoreCase)).ToArray();
         foreach (var property in hosts) config.Remove(property.Key);
@@ -137,6 +145,7 @@ internal static class AppConfigStore
 
     private static void Validate(UpdaterConfig settings)
     {
+        settings.Theme = ThemeModes.Normalize(settings.Theme);
         if (settings.HttpsPort is < 1 or > 65535) throw new JsonException("HttpsPort muss zwischen 1 und 65535 liegen.");
         if (settings.ExecutionMode is not ("Local" or "LocalAndRemote" or "Remote")) throw new JsonException("Ungültiger Ausführungsmodus in config.json.");
         try { settings.UseBuild = BuildChannels.Normalize(settings.UseBuild); }

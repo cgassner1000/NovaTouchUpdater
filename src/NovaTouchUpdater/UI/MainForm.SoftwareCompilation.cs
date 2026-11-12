@@ -129,7 +129,7 @@ public sealed partial class MainForm
         {
             if (IsDisposed) return;
             if (showSoftwareCompilationWarning is { } show) show(ex.Message);
-            else MessageBox.Show(this, ex.Message, "Softwarepakete kompilieren", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else AppMessageBox.Show(this, ex.Message, "Softwarepakete kompilieren", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 }

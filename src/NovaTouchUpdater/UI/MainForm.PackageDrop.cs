@@ -71,7 +71,7 @@ public sealed partial class MainForm
         {
             if (Disposing || IsDisposed) return;
             if (showPackageDropWarning is { } show) show(ex.Message);
-            else ShowIndividualPackageDialog(() => MessageBox.Show(this, ex.Message, "Update-Pakete", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+            else ShowIndividualPackageDialog(() => AppMessageBox.Show(this, ex.Message, "Update-Pakete", MessageBoxButtons.OK, MessageBoxIcon.Warning));
         }
         finally { packageCancellation = null; loadingPackages = false; if (!Disposing && !IsDisposed) UpdateButtons(); }
     }

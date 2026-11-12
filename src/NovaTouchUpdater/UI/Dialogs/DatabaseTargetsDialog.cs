@@ -7,7 +7,7 @@ internal sealed class DatabaseTargetsDialog : Form
     private readonly TreeView instances = new() { Name = "databaseTargets", Dock = DockStyle.Fill, CheckBoxes = true, HideSelection = false, MinimumSize = new Size(0, 180) };
     private readonly Label status = new() { Name = "selectedTargetCount", AutoSize = true, Dock = DockStyle.Fill };
     private readonly TextBox details = new() { Name = "targetDetails", Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, MinimumSize = new Size(0, 100) };
-    private readonly Button apply = new ModernButton { Name = "applySelectedNamespaces", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.OK, Role = ButtonRole.Primary };
+    private readonly Button apply = new AppButton { Name = "applySelectedNamespaces", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.OK, Role = ButtonRole.Primary };
     private bool changingChecks;
 
     internal static DatabaseTargetsDialog ForSoftwareCompilation(ServicePackHostPlan[] plans) => new(plans,
@@ -36,7 +36,7 @@ internal sealed class DatabaseTargetsDialog : Form
         layout.Controls.Add(new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 0, 3, 10),
             Text = instructions }, 0, 0);
         layout.Controls.Add(status, 0, 1); layout.Controls.Add(instances, 0, 2); layout.Controls.Add(details, 0, 3);
-        var cancel = new ModernButton { Text = "Abbrechen", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.Cancel };
+        var cancel = new AppButton { Text = "Abbrechen", AutoSize = true, Padding = new Padding(12, 7, 12, 7), DialogResult = DialogResult.Cancel };
         var buttons = new WrappingFlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
         buttons.Controls.Add(apply); buttons.Controls.Add(cancel); layout.Controls.Add(buttons, 0, 4);
         Controls.Add(WindowLayout.CreateScrollArea(layout, instances, details));
