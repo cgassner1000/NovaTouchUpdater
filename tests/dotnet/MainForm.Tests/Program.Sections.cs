@@ -8,82 +8,89 @@ internal static partial class Program
         {
             using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
             Populate(form);
-            var fixturePackages = HostUpdateState.Each(UpdateComponents.ZipServices | UpdateComponents.Msi).Select(component =>
+            var fixturePackages = HostUpdateState.Each(UpdateComponents.All).Select(component =>
                 new SoftwarePackage(component, component + "-Update-2026.4.9792.zip", "2026.4.9792",
                     (component & UpdateComponents.Msi) == 0 ? null : new MsiPackageRequest
-                    {
-                        Kind = component.ToString().ToLowerInvariant(), ProductVersion = "2026.4.9792",
-                        PayloadPath = component + "-Update-2026.4.9792.zip"
-                    })).ToArray();
+                    { Kind = component.ToString().ToLowerInvariant(), ProductVersion = "2026.4.9792", PayloadPath = component + "-Update-2026.4.9792.zip" })).ToArray();
             SetField(form, "folderPackages", fixturePackages);
             Call(form, "UseFolderPackages");
-            var fonts = All(form).ToDictionary(c => c, c => c.Font);
+            var fonts = All(form).ToDictionary(control => control, control => control.Font);
             form.Scale(new SizeF(scale, scale));
             foreach (var (control, font) in fonts) control.Font = new Font(font.FontFamily, font.SizeInPoints * scale, font.Style);
             form.MinimumSize = Size.Empty;
-            var settings = All(form).OfType<ExpandableSection>().Single(c => c.Name == "settingsCard");
-            var hosts = All(form).OfType<ExpandableSection>().Single(c => c.Name == "hostsCard");
-            var packages = All(form).Single(c => c.Name == "localUpdateCard");
-            var files = All(form).OfType<ExpandableSection>().Single(c => c.Name == "filesCard");
-            var selectedPackages = All(form).Single(c => c.Name == "selectedPackagesCard");
+            var settings = All(form).OfType<ExpandableSection>().Single(control => control.Name == "settingsCard");
+            var hosts = All(form).OfType<ExpandableSection>().Single(control => control.Name == "hostsCard");
+            var packages = All(form).Single(control => control.Name == "localUpdateCard");
+            var selectedPackages = All(form).Single(control => control.Name == "selectedPackagesCard");
+            var settingsLauncher = (SectionNavigationButton)settings.Launcher!;
+            var hostsLauncher = (SectionNavigationButton)hosts.Launcher!;
+            var tooltips = Field<ToolTip>(form, "updateToolTip");
             var table = Field<DataGridView>(form, "table");
+            Assert(!All(form).Any(control => control.Name == "filesCard" || control.Text.Contains("Update-Dateien Einzeln")),
+                "the removed individual update-files section leaves no hidden selectors behind");
+            Assert(Field<Button>(form, "browseSoftware").Text == "Ordner durchsuchen" &&
+                Field<Button>(form, "browsePackageFiles").Text == "Durchsuchen" && Field<Button>(form, "readPackages").Text == "Pakete aktualisieren",
+                "the installation card distinguishes folder browsing, file browsing and refreshing packages");
             foreach (int width in new[] { 1710, 1000, 640 })
             {
                 form.ClientSize = new Size((int)(width * scale), (int)(980 * scale));
                 foreach (Control control in All(form)) _ = control.Handle;
                 for (int pass = 0; pass < 3; pass++) Layout(form);
                 Call(form, "ApplyColumnWidths");
-                Assert(!settings.Expanded && !hosts.Expanded && settings.Text.EndsWith('▼') && hosts.Text.EndsWith('▼'),
-                    $"settings and remote hosts start collapsed with down arrows ({width}px, {scale:P0})");
-                Assert(packages.Parent == files.Parent && files.Top >= packages.Bottom && files.Top - packages.Bottom <= 30 * scale,
-                    "update files sit directly below installation packages in an independent column");
-                Assert(selectedPackages.Parent == hosts.Parent && selectedPackages.Top >= hosts.Bottom,
-                    "selected packages are listed directly below remote hosts");
+                Assert(!settings.Expanded && !hosts.Expanded && settings.Text == "Einstellungen",
+                    $"settings start closed without an expansion arrow ({width}px, {scale:P0})");
+                Assert(selectedPackages.Parent!.Name == "selectedPackagesColumn" && selectedPackages.Top == 0,
+                    "selected packages start at the top of their own column");
+                Assert(settingsLauncher.Text.Length == 0 && hostsLauncher.Text.Length == 0 &&
+                    tooltips.GetToolTip(settingsLauncher) == "Einstellungen" && tooltips.GetToolTip(hostsLauncher) == "Remote-Hosts" &&
+                    InForm(form, settingsLauncher).Right < InForm(form, packages).Left && hostsLauncher.Top > settingsLauncher.Top,
+                    "the left icon rail has clear tooltips and precedes the package cards");
+                var configuration = settingsLauncher.Parent!.Parent!;
+                var actionBar = Field<Button>(form, "btnScan").Parent!.Parent!;
+                Assert(settingsLauncher.Parent.Bottom <= configuration.Height &&
+                    InForm(form, actionBar).Top >= InForm(form, configuration).Bottom &&
+                    InForm(form, actionBar).Left == InForm(form, configuration).Left && actionBar.Width == configuration.Width,
+                    "the action bar below the configuration area keeps its full width");
                 var packageList = Field<TableLayoutPanel>(form, "selectedPackagesTable");
-                var names = packageList.Controls.Cast<Control>().Where(c => packageList.GetColumn(c) == 0).ToArray();
-                var versions = packageList.Controls.Cast<Control>().Where(c => packageList.GetColumn(c) == 1).ToArray();
-                Assert(names.Length == 7 && versions.Length == 7 && names.All(c => c.Left == names[0].Left) &&
-                    versions.All(c => c.Left == versions[0].Left) && packageList.Controls.Cast<Control>().All(c => c.Bottom <= packageList.Height && c.Right <= packageList.Width),
-                    "all seven packages fit in aligned product and version columns at the current width and scaling");
-                Assert(packageList.Controls.OfType<Button>().Count() == 7 && packageList.Controls.OfType<Button>().All(button =>
-                    Math.Abs(button.Left - packageList.GetControlFromPosition(1, packageList.GetRow(button))!.Right - button.Margin.Left) <= 1),
-                    $"each selected package offers a red remove action directly right of its version at {width}px / {scale:P0}");
+                Assert(packageList.RowCount == 7 && packageList.Controls.OfType<Button>().Count() == 7 &&
+                    packageList.Controls.Cast<Control>().All(control => control.Right <= packageList.Width && control.Bottom <= packageList.Height),
+                    "all seven selected packages and their remove actions remain visible");
+                foreach (string name in new[] { "browseSoftware", "browsePackageFiles", "readPackages" })
+                {
+                    var button = Field<Button>(form, name);
+                    Assert(button.Right <= button.Parent!.ClientSize.Width && button.Bottom <= button.Parent.Height,
+                        $"{name} fits the installation card at {width}px / {scale:P0}");
+                }
                 if (width == 1710 && scale == 1F)
                 {
-                    using var collapsed = new Bitmap(form.Width, form.Height);
-                    form.DrawToBitmap(collapsed, new Rectangle(Point.Empty, collapsed.Size));
-                    collapsed.Save(Path.Combine(TestWorkspace.Artifacts, "main-packages.png"));
+                    using var bitmap = new Bitmap(form.Width, form.Height);
+                    form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "main-packages.png"));
                 }
-                Rectangle tableBefore = InForm(form, table), filesBefore = InForm(form, files);
-                Rectangle settingsBefore = InForm(form, settings);
+                Rectangle tableBefore = InForm(form, table), packagesBefore = InForm(form, packages);
+                Rectangle launcherBefore = InForm(form, settingsLauncher);
                 ClickSection(settings);
-                Assert(settings.Expanded && settings.Text.EndsWith('▲') &&
-                    InForm(form, table) == tableBefore && InForm(form, files) == filesBefore,
-                    "opening settings changes its arrow and overlays content without moving packages or hosts");
-                Assert(form.ClientRectangle.Contains(settings.Bounds), "expanded settings stay within the window");
+                Assert(settings.Expanded && settings.Text == "Einstellungen" && settingsLauncher.Active &&
+                    settings.Left > launcherBefore.Right && settings.Top == launcherBefore.Top && form.ClientRectangle.Contains(settings.Bounds),
+                    "settings open to the right of the active gear without an upward arrow");
+                Assert(InForm(form, table) == tableBefore && InForm(form, packages) == packagesBefore &&
+                    !settings.Bounds.IntersectsWith(InForm(form, hostsLauncher)), "open settings preserve packages, the host table and access to the hosts icon");
                 var source = Field<TextBox>(form, "softwarePath");
                 var destination = Field<TextBox>(form, "txtRemotePath");
-                Assert(source.Parent!.Parent == destination.Parent!.Parent &&
-                    source.Parent.Bottom <= destination.Parent.Top && source.Width > 0 &&
-                    source.Right <= source.Parent.ClientSize.Width,
-                    "the source path remains directly above the destination and fits inside expanded settings");
-                Assert(settings.Parent == form && form.Controls.GetChildIndex(settings) == 0 &&
-                    settings.Location == settingsBefore.Location && settings.Width == settingsBefore.Width && settings.Height > settingsBefore.Height,
-                    "the original card expands at its existing position above the main scroll area");
-                Assert(settings.BorderStyle == BorderStyle.None && !All(settings).OfType<SurfaceCard>().Any(),
-                    "expanded settings have no native rectangular border or nested card");
-                Assert(settings.Bounds.IntersectsWith(InForm(form, hosts)), "expanded settings overlap the following menu header");
+                Assert(source.Parent!.Parent == destination.Parent!.Parent && source.Parent.Bottom <= destination.Parent.Top &&
+                    source.Right <= source.Parent.ClientSize.Width, "the package source fits directly above the destination in settings");
                 foreach (string name in new[] { "chkSkipLocalPackageCopy", "chkSkipRemotePackageCopy", "chkSkipZipTransfer", "chkUploadToZzzSoftware", "chkRestartPosAfterUpdate" })
                 {
                     var toggle = Field<CheckBox>(form, name);
                     Assert(toggle.Right <= toggle.Parent!.ClientSize.Width && toggle.Height >= toggle.GetPreferredSize(new Size(toggle.Width, 0)).Height,
-                        $"{name} stays fully readable inside settings at {width}px / {scale:P0}");
+                        $"{name} remains readable at {width}px / {scale:P0}");
                 }
                 var user = Field<TextBox>(form, "txtUser");
                 user.Text = "test-only-user";
                 var insideClick = Message.Create(user.Handle, 0x0201, IntPtr.Zero, IntPtr.Zero);
-                Assert(!settings.PreFilterMessage(ref insideClick) && settings.Expanded,
-                    "clicking a field inside the popup keeps it open");
+                Assert(!settings.PreFilterMessage(ref insideClick) && settings.Expanded, "clicking a field keeps the popup open");
+                var launcherClick = Message.Create(settingsLauncher.Handle, 0x0201, IntPtr.Zero, IntPtr.Zero);
+                Assert(!settings.PreFilterMessage(ref launcherClick) && settings.Expanded, "the active launcher receives its own toggle click");
                 if (width == 1710 && scale == 1F)
                 {
                     using var popup = new Bitmap(settings.Width, settings.Height);
@@ -91,147 +98,64 @@ internal static partial class Program
                     popup.Save(Path.Combine(TestWorkspace.Artifacts, "settings-popup.png"));
                     using var expanded = new Bitmap(form.Width, form.Height);
                     form.DrawToBitmap(expanded, new Rectangle(Point.Empty, expanded.Size));
-                    // The form stays hidden: DrawToBitmap omits the floating
-                    // child window, so compose its verified bounds explicitly.
-                    Point clientOrigin = form.PointToScreen(Point.Empty) - (Size)form.Location;
                     using (var graphics = Graphics.FromImage(expanded))
                     {
-                        var shadow = form.Controls.Cast<Control>().SingleOrDefault(c => c.Name == settings.Name + "Shadow");
-                        if (shadow is not null)
-                        {
-                            using var halo = new Bitmap(shadow.Width, shadow.Height);
-                            shadow.DrawToBitmap(halo, new Rectangle(Point.Empty, halo.Size));
-                            graphics.DrawImageUnscaled(halo, clientOrigin + (Size)shadow.Location);
-                            using var preview = new Bitmap(shadow.Width, shadow.Height);
-                            using (var previewGraphics = Graphics.FromImage(preview))
-                            {
-                                previewGraphics.Clear(form.BackColor);
-                                previewGraphics.DrawImageUnscaled(halo, Point.Empty);
-                                previewGraphics.DrawImageUnscaled(popup, settings.Location - (Size)shadow.Location);
-                            }
-                            preview.Save(Path.Combine(TestWorkspace.Artifacts, "settings-shadow.png"));
-                        }
-                        graphics.DrawImageUnscaled(popup, clientOrigin + (Size)settings.Location);
+                        Point client = form.PointToScreen(Point.Empty) - (Size)form.Location;
+                        graphics.DrawImageUnscaled(popup, client + (Size)settings.Location);
                     }
                     expanded.Save(Path.Combine(TestWorkspace.Artifacts, "main-sections-open.png"));
                 }
-                ClickSection(settings);
-                ClickSection(settings);
+                ClickSection(settings); ClickSection(settings);
                 Assert(user.Text == "test-only-user" && ((UpdaterConfig)Call(form, "CaptureConfig")!).Username == "test-only-user",
-                    "closing and reopening settings preserves fields and configuration capture");
+                    "closing and reopening settings preserves inputs and configuration capture");
                 ClickSection(hosts);
-                Assert(hosts.Expanded && !settings.Expanded && hosts.Text.EndsWith('▲') && settings.Text.EndsWith('▼'),
-                    "opening remote hosts closes settings and updates both arrows");
-                var save = Field<Button>(form, "btnSaveConfig");
-                var path = Field<TextBox>(form, "txtRemotePath");
-                Assert(hosts.Contains(Field<Button>(form, "btnImport")) && settings.Contains(save) && settings.Contains(path) &&
-                    InForm(form, path).Top < InForm(form, save).Top && !files.Contains(path),
-                    "the destination sits above configuration saving inside settings");
+                Assert(hosts.Expanded && !settings.Expanded && hostsLauncher.Active && !settingsLauncher.Active,
+                    "opening hosts switches the active menu and launcher");
                 var escape = Message.Create(hosts.Handle, 0x0100, (IntPtr)Keys.Escape, IntPtr.Zero);
-                Assert(hosts.PreFilterMessage(ref escape) && !hosts.Expanded, "Escape closes the open section");
+                Assert(hosts.PreFilterMessage(ref escape) && !hosts.Expanded, "Escape closes the open menu");
                 ClickSection(settings);
-                var outsideClick = Message.Create(table.Handle, 0x0201, IntPtr.Zero, IntPtr.Zero);
-                Assert(!settings.PreFilterMessage(ref outsideClick) && !settings.Expanded,
-                    "clicking outside closes the popup and still reaches the clicked control");
-                Assert(InForm(form, table) == tableBefore && InForm(form, files) == filesBefore,
-                    "repeated opening and closing preserves the main layout");
-                ClickSection(files);
-                Assert(files.Expanded && files.Text == "Update-Dateien Einzeln  ▲" && files.Parent == form && !settings.Expanded && !hosts.Expanded,
-                    "individual update files expand as the original card");
-                var removeButtons = Field<Dictionary<UpdateComponents, Button>>(form, "removePackageButtons");
-                Assert(removeButtons.Values.All(button => button.Enabled && button.Left >= 0 && button.Right <= button.Parent!.ClientSize.Width &&
-                    Math.Abs(button.Left - ((TableLayoutPanel)button.Parent).GetControlFromPosition(0, 0)!.Right - button.Margin.Left) <= 1 &&
-                    button.Right <= ((TableLayoutPanel)button.Parent).GetControlFromPosition(2, 0)!.Left),
-                    $"all seven remove actions sit directly after package selectors and before versions at {width}px / {scale:P0}");
-                if (width == 1710 && scale == 1F)
-                {
-                    using var picker = new Form();
-                    _ = picker.Handle;
-                    Func<DialogResult> simulatePicker = () =>
-                    {
-                        typeof(Form).GetMethod("OnDeactivate", Private)!.Invoke(form, [EventArgs.Empty]);
-                        var pickerClick = Message.Create(picker.Handle, 0x0201, IntPtr.Zero, IntPtr.Zero);
-                        var cancelPicker = Message.Create(picker.Handle, 0x0100, (IntPtr)Keys.Escape, IntPtr.Zero);
-                        Assert(files.Expanded && !files.PreFilterMessage(ref pickerClick) && !files.PreFilterMessage(ref cancelPicker) && files.Expanded,
-                            "opening and using a package picker, including Escape, keeps the individual-files section open");
-                        return DialogResult.OK;
-                    };
-                    foreach (SoftwarePackage package in fixturePackages.Take(2))
-                    {
-                        Assert((DialogResult)Call(form, "ShowIndividualPackageDialog", simulatePicker)! == DialogResult.OK,
-                            "the package dialog returns its result without closing the section");
-                        Call(form, "SelectIndividualPackage", package);
-                        Assert(files.Expanded, "selecting a package keeps the section open for the next package");
-                    }
-                    Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == (UpdateComponents.ZipServices | UpdateComponents.Msi),
-                        "successive individual selections retain the other previously selected packages");
-                    _ = Call(form, "ShowIndividualPackageDialog", (Func<DialogResult>)(() => DialogResult.Cancel));
-                    Assert(files.Expanded, "cancelling another file selection also keeps the section open");
-                    try
-                    {
-                        _ = Call(form, "ShowIndividualPackageDialog", (Func<DialogResult>)(() => throw new IOException("Simulated picker error")));
-                    }
-                    catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException is IOException) { }
-                    var outsideFiles = Message.Create(table.Handle, 0x0201, IntPtr.Zero, IntPtr.Zero);
-                    Assert(!files.PreFilterMessage(ref outsideFiles) && !files.Expanded,
-                        "after selecting packages or a picker error, a click outside still closes the section");
-                    ClickSection(files);
-                    ClickSection(files);
-                    Assert(!files.Expanded, "clicking the individual-files heading still closes its section");
-                    ClickSection(files);
-                    Call(form, "UseFolderPackages");
-                    typeof(Button).GetMethod("OnClick", Private)!.Invoke(removeButtons[UpdateComponents.Payment], [EventArgs.Empty]);
-                    Assert(files.Expanded && (UpdateComponents)Call(form, "SelectedUpdateComponents")! == (UpdateComponents.All & ~UpdateComponents.Payment),
-                        "removing a package keeps the individual-files section open");
-                    Call(form, "UseFolderPackages");
-                    using var expandedFiles = new Bitmap(files.Width, files.Height);
-                    files.DrawToBitmap(expandedFiles, new Rectangle(Point.Empty, expandedFiles.Size));
-                    expandedFiles.Save(Path.Combine(TestWorkspace.Artifacts, "individual-files.png"));
-                }
+                var outside = Message.Create(table.Handle, 0x0201, IntPtr.Zero, IntPtr.Zero);
+                Assert(!settings.PreFilterMessage(ref outside) && !settings.Expanded && InForm(form, table) == tableBefore,
+                    "outside clicks close the popup without moving the host table");
                 ClickSection(settings);
-                Assert(!files.Expanded && files.Parent == packages.Parent && InForm(form, files) == filesBefore,
-                    "switching to settings restores the individual-files header in its original column");
                 var ssl = Field<CheckBox>(form, "chkSsl");
                 var port = Field<NumericUpDown>(form, "nHttpsPort");
-                var https = All(settings).OfType<TableLayoutPanel>().Single(c => c.Name == "httpsOptions");
-                port.Value = 6443;
-                ssl.Checked = true;
-                Layout(settings);
-                Assert(https.GetColumnWidths()[1] > 0 && https.GetColumnWidths()[2] > 0 &&
-                    All(settings).Single(c => c.Name == "httpsPortLabel").Text == "Port:", "HTTPS shows the Port label and field");
-                ssl.Checked = false;
-                Layout(settings);
-                Assert(https.GetColumnWidths()[1] == 0 && https.GetColumnWidths()[2] == 0 && port.Value == 6443,
-                    "HTTP hides the complete port input while preserving its value");
+                var https = All(settings).OfType<TableLayoutPanel>().Single(control => control.Name == "httpsOptions");
+                port.Value = 6443; ssl.Checked = true; Layout(settings);
+                Assert(https.GetColumnWidths()[1] > 0 && https.GetColumnWidths()[2] > 0, "HTTPS shows its port input");
+                ssl.Checked = false; Layout(settings);
+                Assert(https.GetColumnWidths()[1] == 0 && https.GetColumnWidths()[2] == 0 && port.Value == 6443, "HTTP hides the port without losing its value");
                 if (width == 1000)
                 {
                     form.ClientSize = new Size((int)(640 * scale), form.ClientSize.Height);
                     for (int pass = 0; pass < 3; pass++) Layout(form);
-                    var anchor = All(form).Single(c => c.Name == "settingsCardPlaceholder");
-                    Assert(settings.Location == InForm(form, anchor).Location && settings.Width == anchor.Width &&
-                        form.ClientRectangle.Contains(settings.Bounds), "an expanded card follows its original header when the layout changes columns");
-                    form.ClientSize = new Size((int)(width * scale), form.ClientSize.Height);
+                    Assert(settings.Left > InForm(form, settingsLauncher).Right && form.ClientRectangle.Contains(settings.Bounds),
+                        "the menu stays beside its icon when the window narrows");
+                    form.ClientSize = new Size((int)(1000 * scale), form.ClientSize.Height);
                     for (int pass = 0; pass < 3; pass++) Layout(form);
+                    Assert(((TableLayoutPanel)configuration).ColumnCount == 3 && InForm(form, selectedPackages).Top == InForm(form, packages).Top,
+                        "restoring a wide window restores all three configuration columns");
                 }
                 settings.Collapse();
             }
         }
         var closingForm = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
-        var closingSection = All(closingForm).OfType<ExpandableSection>().Single(c => c.Name == "filesCard");
-        var payment = Field<Button>(closingForm, "btnPayment");
-        try { closingSection.Expand(); }
-        finally { closingForm.Dispose(); }
-        Assert(closingSection.IsDisposed && payment.IsDisposed, "closing the window also disposes an expanded card and its content");
+        var closingSection = All(closingForm).OfType<ExpandableSection>().Single(control => control.Name == "settingsCard");
+        var input = Field<TextBox>(closingForm, "txtUser");
+        closingSection.Expand(); closingForm.Dispose();
+        Assert(closingSection.IsDisposed && input.IsDisposed, "closing the window disposes an open settings menu and its content");
     }
 
     private static Rectangle InForm(Form form, Control control)
     {
         Point origin = Point.Empty;
-        for (Control? current = control; current is not null && current != form; current = current.Parent)
-            origin.Offset(current.Location);
+        for (Control? current = control; current is not null && current != form; current = current.Parent) origin.Offset(current.Location);
         return new Rectangle(origin, control.ClientSize);
     }
 
-    private static void ClickSection(ExpandableSection section) =>
-        typeof(ExpandableSection).GetMethod("OnClick", Private)!.Invoke(section, [EventArgs.Empty]);
+    private static void ClickSection(ExpandableSection section)
+    {
+        if (section.Launcher is Button launcher) typeof(Button).GetMethod("OnClick", Private)!.Invoke(launcher, [EventArgs.Empty]);
+        else typeof(ExpandableSection).GetMethod("OnClick", Private)!.Invoke(section, [EventArgs.Empty]);
+    }
 }

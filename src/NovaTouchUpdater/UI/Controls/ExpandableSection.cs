@@ -7,11 +7,15 @@ namespace NovaTouchUpdater;
 internal sealed class ExpandableSection : Panel, IMessageFilter
 {
     private readonly string title;
+    private readonly bool showExpansionIndicator;
     private readonly SectionHeader header = new();
     private readonly Panel body = new() { AutoScroll = true, Visible = false, BorderStyle = BorderStyle.None };
     private readonly TableLayoutPanel content;
     private Control? overlayOwner;
     private Form? ownerForm;
+    private Control? flyoutAnchor;
+    private int flyoutWidth;
+    private readonly List<Control> anchorParents = [];
     private Panel? placeholder;
     private SectionShadow? shadow;
     private DockStyle collapsedDock;
@@ -21,6 +25,7 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
     private int dismissalSuspensions;
 
     internal bool Expanded { get; private set; }
+    internal Control? Launcher => flyoutAnchor;
     internal event EventHandler? ExpandedChanged;
 
     internal IDisposable SuspendDismissal()
@@ -29,9 +34,10 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
         return new DismissalScope(this);
     }
 
-    internal ExpandableSection(string title, TableLayoutPanel content)
+    internal ExpandableSection(string title, TableLayoutPanel content, bool showExpansionIndicator = true)
     {
         this.title = title;
+        this.showExpansionIndicator = showExpansionIndicator;
         this.content = content;
         Dock = DockStyle.Top;
         AutoSize = true;
@@ -59,12 +65,24 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
 
     public override Size GetPreferredSize(Size proposedSize) => header.GetPreferredSize(proposedSize);
 
-    internal void AttachOverlay(Control owner)
+    internal void AttachOverlay(Control owner, Control? anchor = null, int preferredWidth = 660)
     {
         overlayOwner = owner;
+        flyoutAnchor = anchor;
+        flyoutWidth = preferredWidth;
         owner.SizeChanged += OwnerSizeChanged;
         ownerForm = owner as Form;
         if (ownerForm is not null) ownerForm.Deactivate += OwnerDeactivated;
+        if (anchor is null) return;
+        Visible = false;
+        anchor.LocationChanged += AnchorChanged;
+        anchor.SizeChanged += AnchorChanged;
+        for (Control? parent = anchor.Parent; parent is not null && parent != owner; parent = parent.Parent)
+        {
+            anchorParents.Add(parent);
+            parent.Layout += ParentLayout;
+            if (parent is ScrollableControl scroll) scroll.Scroll += AnchorScrolled;
+        }
     }
 
     internal void Expand()
@@ -76,7 +94,8 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
         var cell = table?.GetCellPosition(this) ?? default;
         int columns = table?.GetColumnSpan(this) ?? 1, rows = table?.GetRowSpan(this) ?? 1;
         collapsedDock = Dock;
-        placeholder = new Panel { Name = Name + "Placeholder", Bounds = Bounds, Dock = Dock, Anchor = Anchor, Margin = Margin, TabStop = false };
+        placeholder = new Panel { Name = Name + "Placeholder", Bounds = Bounds, Dock = Dock, Anchor = Anchor, Margin = Margin,
+            TabStop = false, Visible = flyoutAnchor is null };
         moving = true;
         parent.SuspendLayout();
         try
@@ -94,6 +113,7 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
             parent.Controls.SetChildIndex(placeholder, index);
             overlayOwner.Controls.Add(this);
             Expanded = true;
+            Visible = true;
             body.Visible = true;
             UpdateHeader();
         }
@@ -105,6 +125,7 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
         PositionExpandedCard();
         BringToFront();
         Application.AddMessageFilter(this);
+        if (flyoutAnchor is not null && header.CanFocus) header.Focus();
     }
 
     internal void Collapse(bool restoreFocus = false)
@@ -115,6 +136,7 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
         shadow?.Dispose();
         shadow = null;
         moving = true;
+        if (flyoutAnchor is not null) Visible = false;
         body.Visible = false;
         UpdateHeader();
         if (placeholder?.Parent is { IsDisposed: false, Disposing: false } parent)
@@ -149,7 +171,8 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
         placeholder = null;
         moving = false;
         PerformLayout();
-        if (restoreFocus && header.CanFocus) header.Focus();
+        Control focus = flyoutAnchor ?? header;
+        if (restoreFocus && focus.CanFocus) focus.Focus();
         ExpandedChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -162,24 +185,34 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
 
     private void UpdateHeader()
     {
-        Text = header.Text = title + (Expanded ? "  ▲" : "  ▼");
+        Text = header.Text = title + (showExpansionIndicator ? Expanded ? "  ▲" : "  ▼" : "");
         header.AccessibleDescription = Expanded ? "Geöffnet. Zum Zuklappen klicken." : "Geschlossen. Zum Aufklappen klicken.";
         header.ForeColor = Expanded ? UiTheme.Accent : UiTheme.Text;
     }
 
     private void PositionExpandedCard()
     {
-        if (positioning || moving || !Expanded || placeholder is null || overlayOwner is null || overlayOwner.IsDisposed) return;
+        if (positioning || moving || !Expanded || placeholder is null || overlayOwner is null || overlayOwner.IsDisposed || overlayOwner.Disposing) return;
         positioning = true;
         try
         {
             // Hidden controls can have their HWND parked during reparenting.
             // Managed locations also work there and include scroll offsets.
-            Point origin = placeholder.Location;
-            for (Control? parent = placeholder.Parent; parent is not null && parent != overlayOwner; parent = parent.Parent)
+            Control anchor = flyoutAnchor ?? placeholder;
+            Point origin = anchor.Location;
+            for (Control? parent = anchor.Parent; parent is not null && parent != overlayOwner; parent = parent.Parent)
                 origin.Offset(parent.Location);
-            int width = Math.Min(placeholder.Width, Math.Max(1, overlayOwner.ClientSize.Width - origin.X));
+            float scale = Math.Max(DeviceDpi / 96F, Font.SizeInPoints / 9.5F);
+            if (flyoutAnchor is not null)
+            {
+                origin.X += anchor.Width + (int)Math.Round(10 * scale);
+                origin.X = Math.Clamp(origin.X, 0, Math.Max(0, overlayOwner.ClientSize.Width - 1));
+                origin.Y = Math.Max(0, origin.Y);
+            }
+            int width = Math.Min(flyoutAnchor is null ? placeholder.Width : (int)Math.Round(flyoutWidth * scale),
+                Math.Max(1, overlayOwner.ClientSize.Width - origin.X - (flyoutAnchor is null ? 0 : (int)(12 * scale))));
             int headerHeight = header.GetPreferredSize(new Size(width, 0)).Height;
+            origin.Y = Math.Min(origin.Y, Math.Max(0, overlayOwner.ClientSize.Height - headerHeight - 6));
             int inset = Padding.Left;
             int contentWidth = Math.Max(1, width - inset * 2 - SystemInformation.VerticalScrollBarWidth);
             content.Width = contentWidth;
@@ -250,6 +283,7 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
     private void AnchorChanged(object? sender, EventArgs e) => PositionExpandedCard();
     private void ParentLayout(object? sender, LayoutEventArgs e) => PositionExpandedCard();
     private void OwnerSizeChanged(object? sender, EventArgs e) => PositionExpandedCard();
+    private void AnchorScrolled(object? sender, ScrollEventArgs e) => PositionExpandedCard();
     private void OwnerDeactivated(object? sender, EventArgs e)
     {
         if (dismissalSuspensions == 0) Collapse();
@@ -269,6 +303,7 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
             Control? target = Control.FromHandle(m.HWnd);
             bool inside = target is not null ? target == this || Contains(target)
                 : RectangleToScreen(ClientRectangle).Contains(Cursor.Position);
+            if (flyoutAnchor is not null && target is not null && (target == flyoutAnchor || flyoutAnchor.Contains(target))) inside = true;
             if (!inside && !HasOpenCombo(this)) Collapse();
         }
         return false;
@@ -295,6 +330,16 @@ internal sealed class ExpandableSection : Panel, IMessageFilter
             Application.RemoveMessageFilter(this);
             if (overlayOwner is not null) overlayOwner.SizeChanged -= OwnerSizeChanged;
             if (ownerForm is not null) ownerForm.Deactivate -= OwnerDeactivated;
+            if (flyoutAnchor is not null)
+            {
+                flyoutAnchor.LocationChanged -= AnchorChanged;
+                flyoutAnchor.SizeChanged -= AnchorChanged;
+            }
+            foreach (Control ancestor in anchorParents)
+            {
+                ancestor.Layout -= ParentLayout;
+                if (ancestor is ScrollableControl scroll) scroll.Scroll -= AnchorScrolled;
+            }
             if (placeholder?.Parent is { } parent) parent.Layout -= ParentLayout;
             placeholder?.Dispose();
             shadow?.Dispose();

@@ -128,11 +128,10 @@ internal static partial class Program
             "folder discovery selects and lists all seven components, including nested MSIs");
         void AssertFullVersionDisplayed(string selection, string version = "2026.4.9800.12345")
         {
-            var controls = Field<Dictionary<UpdateComponents, (Button Button, Label Label)>>(form, "msiControls");
             var table = Field<TableLayoutPanel>(form, "selectedPackagesTable");
-            Assert(controls[UpdateComponents.Ntc].Label.Text == "NTC Target: " + version &&
+            Assert(msiPackages[UpdateComponents.Ntc].ProductVersion == version &&
                 table.Controls.OfType<Label>().Any(label => label.Text == version) && list.Text.Contains(version),
-                selection + " displays all four fields in both selected packages and the individual update-file label");
+                selection + " displays the full package version in the selected packages overview");
         }
         AssertFullVersionDisplayed("folder selection");
         string individual = Path.Combine(root, "nt.payment_1.0.0.zip");

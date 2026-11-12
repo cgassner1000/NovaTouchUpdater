@@ -54,9 +54,6 @@ public sealed partial class MainForm : Form
     private readonly Label lblFile = new();
     private readonly Label lblSummary = new();
     private readonly Label lblSelection = new() { Name = "hostSelection", AutoSize = true, Anchor = AnchorStyles.Left };
-    private readonly Label lblPayment = new();
-    private readonly Label lblFiscal = new();
-    private readonly Label lblServerSuite = new();
     private readonly TextBox txtUser = new();
     private readonly TextBox txtPassword = new();
     private readonly TextBox txtRemotePath = new();
@@ -77,9 +74,6 @@ public sealed partial class MainForm : Form
     private readonly Button btnImport = Button("Hostliste laden");
     private readonly Button btnEditHosts = Button("Host bearbeiten");
     private readonly Button btnSaveConfig = Button("Konfiguration speichern");
-    private readonly Button btnPayment = Button("Payment-ZIP wählen");
-    private readonly Button btnFiscal = Button("Fiscal-ZIP wählen");
-    private readonly Button btnServerSuite = Button("Server-Suite-Paket wählen");
     private readonly Button btnWinRm = new AppButton { Text = "WinRM\nkonfigurieren", AccessibleName = "WinRM konfigurieren", AutoSize = false,
         Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private readonly Button btnScan = Button("Versionen prüfen");
@@ -436,12 +430,14 @@ public sealed partial class MainForm : Form
             else BeginInvoke(() => AppMessageBox.Show(this, "Erweiterte Einstellungen aktiviert", "Erweitert", MessageBoxButtons.OK, MessageBoxIcon.Information));
         };
 
-        // Keep package cards in their own column, independent of the menu headers.
+        // The icon rail belongs only to the configuration area above the actions.
         var configuration = new TableLayoutPanel
         {
+            Name = "configuration",
             Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2, RowCount = 1, Margin = new Padding(0, 0, 0, 14)
+            ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 0, 0, 14)
         };
+        configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
         configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -475,26 +471,18 @@ public sealed partial class MainForm : Form
         txtRemotePath.Margin = new Padding(3, 2, 8, 2);
         targetPath.Controls.Add(txtRemotePath, 1, 0);
         var localCard = CreateLocalUpdateCard();
-        localCard.Margin = new Padding(0, 0, 0, 12);
-        var hostCard = new ExpandableSection("Remote-Hosts", Stack(hostList, lblFile));
+        localCard.Margin = Padding.Empty;
+        var hostCard = new ExpandableSection("Remote-Hosts", Stack(hostList, lblFile), showExpansionIndicator: false);
         hostCard.Name = "hostsCard";
         hostCard.Margin = Padding.Empty;
-        var filesContent = Stack(CreatePackageSelectionGrid(), FlowRow(useFolderPackages));
         useFolderPackages.Click += (_, _) => UseFolderPackages();
-        var files = individualFilesSection = new ExpandableSection("Update-Dateien Einzeln", filesContent);
-        files.Name = "filesCard";
-        EnablePackageDrop(files);
-        files.Margin = Padding.Empty;
-        var packageColumn = Stack(localCard, files);
+        var packageColumn = Stack(localCard);
         packageColumn.Name = "packageColumn";
         packageColumn.Margin = new Padding(0, 0, 8, 0);
-        configuration.Controls.Add(packageColumn, 0, 0);
+        configuration.Controls.Add(packageColumn, 1, 0);
         lblFile.Text = "Keine Hostliste";
-        lblPayment.Text = "Payment Target: –";
-        lblFiscal.Text = "Fiscal Target: –";
-        lblServerSuite.Text = "Server Suite Target: –";
 
-        // Login-Daten rechts in zwei eigenen Zeilen, damit nichts abgeschnitten wird.
+        // Login-Daten in zwei eigenen Zeilen, damit nichts abgeschnitten wird.
         var login = new TableLayoutPanel
         {
             Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
@@ -600,18 +588,30 @@ public sealed partial class MainForm : Form
             login, optionBar, chkUploadToZzzSoftware, chkCompileAfterInstallation, chkForceUpdate, chkRestartPosAfterUpdate, CreateSoftwareSourcePath(), targetPath,
             SettingsDivider("LOKAL"), chkSkipLocalPackageCopy,
             SettingsDivider("REMOTE"), chkSkipRemotePackageCopy, chkSkipZipTransfer, FlowRow(btnSaveConfig));
-        var settings = new ExpandableSection("Einstellungen", settingsContent);
+        var settings = settingsSection = new ExpandableSection("Einstellungen", settingsContent, showExpansionIndicator: false);
         settings.Name = "settingsCard";
-        settings.Margin = new Padding(0, 0, 0, 12);
-        var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList, selectedPackagesTable, additionalFilesTable));
+        settings.Visible = hostCard.Visible = false;
+        var settingsLauncher = new SectionNavigationButton("Einstellungen", SectionNavigationIcon.Settings) { Name = "settingsLauncher" };
+        var hostsLauncher = new SectionNavigationButton("Remote-Hosts", SectionNavigationIcon.RemoteHosts) { Name = "hostsLauncher", Margin = Padding.Empty };
+        updateToolTip.SetToolTip(settingsLauncher, "Einstellungen");
+        updateToolTip.SetToolTip(hostsLauncher, "Remote-Hosts");
+        settingsLauncher.Click += (_, _) => { if (settings.Expanded) settings.Collapse(restoreFocus: true); else settings.Expand(); };
+        hostsLauncher.Click += (_, _) => { if (hostCard.Expanded) hostCard.Collapse(restoreFocus: true); else hostCard.Expand(); };
+        settings.ExpandedChanged += (_, _) => settingsLauncher.Active = settings.Expanded;
+        hostCard.ExpandedChanged += (_, _) => hostsLauncher.Active = hostCard.Expanded;
+        var navigation = Stack(settingsLauncher, hostsLauncher, settings, hostCard);
+        navigation.Name = "configurationNavigation";
+        navigation.Margin = new Padding(0, 0, 12, 0);
+        configuration.Controls.Add(navigation, 0, 0);
+        var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList, selectedPackagesTable, additionalFilesTable, FlowRow(useFolderPackages)));
         selectedPackagesCard.Name = "selectedPackagesCard";
-        selectedPackagesCard.Margin = new Padding(0, 12, 0, 0);
-        var menuColumn = Stack(settings, hostCard, selectedPackagesCard);
-        menuColumn.Name = "menuColumn";
-        menuColumn.Margin = new Padding(8, 0, 0, 0);
-        configuration.Controls.Add(menuColumn, 1, 0);
-        localCard.TabIndex = 0; files.TabIndex = 1; settings.TabIndex = 0; hostCard.TabIndex = 1;
-        ExpandableSection[] expandableSections = [settings, hostCard, files];
+        selectedPackagesCard.Margin = Padding.Empty;
+        var selectedColumn = Stack(selectedPackagesCard);
+        selectedColumn.Name = "selectedPackagesColumn";
+        selectedColumn.Margin = new Padding(8, 0, 0, 0);
+        configuration.Controls.Add(selectedColumn, 2, 0);
+        localCard.TabIndex = 0; settings.TabIndex = 0; hostCard.TabIndex = 1;
+        ExpandableSection[] expandableSections = [settings, hostCard];
         foreach (var section in expandableSections)
             section.ExpandedChanged += (_, _) =>
             {
@@ -626,18 +626,20 @@ public sealed partial class MainForm : Form
             if (needsStack == stacked) return;
             stacked = needsStack;
             configuration.SuspendLayout();
-            configuration.ColumnCount = stacked ? 1 : 2;
+            configuration.ColumnCount = stacked ? 2 : 3;
             configuration.RowCount = stacked ? 2 : 1;
             configuration.ColumnStyles.Clear();
+            configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64 * scale));
             configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, stacked ? 100 : 55));
             if (!stacked) configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
             configuration.RowStyles.Clear();
             configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             if (stacked) configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            configuration.SetCellPosition(packageColumn, new TableLayoutPanelCellPosition(0, stacked ? 1 : 0));
-            configuration.SetCellPosition(menuColumn, new TableLayoutPanelCellPosition(stacked ? 0 : 1, 0));
+            configuration.SetRowSpan(navigation, stacked ? 2 : 1);
+            configuration.SetCellPosition(packageColumn, new TableLayoutPanelCellPosition(1, stacked ? 1 : 0));
+            configuration.SetCellPosition(selectedColumn, new TableLayoutPanelCellPosition(stacked ? 1 : 2, 0));
             packageColumn.Margin = stacked ? Padding.Empty : new Padding(0, 0, 8, 0);
-            menuColumn.Margin = stacked ? new Padding(0, 0, 0, 12) : new Padding(8, 0, 0, 0);
+            selectedColumn.Margin = stacked ? new Padding(0, 0, 0, 12) : new Padding(8, 0, 0, 0);
             configuration.ResumeLayout(true);
         };
 
@@ -821,9 +823,6 @@ public sealed partial class MainForm : Form
         btnImport.Click += (_, _) => LoadHosts();
         btnSaveConfig.Click += (_, _) => SaveConfig();
         btnEditHosts.Click += (_, _) => EditHosts();
-        btnPayment.Click += (_, _) => ChooseZip("payment");
-        btnFiscal.Click += (_, _) => ChooseZip("fiscal");
-        btnServerSuite.Click += (_, _) => ChooseServerSuite();
         btnWinRm.Click += (_, _) =>
         {
             HostState[] targets = SelectedRemoteHosts();
@@ -864,9 +863,8 @@ public sealed partial class MainForm : Form
         var scrollArea = WindowLayout.CreateScrollArea(main, table);
         scrollArea.Name = "mainScrollArea";
         Controls.Add(scrollArea);
-        settings.AttachOverlay(this);
-        hostCard.AttachOverlay(this);
-        files.AttachOverlay(this);
+        settings.AttachOverlay(this, settingsLauncher);
+        hostCard.AttachOverlay(this, hostsLauncher, preferredWidth: 480);
     }
 
     private SurfaceCard Section(string title, TableLayoutPanel content)
@@ -890,26 +888,6 @@ public sealed partial class MainForm : Form
         card.AutoSize = true;
         card.ResumeLayout(true);
         return card;
-    }
-
-    private static Control PanelRow(Button btn, Label lbl)
-    {
-        var pnl = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 2, RowCount = 1, Margin = Padding.Empty
-        };
-        pnl.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        pnl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        pnl.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        btn.Margin = new Padding(0, 4, 0, 4);
-        lbl.AutoEllipsis = true; lbl.AutoSize = false; lbl.Size = Size.Empty;
-        lbl.Dock = DockStyle.Fill;
-        lbl.Margin = new Padding(8, 0, 0, 0);
-        lbl.TextAlign = ContentAlignment.MiddleLeft;
-        lbl.ForeColor = Color.FromArgb(85, 98, 115);
-        pnl.Controls.Add(btn, 0, 0); pnl.Controls.Add(lbl, 1, 0);
-        return pnl;
     }
 
     private void LoadHosts()
@@ -1092,28 +1070,6 @@ public sealed partial class MainForm : Form
         }
     }
 
-    private static readonly Regex ZipFormat = new(@"^nt\.(payment|fiscal)_(\d+(?:\.\d+){1,3}).*\.zip$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private void ChooseZip(string kind)
-    {
-        using OpenFileDialog dialog = new() { Filter = "ZIP (*.zip)|*.zip", Title = "Update-ZIP auswählen" };
-        if (ShowIndividualPackageDialog(() => dialog.ShowDialog(this)) != DialogResult.OK) return;
-        Match m = ZipFormat.Match(Path.GetFileName(dialog.FileName));
-        if (!m.Success || !m.Groups[1].Value.Equals(kind, StringComparison.OrdinalIgnoreCase))
-        {
-            ShowIndividualPackageDialog(() => AppMessageBox.Show(this, $"Ungültiger ZIP-Dateiname. Erwartet: nt.{kind}_VERSION*.zip", "ZIP-Datei", MessageBoxButtons.OK, MessageBoxIcon.Warning));
-            return;
-        }
-        SelectIndividualPackage(new SoftwarePackage(kind == "payment" ? UpdateComponents.Payment : UpdateComponents.Fiscal,
-            dialog.FileName, m.Groups[2].Value));
-    }
-
-    private void ChooseServerSuite()
-    {
-        using OpenFileDialog dialog = CreateServerSuiteFileDialog();
-        if (ShowIndividualPackageDialog(() => dialog.ShowDialog(this)) != DialogResult.OK) return;
-        TrySelectServerSuitePackage(dialog.FileName);
-    }
-
     internal static OpenFileDialog CreateServerSuiteFileDialog() => new()
     {
         Filter = "Server-Suite-Pakete (*.exe;*.zip)|*.exe;*.zip|Server-Suite-Setup (*.exe)|*.exe|Server-Suite-ZIP (*.zip)|*.zip",
@@ -1135,7 +1091,7 @@ public sealed partial class MainForm : Form
         catch (Exception ex) when (ex is InvalidDataException or IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
         {
             if (showWarning is not null) showWarning(ex.Message);
-            else ShowIndividualPackageDialog(() => AppMessageBox.Show(this, ex.Message,
+            else ShowPackageDialog(() => AppMessageBox.Show(this, ex.Message,
                 "Server-Suite-Update", MessageBoxButtons.OK, MessageBoxIcon.Warning));
             return false;
         }
@@ -2217,7 +2173,7 @@ public sealed partial class MainForm : Form
         btnAdministrator.Enabled = idle;
         updateNotice.Enabled = CanUpdateApplication;
         btnImport.Enabled = btnEditHosts.Enabled = idle && Mode != UpdateExecutionMode.Local; btnSaveConfig.Enabled = idle;
-        btnPayment.Enabled = idle; btnFiscal.Enabled = idle; btnServerSuite.Enabled = idle;
+
         btnSelectAll.Enabled = btnClearSelection.Enabled = idle && hosts.Count > 0;
         lblSelection.Text = $"{selected.Length} von {ExecutionHosts().Count()} ausgewählt";
         if (table.Columns.Contains("include")) table.Columns["include"].ReadOnly = !idle;
@@ -2252,16 +2208,10 @@ public sealed partial class MainForm : Form
         chkUploadToZzzSoftware.Enabled = idle;
         chkRestartPosAfterUpdate.Enabled = idle;
         txtUser.Enabled = txtPassword.Enabled = idle; statusFilter.Enabled = idle;
-        executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = readPackages.Enabled = idle;
+        executionMode.Enabled = softwarePath.Enabled = browseSoftware.Enabled = browsePackageFiles.Enabled = readPackages.Enabled = idle;
+        useFolderPackages.Visible = individualPackageSelection && folderPackages.Length > 0;
         useFolderPackages.Enabled = idle && individualPackageSelection && folderPackages.Length > 0;
-        foreach (var controls in msiControls.Values) controls.Button.Enabled = idle;
-        UpdateComponents selectedPackages = SelectedUpdateComponents();
-        foreach (var (component, remove) in removePackageButtons)
-        {
-            bool loaded = (selectedPackages & component) != UpdateComponents.None;
-            remove.Visible = loaded;
-            remove.Enabled = idle && loaded;
-        }
+
         foreach (Button remove in selectedPackagesTable.Controls.OfType<Button>()) remove.Enabled = idle;
         foreach (Button remove in additionalFilesTable.Controls.OfType<Button>()) remove.Enabled = idle;
         foreach (var drop in shellPackageDrops) drop.Enabled = idle && !connectionClosing;

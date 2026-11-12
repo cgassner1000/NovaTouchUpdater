@@ -39,13 +39,10 @@ public sealed partial class MainForm
         if (!CanDropPackages) return;
         string[] files = paths.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (files.Length == 0) return;
-        UpdateComponents components = UpdateComponents.All;
-        for (Control? parent = surface; parent is not null; parent = parent.Parent)
-            if (parent.Tag is UpdateComponents component) { components = component; break; }
-        packageDropTask = LoadDroppedPackagesAsync(files, components);
+        packageDropTask = LoadPackageFilesAsync(files);
     }
 
-    private async Task LoadDroppedPackagesAsync(string[] paths, UpdateComponents components)
+    private async Task LoadPackageFilesAsync(string[] paths)
     {
         if (!CanDropPackages) return;
         loadingPackages = true;
@@ -57,22 +54,33 @@ public sealed partial class MainForm
             SoftwareDropResult result = await Task.Run(() => packageCatalog.ReadFilesAsync(paths, ct.Token), ct.Token);
             ct.Token.ThrowIfCancellationRequested();
             foreach (string warning in result.Warnings) Log("SYSTEM", "PAKETE: " + warning);
-            SoftwarePackage[] packages = result.Packages.Where(package => (package.Component & components) != 0).ToArray();
+            SoftwarePackage[] packages = result.Packages;
             if (packages.Length == 0 && result.AdditionalFiles.Length == 0)
-                throw new InvalidDataException(components == UpdateComponents.All ? "Keine lesbaren Dateien zum Hinzufügen gefunden. Ordner werden nicht übernommen." :
-                    "Die abgelegten Dateien enthalten kein Update-Paket für " + HostUpdateState.Label(components) + ".");
+            {
+                if (result.Rejections.Length == 0)
+                    throw new InvalidDataException("Keine lesbaren Dateien zum Hinzufügen gefunden. Ordner werden nicht übernommen.");
+                packageStatus.Text = "Keine Dateien hinzugefügt. Für nt.payment und nt.fiscal werden ZIP-Pakete benötigt.";
+                ShowPackageWarning(string.Join(Environment.NewLine, result.Rejections));
+                return;
+            }
             foreach (SoftwarePackage package in packages) SelectIndividualPackage(package);
             AddAdditionalFiles(result.AdditionalFiles);
-            packageStatus.Text = $"{packages.Length} Paket(e), {result.AdditionalFiles.Length} zusätzliche Datei(en) per DragDrop hinzugefügt." +
+            packageStatus.Text = $"{packages.Length} Paket(e), {result.AdditionalFiles.Length} zusätzliche Datei(en) hinzugefügt." +
                 (result.Warnings.Length == 0 ? "" : $" {result.Warnings.Length} Hinweis(e) (Details im Protokoll).");
+            if (result.Rejections.Length > 0) ShowPackageWarning(string.Join(Environment.NewLine, result.Rejections));
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             if (Disposing || IsDisposed) return;
-            if (showPackageDropWarning is { } show) show(ex.Message);
-            else ShowIndividualPackageDialog(() => AppMessageBox.Show(this, ex.Message, "Update-Pakete", MessageBoxButtons.OK, MessageBoxIcon.Warning));
+            ShowPackageWarning(ex.Message);
         }
         finally { packageCancellation = null; loadingPackages = false; if (!Disposing && !IsDisposed) UpdateButtons(); }
+    }
+
+    private void ShowPackageWarning(string message)
+    {
+        if (showPackageDropWarning is { } show) show(message);
+        else ShowPackageDialog(() => AppMessageBox.Show(this, message, "Update-Pakete", MessageBoxButtons.OK, MessageBoxIcon.Warning));
     }
 }

@@ -17,27 +17,27 @@ internal static partial class Program
         using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
         HostState[] hosts = Populate(form);
         SetField(form, "folderPackages", packages);
-        var buttons = Field<Dictionary<UpdateComponents, Button>>(form, "removePackageButtons");
+
         var summary = Field<TableLayoutPanel>(form, "selectedPackagesTable");
         Button SummaryRemove(UpdateComponents component) => summary.Controls.OfType<Button>().Single(button => Equals(button.Tag, component));
-        foreach (bool fromSummary in new[] { false, true })
+
         foreach (SoftwarePackage package in packages)
         {
             Call(form, "UseFolderPackages");
-            Assert(buttons.Count == 7 && buttons.Values.All(button => button.Enabled),
-                "each loaded component offers removal even while the individual-files section is collapsed");
+            Assert(summary.RowCount == 7 && summary.Controls.OfType<Button>().All(button => button.Enabled),
+                "each loaded component offers removal in the selected packages overview");
             SetField(form, "paymentHash", "payment-hash");
             SetField(form, "fiscalHash", "fiscal-hash");
             SetField(form, "serverSuiteHash", "suite-hash");
             var priorUpdate = new HostUpdateState(UpdateComponents.All) { DatabaseUploadCompleted = true, SuccessfulPosUploadInRun = true };
             hosts[0].Updates = priorUpdate;
-            Button remove = fromSummary ? SummaryRemove(package.Component) : buttons[package.Component];
+            Button remove = SummaryRemove(package.Component);
             typeof(Button).GetMethod("OnClick", Private)!.Invoke(remove, [EventArgs.Empty]);
             UpdateComponents expected = UpdateComponents.All & ~package.Component;
             Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == expected &&
                 summary.RowCount == 6 && summary.Controls.OfType<Button>().Count() == 6 &&
-                summary.Controls.OfType<Button>().All(button => !Equals(button.Tag, package.Component)) && !buttons[package.Component].Enabled,
-                package.Component + " removal from " + (fromSummary ? "the summary" : "individual files") + " immediately updates both views and retains the other packages");
+                summary.Controls.OfType<Button>().All(button => !Equals(button.Tag, package.Component)),
+                package.Component + " removal from " + "the summary" + " immediately updates the selection and retains the other packages");
             var request = (WorkerRequest)Call(form, "Request", "update", new HostState { Host = "LOCALHOST" }, expected)!;
             Assert(request.PaymentZip == (package.Component == UpdateComponents.Payment ? "" : packages.Single(p => p.Component == UpdateComponents.Payment).Path) &&
                 request.FiscalZip == (package.Component == UpdateComponents.Fiscal ? "" : packages.Single(p => p.Component == UpdateComponents.Fiscal).Path) &&
@@ -57,7 +57,7 @@ internal static partial class Program
             Assert(originalFiles.All(file => File.ReadAllBytes(file.Key).SequenceEqual(file.Value)),
                 "all source files, including a ZIP shared by multiple products, remain byte-for-byte unchanged");
             Call(form, "SelectIndividualPackage", package);
-            Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.All && buttons.Values.All(button => button.Enabled),
+            Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.All && summary.Controls.OfType<Button>().All(button => button.Enabled),
                 "an individually reselected package is added back without changing the others");
         }
         Call(form, "UseFolderPackages");
@@ -65,25 +65,25 @@ internal static partial class Program
         {
             SetField(form, state, true);
             Call(form, "UpdateButtons");
-            Assert(buttons.Values.Concat(summary.Controls.OfType<Button>()).All(button => !button.Enabled), "package removal in both views is disabled during " + state);
-            typeof(Button).GetMethod("OnClick", Private)!.Invoke(buttons[UpdateComponents.Payment], [EventArgs.Empty]);
+            Assert(summary.Controls.OfType<Button>().All(button => !button.Enabled), "package removal is disabled during " + state);
+            typeof(Button).GetMethod("OnClick", Private)!.Invoke(SummaryRemove(UpdateComponents.Payment), [EventArgs.Empty]);
             typeof(Button).GetMethod("OnClick", Private)!.Invoke(SummaryRemove(UpdateComponents.Fiscal), [EventArgs.Empty]);
             Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.All,
                 "active work keeps the captured package selection unchanged");
             SetField(form, state, false);
         }
         Call(form, "UpdateButtons");
-        foreach (Button button in buttons.Values)
-            typeof(Button).GetMethod("OnClick", Private)!.Invoke(button, [EventArgs.Empty]);
+        foreach (SoftwarePackage package in packages)
+            typeof(Button).GetMethod("OnClick", Private)!.Invoke(SummaryRemove(package.Component), [EventArgs.Empty]);
         Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.None &&
             Field<Label>(form, "selectedPackagesList").Text == "Keine Pakete ausgewählt." &&
-            buttons.Values.All(button => !button.Enabled), "removing the last package restores the empty selection");
+            summary.Controls.Count == 0, "removing the last package restores the empty selection");
         Call(form, "UseFolderPackages");
         Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.All,
             "the complete folder selection can be explicitly restored after all packages were removed");
         foreach (SoftwarePackage package in packages)
             typeof(Button).GetMethod("OnClick", Private)!.Invoke(SummaryRemove(package.Component), [EventArgs.Empty]);
-        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.None && summary.Controls.Count == 0 &&
-            buttons.Values.All(button => !button.Enabled), "removing every package through the summary also clears both views");
+        Assert((UpdateComponents)Call(form, "SelectedUpdateComponents")! == UpdateComponents.None && summary.Controls.Count == 0,
+            "removing every package clears the overview");
     }
 }

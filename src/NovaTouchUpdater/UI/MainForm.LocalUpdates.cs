@@ -9,9 +9,11 @@ public sealed partial class MainForm
     private Task buildPreferenceRefresh = Task.CompletedTask;
     private string? loadedPackageFolder;
     private string? loadedBuildChannel;
-    private readonly Label packageStatus = new() { Name = "packageStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Pakete einlesen. Lokale Paketablage erst mit Updates starten." };
-    private readonly Button browseSoftware = Button("Durchsuchen");
-    private readonly Button readPackages = Button("Pakete einlesen");
+    private readonly Label packageStatus = new() { Name = "packageStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "Ordner oder Dateien auswählen. Lokale Paketablage erst mit Updates starten." };
+    private readonly Button browseSoftware = Button("Ordner durchsuchen");
+    private readonly Button browsePackageFiles = Button("Durchsuchen");
+    private readonly Button readPackages = Button("Pakete aktualisieren");
+    private Func<string[]?>? choosePackageFiles = null;
     private readonly Button useFolderPackages = Button("Ordnerauswahl verwenden");
     private readonly Label selectedPackagesList = new()
     {
@@ -27,15 +29,15 @@ public sealed partial class MainForm
     private bool individualPackageSelection;
     private readonly SoftwarePackageCatalog packageCatalog = new();
     private readonly Dictionary<UpdateComponents, MsiPackageRequest> msiPackages = [];
-    private readonly Dictionary<UpdateComponents, (Button Button, Label Label)> msiControls = [];
-    private readonly Dictionary<UpdateComponents, Button> removePackageButtons = [];
+
+
     private CancellationTokenSource? packageCancellation;
     private bool loadingPackages;
-    private ExpandableSection? individualFilesSection;
+    private ExpandableSection? settingsSection;
 
-    private DialogResult ShowIndividualPackageDialog(Func<DialogResult> showDialog)
+    private DialogResult ShowPackageDialog(Func<DialogResult> showDialog)
     {
-        using var keepOpen = individualFilesSection?.SuspendDismissal();
+        using var keepOpen = settingsSection?.SuspendDismissal();
         return showDialog();
     }
     private UpdateExecutionMode Mode => executionMode.SelectedIndex is >= 0 and <= 2 ? (UpdateExecutionMode)executionMode.SelectedIndex : UpdateExecutionMode.Remote;
@@ -84,8 +86,13 @@ public sealed partial class MainForm
     private Control CreateLocalUpdateCard()
     {
         browseSoftware.Name = "browseSoftware"; readPackages.Name = "readPackages";
+        browsePackageFiles.Name = "browsePackageFiles";
+        browsePackageFiles.AccessibleName = "Einzelne Dateien auswählen";
+        updateToolTip.SetToolTip(browseSoftware, "Einen Paketordner auswählen und seine Installationspakete laden.");
+        updateToolTip.SetToolTip(browsePackageFiles, "Eine oder mehrere Paketdateien oder zusätzliche Dateien auswählen.");
+        updateToolTip.SetToolTip(readPackages, "Die Pakete aus dem eingestellten Quellordner erneut laden.");
         var dropArea = new PackageDropArea();
-        var card = Section("Installations-Pakete", Stack(dropArea, FlowRow(browseSoftware, readPackages), packageStatus));
+        var card = Section("Installations-Pakete", Stack(dropArea, FlowRow(browseSoftware, browsePackageFiles, readPackages), packageStatus));
         card.Name = "localUpdateCard";
         EnablePackageDrop(card);
         browseSoftware.Click += async (_, _) =>
@@ -97,9 +104,30 @@ public sealed partial class MainForm
             await LoadSoftwarePackagesAsync();
         };
         readPackages.Click += async (_, _) => await LoadSoftwarePackagesAsync();
+        browsePackageFiles.Click += async (_, _) =>
+        {
+            if (!CanDropPackages) return;
+            string[]? paths;
+            if (choosePackageFiles is { } choose) paths = choose();
+            else
+            {
+                using var dialog = CreatePackageFileDialog();
+                if (Directory.Exists(softwarePath.Text)) dialog.InitialDirectory = softwarePath.Text;
+                paths = ShowPackageDialog(() => dialog.ShowDialog(this)) == DialogResult.OK ? dialog.FileNames : null;
+            }
+            if (paths is not { Length: > 0 } || !CanDropPackages) return;
+            packageDropTask = LoadPackageFilesAsync(paths);
+            await packageDropTask;
+        };
         softwarePath.KeyDown += async (_, e) => { if (e.KeyCode == Keys.Enter) { e.Handled = e.SuppressKeyPress = true; await LoadSoftwarePackagesAsync(); } };
         return card;
     }
+
+    internal static OpenFileDialog CreatePackageFileDialog() => new()
+    {
+        Title = "Installationspakete und Dateien auswählen", Multiselect = true, CheckFileExists = true, RestoreDirectory = true,
+        Filter = "Installationspakete (*.zip;*.msi;*.exe)|*.zip;*.msi;*.exe|Alle Dateien (*.*)|*.*"
+    };
 
     private Control CreateSoftwareSourcePath()
     {
@@ -116,68 +144,6 @@ public sealed partial class MainForm
         softwarePath.Margin = new Padding(3, 2, 8, 2);
         source.Controls.Add(softwarePath, 1, 0);
         return source;
-    }
-
-    private Control CreateMsiPackageRows()
-    {
-        var rows = new List<Control>();
-        foreach (UpdateComponents component in HostUpdateState.Each(UpdateComponents.Msi))
-        {
-            string shortName = component.ToString().ToUpperInvariant();
-            var button = Button(shortName + "-Paket wählen");
-            button.Name = "choose" + shortName;
-            var label = new Label { Text = shortName + " Target: –" };
-            msiControls.Add(component, (button, label));
-            button.Click += async (_, _) =>
-            {
-                using var dialog = new OpenFileDialog { Filter = "MSI oder ZIP (*.msi;*.zip)|*.msi;*.zip", Title = HostUpdateState.Label(component) + " auswählen" };
-                if (ShowIndividualPackageDialog(() => dialog.ShowDialog(this)) != DialogResult.OK) return;
-                loadingPackages = true;
-                using var ct = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
-                packageCancellation = ct;
-                UpdateButtons();
-                try
-                {
-                    var packages = await Task.Run(() => packageCatalog.ReadFileAsync(dialog.FileName, ct.Token), ct.Token);
-                    ct.Token.ThrowIfCancellationRequested();
-                    SoftwarePackage? package = packages.Where(p => p.Component == component).OrderByDescending(p => SoftwarePackageCatalog.NumericVersion(p.Version)).FirstOrDefault();
-                    if (package is null) throw new InvalidDataException("Das Paket enthält keine MSI für " + HostUpdateState.Label(component));
-                    SelectIndividualPackage(package);
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception ex) { ShowIndividualPackageDialog(() => AppMessageBox.Show(this, ex.Message, "Update-Paket", MessageBoxButtons.OK, MessageBoxIcon.Warning)); }
-                finally { packageCancellation = null; loadingPackages = false; if (!IsDisposed) UpdateButtons(); }
-            };
-            rows.Add(CreateIndividualPackageRow(component, button, label));
-        }
-        return Stack(rows.ToArray());
-    }
-
-    private Control CreatePackageSelectionGrid()
-    {
-        var services = Stack(CreateIndividualPackageRow(UpdateComponents.Payment, btnPayment, lblPayment),
-            CreateIndividualPackageRow(UpdateComponents.Fiscal, btnFiscal, lblFiscal),
-            CreateIndividualPackageRow(UpdateComponents.ServerSuite, btnServerSuite, lblServerSuite));
-        Control msi = CreateMsiPackageRows();
-        var grid = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Dock = DockStyle.Top, Margin = Padding.Empty };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        grid.Controls.Add(services, 0, 0); grid.Controls.Add(msi, 1, 0);
-        bool stacked = false;
-        grid.Layout += (_, _) =>
-        {
-            bool narrow = grid.ClientSize.Width < 720 * grid.DeviceDpi / 96F * grid.Font.SizeInPoints / 9.5F;
-            if (narrow == stacked) return;
-            stacked = narrow; grid.SuspendLayout();
-            grid.ColumnCount = narrow ? 1 : 2; grid.RowCount = narrow ? 2 : 1;
-            grid.ColumnStyles.Clear(); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, narrow ? 100 : 50));
-            if (!narrow) grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            grid.RowStyles.Clear(); grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            if (narrow) grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            grid.SetCellPosition(msi, narrow ? new TableLayoutPanelCellPosition(0, 1) : new TableLayoutPanelCellPosition(1, 0));
-            grid.ResumeLayout(true);
-        };
-        return grid;
     }
 
     private PackageRemoveButton CreateRemovePackageButton(UpdateComponents component)
@@ -205,33 +171,17 @@ public sealed partial class MainForm
         return remove;
     }
 
-    private Control CreateIndividualPackageRow(UpdateComponents component, Button choose, Label version)
-    {
-        var remove = CreateRemovePackageButton(component);
-        remove.Visible = false;
-        removePackageButtons.Add(component, remove);
-        var row = (TableLayoutPanel)PanelRow(choose, version);
-        row.Tag = component;
-        row.ColumnCount = 3;
-        row.ColumnStyles[1].SizeType = SizeType.AutoSize;
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        row.SetCellPosition(version, new TableLayoutPanelCellPosition(2, 0));
-        row.Controls.Add(remove, 1, 0);
-        return row;
-    }
-
     private void ApplyPackage(SoftwarePackage package)
     {
         switch (package.Component)
         {
-            case UpdateComponents.Payment: paymentZip = package.Path; paymentVersion = package.Version; lblPayment.Text = "Payment Target: " + package.Version; break;
-            case UpdateComponents.Fiscal: fiscalZip = package.Path; fiscalVersion = package.Version; lblFiscal.Text = "Fiscal Target: " + package.Version; break;
-            case UpdateComponents.ServerSuite: serverSuiteZip = package.Path; serverSuiteVersion = package.Version; lblServerSuite.Text = "Server Suite Target: " + package.Version; break;
+            case UpdateComponents.Payment: paymentZip = package.Path; paymentVersion = package.Version; break;
+            case UpdateComponents.Fiscal: fiscalZip = package.Path; fiscalVersion = package.Version; break;
+            case UpdateComponents.ServerSuite: serverSuiteZip = package.Path; serverSuiteVersion = package.Version; break;
             default:
                 if (package.Msi is null) throw new InvalidDataException("MSI-Paketinformationen fehlen.");
                 msiPackages[package.Component] = package.Msi;
                 foreach (HostState host in hosts) if (host.Updates is { } state) state.ResetDatabaseUpload();
-                msiControls[package.Component].Label.Text = package.Component.ToString().ToUpperInvariant() + " Target: " + package.Version;
                 break;
         }
     }
@@ -240,10 +190,8 @@ public sealed partial class MainForm
     {
         paymentZip = fiscalZip = serverSuiteZip = paymentVersion = fiscalVersion = serverSuiteVersion = "";
         paymentHash = fiscalHash = serverSuiteHash = "";
-        lblPayment.Text = "Payment Target: –"; lblFiscal.Text = "Fiscal Target: –"; lblServerSuite.Text = "Server Suite Target: –";
         msiPackages.Clear();
         foreach (HostState host in hosts) if (host.Updates is { } state) state.ResetDatabaseUpload();
-        foreach (var (component, controls) in msiControls) controls.Label.Text = component.ToString().ToUpperInvariant() + " Target: –";
     }
 
     private void SelectIndividualPackage(SoftwarePackage package)
@@ -264,19 +212,15 @@ public sealed partial class MainForm
         {
             case UpdateComponents.Payment:
                 paymentZip = paymentVersion = paymentHash = "";
-                lblPayment.Text = "Payment Target: –";
                 break;
             case UpdateComponents.Fiscal:
                 fiscalZip = fiscalVersion = fiscalHash = "";
-                lblFiscal.Text = "Fiscal Target: –";
                 break;
             case UpdateComponents.ServerSuite:
                 serverSuiteZip = serverSuiteVersion = serverSuiteHash = "";
-                lblServerSuite.Text = "Server Suite Target: –";
                 break;
             default:
                 if (!msiPackages.Remove(component)) return;
-                msiControls[component].Label.Text = component.ToString().ToUpperInvariant() + " Target: –";
                 foreach (HostState host in hosts) if (host.Updates is { } state) state.ResetDatabaseUpload();
                 break;
         }

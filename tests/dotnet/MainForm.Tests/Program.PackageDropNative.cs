@@ -40,10 +40,10 @@ internal static partial class Program
             "native file drops resume after active work without moving files or starting hosts");
         if (AppElevation.IsProcessElevated())
         {
-            var row = Field<Button>(form, "btnFiscal");
-            NativeDrop(row, payment, fiscal); Complete(Field<Task>(form, "packageDropTask"));
-            Assert(Field<string>(form, "paymentZip") == replacement && Field<string>(form, "fiscalZip") == fiscal,
-                "native drops on individual selectors still affect only the matching product");
+            var fileButton = Field<Button>(form, "browsePackageFiles");
+            NativeDrop(fileButton, payment, fiscal); Complete(Field<Task>(form, "packageDropTask"));
+            Assert(Field<string>(form, "paymentZip") == payment && Field<string>(form, "fiscalZip") == fiscal,
+                "native drops on the file browsing button import all selected package types");
         }
     }
 

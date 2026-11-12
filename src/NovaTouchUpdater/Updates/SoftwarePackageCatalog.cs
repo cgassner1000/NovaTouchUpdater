@@ -5,7 +5,7 @@ namespace NovaTouchUpdater;
 
 internal sealed record SoftwarePackage(UpdateComponents Component, string Path, string Version, MsiPackageRequest? Msi = null);
 internal sealed record SoftwareCatalogResult(SoftwarePackage[] Packages, string[] Warnings);
-internal sealed record SoftwareDropResult(SoftwarePackage[] Packages, string[] AdditionalFiles, string[] Warnings);
+internal sealed record SoftwareDropResult(SoftwarePackage[] Packages, string[] AdditionalFiles, string[] Warnings, string[] Rejections);
 
 internal sealed class SoftwarePackageCatalog : IDisposable
 {
@@ -45,11 +45,23 @@ internal sealed class SoftwarePackageCatalog : IDisposable
         var candidates = new List<SoftwarePackage>();
         var additional = new List<string>();
         var warnings = new List<string>();
+        var rejections = new List<string>();
         foreach (string path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             ct.ThrowIfCancellationRequested();
             try
             {
+                string name = System.IO.Path.GetFileName(path);
+                string? zipOnlyService = System.IO.Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase)
+                    ? name.StartsWith("nt.payment", StringComparison.OrdinalIgnoreCase) ? "nt.payment"
+                    : name.StartsWith("nt.fiscal", StringComparison.OrdinalIgnoreCase) ? "nt.fiscal" : null : null;
+                if (zipOnlyService is not null)
+                {
+                    string message = name + ": Für " + zipOnlyService + " muss das ZIP-Paket verwendet werden. Die EXE-Datei wird nicht hinzugefügt.";
+                    rejections.Add(message);
+                    warnings.Add(message);
+                    continue;
+                }
                 if (!File.Exists(path)) throw new FileNotFoundException("Paketdatei nicht gefunden.", path);
                 SoftwarePackage[] packages = IsPackageFile(path) ? await ReadFileAsync(path, ct).ConfigureAwait(false) : [];
                 if (packages.Length > 0) candidates.AddRange(packages);
@@ -63,7 +75,7 @@ internal sealed class SoftwarePackageCatalog : IDisposable
                     (exists ? " Kein bekanntes Update-Paket erkannt; wird nur als zusätzliche Datei kopiert." : ""));
             }
         }
-        return new(LatestPackages(candidates), additional.ToArray(), warnings.ToArray());
+        return new(LatestPackages(candidates), additional.ToArray(), warnings.ToArray(), rejections.ToArray());
     }
 
     private static SoftwarePackage[] LatestPackages(IEnumerable<SoftwarePackage> candidates) =>

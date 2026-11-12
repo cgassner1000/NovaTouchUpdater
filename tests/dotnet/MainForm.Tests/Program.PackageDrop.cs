@@ -33,17 +33,16 @@ internal static partial class Program
         SetField(form, "showPackageDropWarning", new Action<string>(text => warning = text));
         var card = All(form).Single(control => control.Name == "localUpdateCard");
         var dropArea = All(card).Single(control => control.Name == "packageDropArea");
-        var files = All(form).Single(control => control.Name == "filesCard");
         var source = Field<TextBox>(form, "softwarePath");
         var destination = Field<TextBox>(form, "txtRemotePath");
         var settings = (TableLayoutPanel)source.Parent!.Parent!;
         Assert(settings.GetRow(source.Parent) + 1 == settings.GetRow(destination.Parent!) &&
             !All(card).Contains(source) && All(card).Contains(Field<Button>(form, "browseSoftware")) &&
-            All(card).Contains(Field<Button>(form, "readPackages")),
-            "the source directory moves directly above the destination in settings while both package actions stay in the installation card");
+            All(card).Contains(Field<Button>(form, "readPackages")) && All(card).Contains(Field<Button>(form, "browsePackageFiles")),
+            "the source directory stays in settings while folder browsing, file browsing and package refreshing belong to the installation card");
         Assert(AppElevation.IsProcessElevated() ? Field<List<ShellFileDropTarget>>(form, "shellPackageDrops").Count > 0 :
-            All(files).All(control => control.AllowDrop) && All(card).All(control => control.AllowDrop),
-            "package drops work on labels, buttons, individual rows and collapsed section headers");
+            All(card).All(control => control.AllowDrop),
+            "package drops work throughout the installation card and on its buttons");
         var sourceDirectory = Path.Combine(root, "configured source");
         source.Text = sourceDirectory;
         Call(form, "SelectIndividualPackage", new SoftwarePackage(UpdateComponents.Fiscal, fiscalOld, "1.0.0"));
@@ -71,26 +70,61 @@ internal static partial class Program
             msi.Count == 2 && msi[UpdateComponents.Ntc].ProductVersion == "2026.4.9800.12345" &&
             source.Text == sourceDirectory && Field<TableLayoutPanel>(form, "selectedPackagesTable").RowCount == 4,
             "a multi-file drop detects MSI and ZIP contents, selects the highest version and preserves unrelated packages and the configured directory");
-        var fiscalButton = Field<Button>(form, "btnFiscal");
-        Drop(fiscalButton, payment);
-        Assert(warning?.Contains("Fiscal", StringComparison.OrdinalIgnoreCase) == true && Field<string>(form, "paymentZip") == payment &&
-            Field<string>(form, "fiscalZip") == fiscalOld, "a drop on an individual row rejects an unrelated product without changing the selection");
-        warning = null;
-        Drop(Field<Label>(form, "lblFiscal"), fiscal, paymentOld);
+        Drop(Field<Button>(form, "browsePackageFiles"), fiscal);
         Assert(warning is null && Field<string>(form, "fiscalZip") == fiscal && Field<string>(form, "paymentZip") == payment,
-            "dropping on an individual version label changes only that row's component");
-        Drop(files, suite, broken);
+            "dropping on the new file button uses the common pipeline and preserves unrelated products");
+        Drop(dropArea, suite, broken);
         Assert(warning is null && Field<string>(form, "serverSuiteZip") == suite &&
             Field<TableLayoutPanel>(form, "selectedPackagesTable").RowCount == 5 &&
             Field<Label>(form, "packageStatus").Text.Contains("1 Hinweis(e)") && Field<List<string>>(form, "additionalFiles").Contains(broken),
-            "the individual section accepts packages by type and retains an unrecognized file as copy-only with its parser warning");
+            "the installation card detects package types and retains unrelated files as copy-only with parser warnings");
         Drop(dropArea, broken);
         Assert(warning is null && Field<List<string>>(form, "additionalFiles").Count(path => path == broken) == 1 &&
             Field<string>(form, "serverSuiteZip") == suite && !Field<bool>(form, "loadingPackages"),
             "unrecognized files are added once without losing valid package selections");
+        string paymentExe = FileFixture("Nt.Payment_4.0.0.exe"), fiscalExe = FileFixture("NT.FISCAL-4.0.0.EXE");
+        Drop(dropArea, paymentExe);
+        Assert(warning?.Contains("nt.payment", StringComparison.OrdinalIgnoreCase) == true && warning.Contains("ZIP") &&
+            Field<string>(form, "paymentZip") == payment && !Field<List<string>>(form, "additionalFiles").Contains(paymentExe),
+            "Payment EXE drops show a ZIP instruction without replacing packages or adding a copy-only EXE");
+        warning = null;
+        Drop(dropArea, fiscalExe, fiscal);
+        Assert(warning?.Contains("nt.fiscal", StringComparison.OrdinalIgnoreCase) == true && warning.Contains("ZIP") &&
+            Field<string>(form, "fiscalZip") == fiscal && !Field<List<string>>(form, "additionalFiles").Contains(fiscalExe),
+            "a mixed Fiscal EXE and valid ZIP drop retains the valid ZIP and rejects only the EXE");
+        warning = null;
+        int warningsShown = 0;
+        SetField(form, "showPackageDropWarning", new Action<string>(text => { warning = text; warningsShown++; }));
+        Drop(dropArea, paymentExe, fiscalExe);
+        Assert(warningsShown == 1 && warning!.Contains("nt.payment") && warning.Contains("nt.fiscal") &&
+            Field<string>(form, "paymentZip") == payment && Field<string>(form, "fiscalZip") == fiscal,
+            "multiple unsupported service EXEs produce one message and preserve the existing selection");
+        using var picker = MainForm.CreatePackageFileDialog();
+        Assert(picker.Multiselect && picker.CheckFileExists && picker.Filter.Contains("*.msi") && picker.Filter.Contains("*.*"),
+            "the new file dialog permits multiple packages and other files");
+        warning = null;
+        SetField(form, "choosePackageFiles", new Func<string[]?>(() => [payment, fiscal, ntc]));
+        var fileButton = Field<Button>(form, "browsePackageFiles");
+        typeof(Button).GetMethod("OnClick", Private)!.Invoke(fileButton, [EventArgs.Empty]);
+        Complete(Field<Task>(form, "packageDropTask"));
+        Assert(warning is null && Field<string>(form, "paymentZip") == payment && Field<string>(form, "fiscalZip") == fiscal &&
+            source.Text == sourceDirectory && msi.Count == 2, "file browsing shares multi-file detection and preserves unrelated packages and the source folder");
+        SetField(form, "choosePackageFiles", new Func<string[]?>(() => [paymentExe]));
+        typeof(Button).GetMethod("OnClick", Private)!.Invoke(fileButton, [EventArgs.Empty]);
+        Complete(Field<Task>(form, "packageDropTask"));
+        Assert(warning?.Contains("nt.payment") == true && !Field<List<string>>(form, "additionalFiles").Contains(paymentExe),
+            "the file picker applies the same Payment ZIP requirement as drag and drop");
+        SetField(form, "choosePackageFiles", new Func<string[]?>(() => null));
+        typeof(Button).GetMethod("OnClick", Private)!.Invoke(fileButton, [EventArgs.Empty]);
+        Assert(Field<string>(form, "paymentZip") == payment && !Field<bool>(form, "loadingPackages"),
+            "cancelling file browsing leaves the selected packages intact");
         foreach (string state in new[] { "busy", "selfUpdating", "loadingPackages", "preparingDatabaseUpload", "restartingAsAdministrator", "connectionClosing" })
         {
             SetField(form, state, true);
+            bool pickerOpened = false;
+            SetField(form, "choosePackageFiles", new Func<string[]?>(() => { pickerOpened = true; return [paymentOld]; }));
+            typeof(Button).GetMethod("OnClick", Private)!.Invoke(fileButton, [EventArgs.Empty]);
+            Assert(!pickerOpened, "file browsing cannot change captured packages during " + state);
             Assert(Enter(dropArea, Data(paymentOld)).Effect == DragDropEffects.None, "package drops are disabled during " + state);
             Drop(dropArea, paymentOld);
             Assert(Field<string>(form, "paymentZip") == payment, "active work keeps its package selection during " + state);

@@ -91,7 +91,9 @@ internal static partial class Program
             "older ZIP releases can be selected without requiring EXE silent parameters");
         var legacy = (WorkerRequest)Call(form, "Request", "update", new HostState { Host="fixture.invalid" }, UpdateComponents.ServerSuite)!;
         Assert(legacy.ServerSuiteZip == oldZip && legacy.ServerSuiteSetup.Length == 0, "explicit legacy ZIP selection keeps existing deployment path");
-        Assert(Field<Button>(form, "btnServerSuite").Text == "Server-Suite-Paket wählen", "manual selector advertises both package formats");
+        using var filePicker = MainForm.CreatePackageFileDialog();
+        Assert(filePicker.Multiselect && filePicker.Filter.Contains("*.exe") && filePicker.Filter.Contains("*.zip"),
+            "the common file picker accepts both Server Suite package formats");
         Assert(!JsonSerializer.Serialize(legacy).Contains("UPDATER=1"), "command lines are constructed only inside worker from validated instance data");
 
         var worker = new UpdateRunner();
