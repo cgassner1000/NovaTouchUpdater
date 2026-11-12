@@ -143,6 +143,9 @@ public sealed class ServiceInfo
     public string RegistryInstance { get; set; } = "";
     public string RegistryInstallDir { get; set; } = "";
     public string RegistryView { get; set; } = "";
+    public string KsmVersion { get; set; } = "";
+    public string KsmInstallDir { get; set; } = "";
+    public string KsmError { get; set; } = "";
     // Suite registry InstallDir is the instance root; InstallDir is its app folder.
     public string InstallDir { get; set; } = "";
     // For server suite this is the registry version; FileVersion stays empty.

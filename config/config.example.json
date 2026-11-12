@@ -15,6 +15,7 @@
   "HttpsPort": 5986,
   "ExecutionMode": "Remote",
   "SoftwarePath": "",
+  "VisibleHostColumns": ["include", "hostname", "connection", "dotnet48", "payment", "fiscal", "serversuite", "pos", "ntc", "information", "result"],
   "Hosts": [
     "POS01",
     "POS02"

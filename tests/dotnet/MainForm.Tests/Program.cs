@@ -36,7 +36,7 @@ internal static partial class Program
             if (args.Contains("--package-drop")) { PackageDropTests(); NativePackageDropTests(); return 0; }
             if (args.Contains("--local")) { Complete(PackageCatalogTests()); PackageSelectionTests(); PackageRemovalTests(); LocalExecutionTests(); RemotePackageRestrictionTests(); return 0; }
             if (args.Contains("--suite-setup")) { Complete(ServerSuiteSetupTests()); return 0; }
-            if (args.Contains("--columns")) { ColumnSizingTests(); return 0; }
+            if (args.Contains("--columns")) { ColumnSizingTests(); ColumnSelectionTests(); return 0; }
             if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
             if (args.Contains("--startup")) { UserDataConfigTests(); StartupChecksTests(); return 0; }
             if (args.Contains("--winrm")) { WinRmPreparationTests(); return 0; }
@@ -86,6 +86,7 @@ internal static partial class Program
                 PackageHashPreparationTests();
                 PackageCopyOptionsTests();
                 ColumnSizingTests();
+                ColumnSelectionTests();
             }
             LayoutTests();
             return 0;
@@ -311,7 +312,7 @@ internal static partial class Program
                 if (width == 1710)
                 {
                     Assert(table.ColumnHeadersDefaultCellStyle.WrapMode == DataGridViewTriState.False &&
-                        table.Columns.Cast<DataGridViewColumn>().Where(c => c.Name != "include").All(c => c.Width >= c.GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true)),
+                        table.Columns.Cast<DataGridViewColumn>().Where(c => c.Visible && c.Name != "include").All(c => c.Width >= c.GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true)),
                         $"all default table headings fit on one line at {scale:P0}");
                     Assert(new[] { "payment", "fiscal", "serversuite" }.All(name => !table.Columns[name].HeaderText.Contains("Ist")),
                         "software headings omit Ist");

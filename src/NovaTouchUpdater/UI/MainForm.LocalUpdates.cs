@@ -393,6 +393,11 @@ public sealed partial class MainForm
         host.PosVersion = string.IsNullOrWhiteSpace(result.PosVersion) ? "–" : DisplayText.Clean(result.PosVersion);
         host.NtcVersion = string.IsNullOrWhiteSpace(result.NtcVersion) ? "–" : DisplayText.Clean(result.NtcVersion);
         host.InstalledPrograms = result.InstalledPrograms.ToList();
+        InstalledProgramInfo[] vouchers = result.InstalledPrograms.Where(program => program.Kind.Equals("ntv", StringComparison.OrdinalIgnoreCase)).ToArray();
+        bool softwareRead = result.PosVersion.Length > 0 || result.NtcVersion.Length > 0 || result.InstalledPrograms.Length > 0;
+        host.NtvVersion = !softwareRead ? "–" : vouchers.Length == 0 ? "Nicht installiert" : string.Join(", ", vouchers
+            .Select(program => string.IsNullOrWhiteSpace(program.Version) ? "Version unbekannt" : DisplayText.Clean(program.Version))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase));
         host.RebootRequired |= result.RebootRequired;
     }
 

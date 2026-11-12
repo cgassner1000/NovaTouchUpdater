@@ -19,6 +19,8 @@ internal sealed class HostState
     public string ServerSuite { get; set; } = "–";
     public string PosVersion { get; set; } = "–";
     public string NtcVersion { get; set; } = "–";
+    public string NtvVersion { get; set; } = "–";
+    public string KsmVersion { get; set; } = "–";
     public string NtcBefore { get; set; } = "–";
     public string PosBefore { get; set; } = "–";
     public bool RebootRequired { get; set; }

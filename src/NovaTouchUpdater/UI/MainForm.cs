@@ -208,6 +208,7 @@ public sealed partial class MainForm : Form
             releaseHttp.Dispose();
             feedbackHttp.Dispose();
             updateToolTip.Dispose();
+            hostColumnsMenu.Dispose();
             betaFeatures?.Dispose();
             connectionCancellation?.Cancel();
             connectionRunner.Dispose();
@@ -241,6 +242,7 @@ public sealed partial class MainForm : Form
     private void ApplyLoadedConfig(LoadedConfig loaded)
     {
         var config = loaded.Settings;
+        ApplyVisibleHostColumns(config.VisibleHostColumns);
         txtRemotePath.Text = config.RemotePath ?? DefaultRemoteInstallPath;
         txtUser.Text = config.Username ?? "";
         chkSsl.Checked = config.UseSsl;
@@ -306,6 +308,7 @@ public sealed partial class MainForm : Form
         Hosts = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
         Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
         IrisUseTls = chkIrisTls.Checked,
+        VisibleHostColumns = VisibleHostColumns(),
         CompileAfterInstallation = chkCompileAfterInstallation.Checked,
         UploadToZzzSoftware = chkUploadToZzzSoftware.Checked, RestartPosAfterUpdate = chkRestartPosAfterUpdate.Checked,
         SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(), UseBuild = BuildChannels.Normalize(useBuild.SelectedItem as string),
@@ -720,6 +723,12 @@ public sealed partial class MainForm : Form
         table.Columns["information"].CellTemplate = new InformationProgressCell();
         table.Columns.Add("result", "Status");
         table.Columns["result"].CellTemplate = new StatusBadgeCell();
+        // Keep existing collection indices stable; group optional software
+        // columns with the versions in their visual display order.
+        table.Columns.Add("ksm", "NT3.KSM");
+        table.Columns.Add("ntv", "NovaTouch Voucher");
+        table.Columns["ksm"].DisplayIndex = table.Columns["serversuite"].DisplayIndex + 1;
+        table.Columns["ntv"].DisplayIndex = table.Columns["ntc"].DisplayIndex + 1;
         foreach (DataGridViewColumn column in table.Columns)
         {
             column.HeaderCell = new SizingColumnHeaderCell { Value = column.HeaderText };
@@ -782,7 +791,8 @@ public sealed partial class MainForm : Form
         {
             if (e.RowIndex != -1 || e.ColumnIndex < 0) return;
             e.Paint(e.ClipBounds, e.PaintParts);
-            if (e.ColumnIndex < table.Columns.Count - 1 && (e.PaintParts & DataGridViewPaintParts.Border) != 0)
+            if (table.Columns.Cast<DataGridViewColumn>().Any(column => column.Visible && column.DisplayIndex > table.Columns[e.ColumnIndex].DisplayIndex) &&
+                (e.PaintParts & DataGridViewPaintParts.Border) != 0)
             {
                 var state = e.Graphics!.Save();
                 e.Graphics.SetClip(Rectangle.Intersect(e.CellBounds, e.ClipBounds));
@@ -792,6 +802,7 @@ public sealed partial class MainForm : Form
             }
             e.Handled = true;
         };
+        ConfigureHostColumnSelection();
         main.Controls.Add(table, 0, 3);
 
         lblSummary.Text = "0 Hosts";
@@ -1989,7 +2000,7 @@ public sealed partial class MainForm : Form
         ReadMsiInventory(h, result);
         h.Services = result.Services.ToList();
         if (result.Success) { ReadVersions(h); h.InstalledComponents = InstalledComponents(h); h.HasIrisInstances = result.HasIrisInstances; }
-        else { h.Payment = "–"; h.Fiscal = "–"; h.ServerSuite = "–"; }
+        else { h.Payment = "–"; h.Fiscal = "–"; h.ServerSuite = "–"; h.KsmVersion = "–"; }
     }
 
     private void ReadVersions(HostState h)
@@ -1997,6 +2008,10 @@ public sealed partial class MainForm : Form
         h.Payment = DisplayText.ServiceVersions(h.Services.Where(s => s.Kind == "payment"));
         h.Fiscal = DisplayText.ServiceVersions(h.Services.Where(s => s.Kind == "fiscal"));
         h.ServerSuite = DisplayText.ServiceVersions(h.Services.Where(s => s.Kind == "serversuite"));
+        string[] ksm = h.Services.Where(service => service.Kind == "serversuite")
+            .Select(service => service.KsmVersion.Length == 0 ? "–" : DisplayText.Clean(service.KsmVersion))
+            .Where(version => version != "Nicht installiert").Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        h.KsmVersion = ksm.Length == 0 ? "Nicht installiert" : string.Join(", ", ksm);
     }
 
     private void Mark(HostState h, Action<HostState> update)
@@ -2035,6 +2050,13 @@ public sealed partial class MainForm : Form
         cells["serversuite"].ToolTipText = DisplayText.ServiceInstances(h.Services.Where(s => s.Kind == "serversuite"), h.ServerSuite);
         cells["pos"].Value = h.PosVersion;
         cells["ntc"].Value = h.NtcVersion;
+        cells["ntv"].Value = h.NtvVersion;
+        cells["ntv"].ToolTipText = string.Join(Environment.NewLine, h.InstalledPrograms.Where(program => program.Kind == "ntv")
+            .Select(program => program.DisplayName + ": " + (program.Version.Length == 0 ? "Version unbekannt" : program.Version)));
+        cells["ksm"].Value = h.KsmVersion;
+        cells["ksm"].ToolTipText = string.Join(Environment.NewLine, h.Services.Where(service => service.Kind == "serversuite")
+            .Select(service => service.Name + ": " + service.KsmVersion + " · " + service.KsmInstallDir +
+                (service.KsmError.Length == 0 ? "" : " · " + service.KsmError)));
         cells["ntc"].ToolTipText = string.Join(Environment.NewLine, h.InstalledPrograms.Select(p => p.DisplayName + ": " + p.Version));
         // Bei mehreren abweichenden Versionsständen bleibt der volle Inhalt per Tooltip lesbar.
         cells["payment"].ToolTipText = h.Payment;

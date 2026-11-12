@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
 
 namespace NovaTouchUpdater;
 
@@ -24,6 +25,7 @@ internal sealed class UpdaterConfig
     public string ExecutionMode { get; set; } = "Remote";
     public string? SoftwarePath { get; set; }
     public string UseBuild { get; set; } = BuildChannels.Default;
+    public string[]? VisibleHostColumns { get; set; }
     public string? PasswordProtectionScope { get; set; }
     public string? EncryptedPassword { get; set; }
 
@@ -78,10 +80,39 @@ internal static class AppConfigStore
             UploadToZzzSoftware = settings.UploadToZzzSoftware, RestartPosAfterUpdate = settings.RestartPosAfterUpdate,
             ExecutionMode = settings.ExecutionMode, SoftwarePath = settings.SoftwarePath, UseBuild = settings.UseBuild,
             ScanOnStartup = settings.ScanOnStartup,
+            VisibleHostColumns = settings.VisibleHostColumns,
             SkipLocalPackageCopy = settings.SkipLocalPackageCopy, SkipRemotePackageCopy = settings.SkipRemotePackageCopy, SkipZipTransfer = settings.SkipZipTransfer,
             PasswordProtectionScope = nameof(DataProtectionScope.LocalMachine),
             EncryptedPassword = EncryptPassword(password)
         };
+        WriteAtomically(path, config);
+    }
+
+    public static void SaveVisibleHostColumns(string path, IEnumerable<string> columns, string? fallbackConfigPath = null)
+    {
+        // Change only the view preference: retain saved credentials, unknown
+        // settings and unsaved form edits without decrypting/re-encrypting them.
+        string source = File.Exists(path) ? path : fallbackConfigPath ?? path;
+        JsonObject config;
+        try
+        {
+            config = File.Exists(source) ? JsonNode.Parse(File.ReadAllText(source)) as JsonObject
+                ?? throw new JsonException("Die Konfiguration enthält keine Einstellungen.") : new JsonObject();
+            foreach (string key in config.Select(property => property.Key)
+                .Where(key => key.Equals(nameof(UpdaterConfig.VisibleHostColumns), StringComparison.OrdinalIgnoreCase)).ToArray())
+                config.Remove(key);
+        }
+        catch (ArgumentException ex) { throw new JsonException("Die Konfiguration enthält doppelte Einträge.", ex); }
+        config[nameof(UpdaterConfig.VisibleHostColumns)] = JsonSerializer.SerializeToNode(HostColumnSettings.Normalize(columns));
+        // As with a normal config save, keep the host list at the end.
+        var hosts = config.Where(property => property.Key.Equals(nameof(UpdaterConfig.Hosts), StringComparison.OrdinalIgnoreCase)).ToArray();
+        foreach (var property in hosts) config.Remove(property.Key);
+        foreach (var property in hosts) config[property.Key] = property.Value;
+        WriteAtomically(path, config);
+    }
+
+    private static void WriteAtomically<T>(string path, T config)
+    {
         string target = Path.GetFullPath(path);
         string directory = Path.GetDirectoryName(target)!;
         string temporary = Path.Combine(directory, $".{Path.GetFileName(target)}.{Guid.NewGuid():N}.tmp");
@@ -92,8 +123,8 @@ internal static class AppConfigStore
                 JsonSerializer.Serialize(stream, config, JsonOptions);
                 stream.Flush(flushToDisk: true);
             }
-            // Replace only the complete, encrypted file; preserve an existing
-            // config if encryption, writing or the final replacement fails.
+            // Publish only the complete file; retain an existing config if
+            // writing or the final replacement fails.
             if (File.Exists(target)) File.Replace(temporary, target, null);
             else File.Move(temporary, target);
         }
@@ -110,6 +141,7 @@ internal static class AppConfigStore
         if (settings.ExecutionMode is not ("Local" or "LocalAndRemote" or "Remote")) throw new JsonException("Ungültiger Ausführungsmodus in config.json.");
         try { settings.UseBuild = BuildChannels.Normalize(settings.UseBuild); }
         catch (ArgumentException ex) { throw new JsonException("Ungültige use Build-Einstellung in config.json: ALPHA, BETA oder STABLE erwartet.", ex); }
+        if (settings.VisibleHostColumns is not null) settings.VisibleHostColumns = HostColumnSettings.Normalize(settings.VisibleHostColumns);
     }
 
     private static string[] NormalizeHosts(string[]? hosts) => (hosts ?? [])

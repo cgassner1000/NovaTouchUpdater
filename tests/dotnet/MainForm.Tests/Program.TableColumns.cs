@@ -35,7 +35,7 @@ internal static partial class Program
             Call(form, "ApplyColumnWidths");
             Settle();
             var baseline = Widths();
-            Assert(table.Columns.Cast<DataGridViewColumn>().Where(c => c.Name != "include")
+            Assert(table.Columns.Cast<DataGridViewColumn>().Where(c => c.Visible && c.Name != "include")
                 .All(c => c.Width >= c.GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true)),
                 "every heading fits with space around it at the normal table width");
 
@@ -86,7 +86,7 @@ internal static partial class Program
             firstRow.Cells["information"].Tag = 75;
             Settle();
             Assert(StatusVisible() && table.HorizontalScrollingOffset == 0 &&
-                table.Columns.Cast<DataGridViewColumn>().Where(c => c.Name != "include")
+                table.Columns.Cast<DataGridViewColumn>().Where(c => c.Visible && c.Name != "include")
                     .All(c => c.Width >= c.GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true)),
                 "exceptionally long content shares the available space while headings and Status remain visible");
             Assert(errors.Count == 0, "dynamic sizing raises no DataGridView formatting errors: " + string.Join(", ", errors));

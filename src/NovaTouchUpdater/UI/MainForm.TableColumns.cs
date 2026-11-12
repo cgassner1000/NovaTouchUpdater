@@ -78,11 +78,13 @@ public sealed partial class MainForm
             int scrollbar = table.Controls.OfType<VScrollBar>().Where(s => s.Visible).Sum(s => s.Width);
             int border = table.BorderStyle == BorderStyle.None ? 0 : SystemInformation.BorderSize.Width * 2;
             int available = Math.Max(1, table.ClientSize.Width - scrollbar - border);
-            int checkbox = (int)Math.Ceiling(26 * table.DeviceDpi / 96F);
-            var columns = table.Columns.Cast<DataGridViewColumn>().ToArray();
+            var columns = table.Columns.Cast<DataGridViewColumn>().Where(column => column.Visible).OrderBy(column => column.DisplayIndex).ToArray();
+            if (columns.Length == 0) { table.HorizontalScrollingOffset = 0; return; }
+            int selection = Array.FindIndex(columns, column => column.Name == "include");
+            int checkbox = selection < 0 ? 0 : (int)Math.Ceiling(26 * table.DeviceDpi / 96F);
             var minimums = new int[columns.Length];
             var desired = new int[columns.Length];
-            int info = table.Columns["information"].Index;
+            int info = Array.FindIndex(columns, column => column.Name == "information");
             using var graphics = table.CreateGraphics();
             for (int i = 0; i < columns.Length; i++)
             {
@@ -98,7 +100,7 @@ public sealed partial class MainForm
                 // A narrow window cannot fit every one-line heading. Wrap them
                 // while preserving the checkbox and keeping Status in view.
                 double fit = Math.Max(0, available - checkbox) / (double)Math.Max(1, minimums.Sum() - checkbox);
-                widths = minimums.Select((width, i) => i == 0 ? checkbox : Math.Max(2, (int)(width * fit))).ToArray();
+                widths = minimums.Select((width, i) => i == selection ? checkbox : Math.Max(2, (int)(width * fit))).ToArray();
             }
             else
             {
@@ -115,8 +117,10 @@ public sealed partial class MainForm
                 }
                 widths = minimums.Select((width, i) => width + Math.Min(growth[i], low)).ToArray();
             }
-            // Information alone receives all surplus width, including rounding.
-            widths[info] += available - widths.Sum();
+            // Information receives surplus width; when hidden, the last visible
+            // column fills the viewport without leaving a horizontal scrollbar.
+            int fill = info < 0 ? columns.Length - 1 : info;
+            if (columns[fill].Name != "include") widths[fill] += available - widths.Sum();
             for (int i = 0; i < columns.Length; i++)
             {
                 DataGridViewColumn column = columns[i];

@@ -84,3 +84,35 @@ Reset;Service 'nt3_server_suite_USER' 'C:\Python\python.exe';Fails 'portable_pyt
 Reset;[ServerSuiteRegistryFixture.Registry]::Denied='Registry64';Fails 'access denied'
 Reset;$script:providerError=$true;Fails 'service provider'
 Reset;Assert (@(& $reader).Count -eq 0) 'absent optional services and registry instances produce an empty successful inventory'
+
+$ksmFixture=[IO.Path]::GetFullPath((Join-Path $TestArtifactsRoot ('ksm-inventory-'+[guid]::NewGuid().ToString('N'))))
+try {
+    $root=Join-Path $ksmFixture 'USER';$directory=Join-Path $root 'apps\nt3-kitchen-display'
+    [void][IO.Directory]::CreateDirectory($directory)
+    $metadata=Join-Path $directory 'version.json'
+    [IO.File]::WriteAllText($metadata,'{"app_name":"nt_kitchen_monitor","version":"2026.4.9785.14868","build_number":"978514868","package_name":"nt_kitchen_monitor"}')
+    Reset;Registration 'USER' $root '2026.4.9809.25670'
+    $result=@(& $reader)
+    Assert ($result.Count -eq 1 -and $result[0].KsmVersion -ceq '2026.4.9785.14868' -and $result[0].KsmInstallDir -eq $directory -and $result[0].KsmError -eq '' -and -not $result[0].ServiceExists) 'KSM reads the complete version.json version under apps even for a registry-only suite instance'
+    Registration 'TAC' $root '2026.4.9809.25670'
+    $result=@(& $reader)
+    Assert ($result.Count -eq 2 -and @($result|Where-Object KsmVersion -ne '2026.4.9785.14868').Count -eq 0) 'shared suite installation roots retain KSM metadata for every instance'
+    $otherRoot=Join-Path $ksmFixture 'HKS';$otherDirectory=Join-Path $otherRoot 'apps\nt3-kitchen-display'
+    [void][IO.Directory]::CreateDirectory($otherDirectory)
+    [IO.File]::WriteAllText((Join-Path $otherDirectory 'version.json'),'{"Version":"2026.4.9800.12345"}')
+    Registration 'HKS' $otherRoot '2026.4.9809.25670'
+    $result=@(& $reader)
+    Assert ((@($result|Where-Object RegistryInstance -eq 'HKS')[0]).KsmVersion -ceq '2026.4.9800.12345') 'different suite roots keep independent KSM versions and the Version key is case-insensitive'
+    Registration 'ABSENT' (Join-Path $ksmFixture 'absent') '2026.4.9809.25670'
+    $result=@(& $reader)
+    Assert ((@($result|Where-Object RegistryInstance -eq 'ABSENT')[0]).KsmVersion -eq 'Nicht installiert') 'an absent kitchen-display folder is reported as not installed'
+    foreach($bad in @('{broken','{"app_name":"nt_kitchen_monitor"}','{"version":null}','{"version":{"invalid":true}}')) {
+        [IO.File]::WriteAllText($metadata,$bad);$result=@(& $reader);$user=@($result|Where-Object RegistryInstance -eq 'USER')[0]
+        Assert ($user.KsmVersion -eq 'Version unbekannt' -and $user.KsmError.Length -gt 0 -and $user.ProductVersion -eq '2026.4.9809.25670') 'invalid KSM metadata keeps suite detection successful and exposes an unknown version with details'
+    }
+    [IO.File]::Delete($metadata);$result=@(& $reader);$user=@($result|Where-Object RegistryInstance -eq 'USER')[0]
+    Assert ($user.KsmVersion -eq 'Version unbekannt' -and $user.KsmError.Length -gt 0) 'an installed KSM folder without version.json remains distinguishable from a missing installation'
+} finally {
+    if(-not $ksmFixture.StartsWith([IO.Path]::GetFullPath($TestArtifactsRoot).TrimEnd('\')+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'KSM fixture outside test artifacts'}
+    if([IO.Directory]::Exists($ksmFixture)){[IO.Directory]::Delete($ksmFixture,$true)}
+}

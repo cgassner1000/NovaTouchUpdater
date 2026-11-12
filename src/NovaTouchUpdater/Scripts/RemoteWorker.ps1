@@ -153,6 +153,23 @@ function GetUpdateTargets($request) {
 }
 
 function ReadInventory {
+    function KitchenMonitorInfo([string]$appsDirectory) {
+        $directory=[IO.Path]::Combine($appsDirectory,'nt3-kitchen-display')
+        $info=[pscustomobject]@{Version='Nicht installiert';Directory=$directory;Error=''}
+        try {
+            try { $attributes=[IO.File]::GetAttributes($directory) }
+            catch [IO.DirectoryNotFoundException] { return $info }
+            catch [IO.FileNotFoundException] { return $info }
+            $info.Version='Version unbekannt'
+            if (($attributes -band [IO.FileAttributes]::Directory) -eq 0) { throw 'Der KSM-Pfad ist kein Ordner.' }
+            $metadata=[IO.File]::ReadAllText([IO.Path]::Combine($directory,'version.json')) | ConvertFrom-Json -ErrorAction Stop
+            if ($null -eq $metadata -or $metadata -is [array]) { throw 'Ungültige version.json.' }
+            $version=$metadata.PSObject.Properties['version']
+            if ($null -eq $version -or $version.Value -isnot [string] -or [string]::IsNullOrWhiteSpace($version.Value)) { throw 'Versionsangabe in version.json fehlt.' }
+            $info.Version=$version.Value.Trim()
+        } catch { $info.Version='Version unbekannt'; $info.Error=$_.Exception.Message }
+        return $info
+    }
     function OpenSuiteRegistry([string]$view) {
         [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Enum]::Parse([Microsoft.Win32.RegistryView],$view))
     }
@@ -247,6 +264,15 @@ function ReadInventory {
         }
     }
     $inventory += @($registrations.Values | Sort-Object Name)
+    $kitchenMonitors=@{}
+    foreach ($suite in @($inventory | Where-Object Kind -eq 'serversuite')) {
+        $appsDirectory=[IO.Path]::GetDirectoryName([string]$suite.InstallDir)
+        if (-not $kitchenMonitors.ContainsKey($appsDirectory)) { $kitchenMonitors[$appsDirectory]=KitchenMonitorInfo $appsDirectory }
+        $ksm=$kitchenMonitors[$appsDirectory]
+        $suite | Add-Member -NotePropertyName KsmVersion -NotePropertyValue $ksm.Version -Force
+        $suite | Add-Member -NotePropertyName KsmInstallDir -NotePropertyValue $ksm.Directory -Force
+        $suite | Add-Member -NotePropertyName KsmError -NotePropertyValue $ksm.Error -Force
+    }
     return $inventory
 }
 

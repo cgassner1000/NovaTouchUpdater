@@ -12,5 +12,6 @@
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Configuration/AppConfigStore.cs" Link="AppConfigStore.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Configuration/AppDataPaths.cs" Link="AppDataPaths.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/BuildChannels.cs" Link="BuildChannels.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/HostColumnSettings.cs" Link="HostColumnSettings.cs" />
   </ItemGroup>
 </Project>
