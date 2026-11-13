@@ -18,6 +18,7 @@ internal static partial class Program
             if (args.Contains("--theme")) { ThemeTests(); return 0; }
             if (args.Contains("--host-log")) { HostLogTests(); return 0; }
             if (args.Contains("--user-data")) { UserDataConfigTests(); return 0; }
+            if (args.Contains("--autosave")) { ConfigAutoSaveTests(); return 0; }
             if (args.Contains("--parallel-compile")) { ParallelCompilationTests(); return 0; }
             if (args.Contains("--auto-compile")) { AutoCompilationTests(); return 0; }
             if (args.Contains("--run-status")) { RunStatusTests(); return 0; }
@@ -68,6 +69,7 @@ internal static partial class Program
                 HostManagementTests();
                 StartupChecksTests();
                 UserDataConfigTests();
+                ConfigAutoSaveTests();
                 WinRmPreparationTests();
                 ConnectionBadgeTests();
                 WinRmClientSetupTests();
@@ -240,8 +242,8 @@ internal static partial class Program
         Complete((Task)Call(form, "RefreshConnectionsAsync")!);
         Assert(worker.Requests.Count == 2 && worker.Requests.All(r => r.LocalExecution && r.Action is "probe" or "scan") && monitor.Requests.IsEmpty,
             "empty remote selection checks only the local computer and starts no remote monitoring or command");
-        Assert(Field<Button>(form, "btnSaveConfig").Enabled && Field<Button>(form, "btnExport").Enabled,
-            "configuration and reporting remain available for the loaded list");
+        Assert(Field<Button>(form, "btnExport").Enabled,
+            "reporting remains available for the loaded list");
         Call(form, "SetAllHostsSelected", true);
         Assert(Targets(form).Length == 3, "all hosts can be enabled again without reloading the list");
     }

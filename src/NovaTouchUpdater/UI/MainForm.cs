@@ -20,6 +20,7 @@ public sealed partial class MainForm : Form
     private bool connectionCheckRunning;
     private bool connectionScanPaused;
     private bool connectionClosing;
+    private bool resourcesDisposed;
     private int connectionGeneration;
     private readonly string logFile;
     private readonly AppDataPaths userDataPaths;
@@ -75,7 +76,6 @@ public sealed partial class MainForm : Form
     private readonly ProgressBar progress = new AppProgressBar();
     private readonly Button btnImport = Button("Hostliste laden");
     private readonly Button btnEditHosts = Button("Host bearbeiten");
-    private readonly Button btnSaveConfig = Button("Konfiguration speichern");
     private readonly Button btnWinRm = new AppButton { Text = "WinRM\nkonfigurieren", AccessibleName = "WinRM konfigurieren", AutoSize = false,
         Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private readonly Button btnScan = Button("Versionen prüfen");
@@ -166,7 +166,7 @@ public sealed partial class MainForm : Form
         };
         btnAdministrator.Click += (_, _) => RestartAsAdministrator();
         updateToolTip.SetToolTip(btnAdministrator,
-            "Startet den Updater per Windows-UAC mit erhöhten Rechten neu, auch bei einem Administratorkonto. Nicht gespeicherte Einstellungen gehen beim Neustart verloren.");
+            "Startet den Updater per Windows-UAC mit erhöhten Rechten neu, auch bei einem Administratorkonto. Einstellungen werden zuvor automatisch gespeichert.");
         txtUser.TextChanged += (_, _) => InvalidateConnectionChecks();
         txtPassword.TextChanged += (_, _) => InvalidateConnectionChecks();
         DpiChanged += (_, _) => BeginInvoke((Action)ApplyColumnWidths);
@@ -188,6 +188,10 @@ public sealed partial class MainForm : Form
                     "Aktive Verarbeitung", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+            if (!FlushConfigChanges() && AppMessageBox.Show(this,
+                "Die letzten Einstellungen konnten nicht gespeichert werden. Das Programm trotzdem schließen?",
+                "Konfiguration nicht gespeichert", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            { e.Cancel = true; return; }
             connectionClosing = true;
             appLifetime.Cancel();
             connectionTimer.Stop();
@@ -196,6 +200,8 @@ public sealed partial class MainForm : Form
         };
         Disposed += (_, _) =>
         {
+            if (resourcesDisposed) return;
+            resourcesDisposed = true;
             connectionClosing = true;
             connectionTimer.Dispose();
             releaseTimer.Dispose();
@@ -213,6 +219,7 @@ public sealed partial class MainForm : Form
             packageCatalog.Dispose();
             activeDatabaseTargets = null;
         };
+        ConfigureAutoSave(!preview || dataPaths is not null);
     }
 
     private void LoadStartupConfig()
@@ -237,35 +244,45 @@ public sealed partial class MainForm : Form
 
     private void ApplyLoadedConfig(LoadedConfig loaded)
     {
-        var config = loaded.Settings;
-        winRmCertificatePath = config.WinRmCertificatePath;
-        winRmPrivateKeyPath = config.WinRmPrivateKeyPath;
-        ApplyThemePreference(config.Theme);
-        ApplyVisibleHostColumns(config.VisibleHostColumns);
-        txtRemotePath.Text = config.RemotePath ?? DefaultRemoteInstallPath;
-        txtUser.Text = config.Username ?? "";
-        chkSsl.Checked = config.UseSsl;
-        chkIrisTls.Checked = config.IrisUseTls;
-        chkCompileAfterInstallation.Checked = config.CompileAfterInstallation;
-        chkUploadToZzzSoftware.Checked = config.UploadToZzzSoftware;
-        chkRestartPosAfterUpdate.Checked = config.RestartPosAfterUpdate;
-        chkScanOnStartup.Checked = config.ScanOnStartup;
-        chkSkipLocalPackageCopy.Checked = config.SkipLocalPackageCopy;
-        chkSkipRemotePackageCopy.Checked = config.SkipRemotePackageCopy;
-        chkSkipZipTransfer.Checked = config.SkipZipTransfer;
-        nHttpsPort.Value = config.HttpsPort;
-        applyingBuildPreference = true;
-        try { useBuild.SelectedItem = BuildChannels.Normalize(config.UseBuild); }
-        finally { applyingBuildPreference = false; }
-        softwarePath.Text = config.SoftwarePath ?? "";
-        txtPassword.Text = loaded.Password;
-        string[] configuredHosts = config.Hosts ?? [];
-        hosts.Clear();
-        foreach (string host in configuredHosts) hosts.Add(new HostState { Host = host });
-        lblFile.Text = configuredHosts.Length == 0 ? "Keine Remote-Hosts · Prüfung lokal" : $"config.json ({configuredHosts.Length})";
-        executionMode.SelectedIndex = Enum.TryParse<UpdateExecutionMode>(config.ExecutionMode, out var mode) ? (int)mode : (int)UpdateExecutionMode.Remote;
-        UpdateExecutionSelection();
-        startupConfigLoaded = true;
+        configSaveTimer.Stop();
+        pendingConfigFields.Clear();
+        applyingConfiguration = true;
+        try
+        {
+            var config = loaded.Settings;
+            winRmCertificatePath = config.WinRmCertificatePath;
+            winRmPrivateKeyPath = config.WinRmPrivateKeyPath;
+            ApplyThemePreference(config.Theme);
+            ApplyVisibleHostColumns(config.VisibleHostColumns);
+            txtRemotePath.Text = config.RemotePath ?? DefaultRemoteInstallPath;
+            txtUser.Text = config.Username ?? "";
+            chkSsl.Checked = config.UseSsl;
+            chkIrisTls.Checked = config.IrisUseTls;
+            chkCompileAfterInstallation.Checked = config.CompileAfterInstallation;
+            chkUploadToZzzSoftware.Checked = config.UploadToZzzSoftware;
+            chkRestartPosAfterUpdate.Checked = config.RestartPosAfterUpdate;
+            chkScanOnStartup.Checked = config.ScanOnStartup;
+            chkSkipLocalPackageCopy.Checked = config.SkipLocalPackageCopy;
+            chkSkipRemotePackageCopy.Checked = config.SkipRemotePackageCopy;
+            chkSkipZipTransfer.Checked = config.SkipZipTransfer;
+            nHttpsPort.Value = config.HttpsPort;
+            nScan.Value = config.ScanParallelism;
+            nUpdate.Value = config.UpdateParallelism;
+            chkForceUpdate.Checked = config.ForceUpdate;
+            applyingBuildPreference = true;
+            try { useBuild.SelectedItem = BuildChannels.Normalize(config.UseBuild); }
+            finally { applyingBuildPreference = false; }
+            softwarePath.Text = config.SoftwarePath ?? "";
+            txtPassword.Text = loaded.Password;
+            string[] configuredHosts = config.Hosts ?? [];
+            hosts.Clear();
+            foreach (string host in configuredHosts) hosts.Add(new HostState { Host = host });
+            lblFile.Text = configuredHosts.Length == 0 ? "Keine Remote-Hosts · Prüfung lokal" : $"config.json ({configuredHosts.Length})";
+            executionMode.SelectedIndex = Enum.TryParse<UpdateExecutionMode>(config.ExecutionMode, out var mode) ? (int)mode : (int)UpdateExecutionMode.Remote;
+            UpdateExecutionSelection();
+            startupConfigLoaded = true;
+        }
+        finally { applyingConfiguration = false; }
     }
 
     private Task RunApplicationStartupAsync()
@@ -306,6 +323,7 @@ public sealed partial class MainForm : Form
         // Save every loaded remote host, including rows hidden by a filter.
         Hosts = hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), RemotePath = txtRemotePath.Text.Trim(),
         Username = txtUser.Text.Trim(), UseSsl = chkSsl.Checked, HttpsPort = (int)nHttpsPort.Value,
+        ScanParallelism = (int)nScan.Value, UpdateParallelism = (int)nUpdate.Value, ForceUpdate = chkForceUpdate.Checked,
         IrisUseTls = chkIrisTls.Checked,
         VisibleHostColumns = VisibleHostColumns(),
         CompileAfterInstallation = chkCompileAfterInstallation.Checked,
@@ -316,25 +334,6 @@ public sealed partial class MainForm : Form
         WinRmCertificatePath = winRmCertificatePath, WinRmPrivateKeyPath = winRmPrivateKeyPath,
         SkipLocalPackageCopy = chkSkipLocalPackageCopy.Checked, SkipRemotePackageCopy = chkSkipRemotePackageCopy.Checked, SkipZipTransfer = chkSkipZipTransfer.Checked
     };
-
-    private void SaveConfig()
-    {
-        if (busy || selfUpdating) return;
-        string configPath = userDataPaths.ConfigFile;
-        try
-        {
-            Directory.CreateDirectory(userDataPaths.RootDirectory);
-            AppConfigStore.Save(configPath, CaptureConfig(), txtPassword.Text);
-            Log("SYSTEM", $"Konfiguration gespeichert: {configPath} ({hosts.Count} Hosts)");
-            AppMessageBox.Show(this, "Konfiguration gespeichert",
-                "Konfiguration gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or CryptographicException)
-        {
-            AppMessageBox.Show(this, "Die Konfiguration konnte nicht gespeichert werden. Eine vorhandene Datei bleibt erhalten.\n" + ex.Message,
-                "Konfiguration speichern", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-    }
 
     private static Button Button(string text) => new AppButton
     {
@@ -556,17 +555,16 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen und bei Bedarf starten, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Ohne Remote-Auswahl wird nur lokal getestet. Für Dienststart und TrustedHosts den Updater über das Schutzschild im Header mit erhöhten Rechten starten, auch bei einem Administratorkonto.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für die WinRM-Konfiguration und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
-        tips.SetToolTip(btnSaveConfig, "Einstellungen in %LOCALAPPDATA%\\novacom software gmbh\\NovaTouchUpdater\\config.json speichern. Diese Konfiguration wird beim Start geladen. Das gespeicherte Passwort ist auf diesem Rechner für Benutzer mit Lesezugriff auf die Datei nutzbar.");
-        tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Mit 'Konfiguration speichern' für den nächsten Start merken.");
+        tips.SetToolTip(chkScanOnStartup, "Nach dem Laden der config.json und der Softwarepakete automatisch die ausgewählten Hosts prüfen und Versionen lesen. Änderungen werden automatisch für den nächsten Start gespeichert.");
         tips.SetToolTip(chkForceUpdate, "Ausgewählte Payment-/Fiscal-/Server-Suite-Komponenten auch bei identischer IST-/Zielversion erneut installieren.");
         tips.SetToolTip(txtRemotePath, "Ablage für Update-Pakete. Leer: LOKAL verwendet die gewählten Quellen direkt; Remote-Hosts verwenden C:\\install\\Novacom. Mit dem lokalen Kopierschalter wird dieser Pfad für lokale Updates nicht verwendet.");
         tips.SetToolTip(chkSkipLocalPackageCopy, "LOKAL verwendet die ausgewählten Pakete ohne zusätzliche Kopie in den Zielpfad. ZIPs werden temporär entpackt. Für zzzSoftware auf Remote-Hosts werden MSI-Daten direkt über WinRM gestreamt. Sonst werden sie zuerst im Zielpfad bereitgestellt. Ein leerer lokaler Zielpfad verwendet ebenfalls direkt die Quellen.");
         tips.SetToolTip(chkSkipZipTransfer, "REMOTE: ZIP- und MSI-Pakete müssen bereits im Zielpfad des Clients liegen. Dateiname und SHA256 müssen zur gewählten Quelle passen. Die Einstellung betrifft keine lokalen Updates.");
         tips.SetToolTip(chkSkipRemotePackageCopy, "REMOTE: Pakete für die Installation nur temporär auf dem Client bereitstellen und danach entfernen. Der eingestellte Zielordner wird weder befüllt noch bereinigt. MSI-Pakete für zzzSoftware werden über WinRM gestreamt. Hat Vorrang vor der Verwendung vorhandener Update-Dateien.");
-        tips.SetToolTip(chkIrisTls, "TLS für den MSI-Upload zu erkannten IRIS-Instanzen auf lokalen und entfernten Hosts verwenden. Mit 'Konfiguration speichern' für den nächsten Start merken.");
-        tips.SetToolTip(chkCompileAfterInstallation, "Nach einer erfolgreichen lokalen NovaTouch-Control-Installation die Softwarepakete automatisch in allen lokalen IRIS-Namespaces ohne %-Präfix kompilieren. Bei gleicher/neuerer NTC-Version kein automatisches Kompilieren. Standard: ausgeschaltet. In der Konfiguration speicherbar.");
-        tips.SetToolTip(useBuild, "Bei einem Softwareordner mit dem Namen builds nur ALPHA, BETA oder STABLE einlesen. Mit 'Konfiguration speichern' für zukünftige Abfragen und den nächsten Start merken.");
-        tips.SetToolTip(chkUploadToZzzSoftware, "Ausgewählte MSI-Pakete nach den Updates in zzzSoftware hochladen. Standard: eingeschaltet. In der Konfiguration speicherbar.");
+        tips.SetToolTip(chkIrisTls, "TLS für den MSI-Upload zu erkannten IRIS-Instanzen auf lokalen und entfernten Hosts verwenden. Änderungen werden automatisch für den nächsten Start gespeichert.");
+        tips.SetToolTip(chkCompileAfterInstallation, "Nach einer erfolgreichen lokalen NovaTouch-Control-Installation die Softwarepakete automatisch in allen lokalen IRIS-Namespaces ohne %-Präfix kompilieren. Bei gleicher/neuerer NTC-Version kein automatisches Kompilieren. Standard: ausgeschaltet. Wird automatisch in der Konfiguration gespeichert.");
+        tips.SetToolTip(useBuild, "Bei einem Softwareordner mit dem Namen builds nur ALPHA, BETA oder STABLE einlesen. Änderungen werden automatisch für zukünftige Abfragen und den nächsten Start gespeichert.");
+        tips.SetToolTip(chkUploadToZzzSoftware, "Ausgewählte MSI-Pakete nach den Updates in zzzSoftware hochladen. Standard: eingeschaltet. Wird automatisch in der Konfiguration gespeichert.");
         tips.SetToolTip(chkRestartPosAfterUpdate, "Nur ältere Remote-POS nach einem neu gespeicherten POS-MSI in zzzSoftware starten / neu starten. Kein Neustart ohne POS-Paket, bei gleicher/neuerer POS-Version oder wenn das POS-MSI bereits in zzzSoftware vorhanden ist. LOKAL wird ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
@@ -587,12 +585,11 @@ public sealed partial class MainForm : Form
         betaFeatures.Register(buildPreference);
         var betaDivider = SettingsDivider("Erweitert");
         betaFeatures.Register(betaDivider);
-        btnSaveConfig.Margin = new Padding(0, 8, 0, 0);
         var settingsContent = Stack(betaDivider, buildPreference, chkIrisTls,
             SettingsDivider("ALLGEMEIN"), chkScanOnStartup, CreateThemePreference(), FlowRow(new Label { Text = "Ausführung:", AutoSize = true, Anchor = AnchorStyles.Left }, executionMode),
             login, optionBar, chkUploadToZzzSoftware, chkCompileAfterInstallation, chkForceUpdate, chkRestartPosAfterUpdate, CreateSoftwareSourcePath(), targetPath,
             SettingsDivider("LOKAL"), chkSkipLocalPackageCopy,
-            SettingsDivider("REMOTE"), chkSkipRemotePackageCopy, chkSkipZipTransfer, FlowRow(btnSaveConfig));
+            SettingsDivider("REMOTE"), chkSkipRemotePackageCopy, chkSkipZipTransfer);
         var settings = settingsSection = new ExpandableSection("Einstellungen", settingsContent, showExpansionIndicator: false);
         settings.Name = "settingsCard";
         settings.Visible = hostCard.Visible = false;
@@ -823,10 +820,9 @@ public sealed partial class MainForm : Form
         progress.Dock = DockStyle.Fill;
         progress.Height = 6;
         progress.Margin = Padding.Empty;
-        main.Controls.Add(Stack(lblSummary, progress), 0, 4);
+        main.Controls.Add(Stack(lblSummary, configSaveStatus, progress), 0, 4);
 
         btnImport.Click += (_, _) => LoadHosts();
-        btnSaveConfig.Click += (_, _) => SaveConfig();
         btnEditHosts.Click += (_, _) => EditHosts();
         btnWinRm.Click += (_, _) =>
         {
@@ -1028,6 +1024,7 @@ public sealed partial class MainForm : Form
         UpdateSummary();
         UpdateButtons();
         Log("SYSTEM", $"Remote-Hostliste aktualisiert ({source}): {added} hinzugefügt, {removed} entfernt");
+        QueueConfigSave(nameof(UpdaterConfig.Hosts));
     }
 
     private HostState[] SelectedHosts() => ExecutionHosts().Where(host => host.IsSelected).ToArray();
@@ -2123,6 +2120,12 @@ public sealed partial class MainForm : Form
             "Soll die neue Version von NovaTouchUpdater heruntergeladen und installiert werden?",
             "Neue Version verfügbar", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
         if (!confirmed || !CanUpdateApplication) return;
+        if (!FlushConfigChanges())
+        {
+            AppMessageBox.Show(this, "Die Einstellungen konnten vor dem Programmwechsel nicht gespeichert werden. Bitte die Konfigurationsdatei prüfen.",
+                "Konfiguration nicht gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
 
         selfUpdating = true;
         using var updateCancellation = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
@@ -2171,6 +2174,12 @@ public sealed partial class MainForm : Form
     private void RestartAsAdministrator()
     {
         if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator || isProcessElevated()) return;
+        if (!FlushConfigChanges())
+        {
+            AppMessageBox.Show(this, "Die Einstellungen konnten vor dem Neustart nicht gespeichert werden. Bitte die Konfigurationsdatei prüfen.",
+                "Konfiguration nicht gespeichert", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
         restartingAsAdministrator = true;
         UpdateButtons();
         try
@@ -2196,7 +2205,7 @@ public sealed partial class MainForm : Form
         btnAdministrator.Visible = !isProcessElevated();
         btnAdministrator.Enabled = idle;
         updateNotice.Enabled = CanUpdateApplication;
-        btnImport.Enabled = btnEditHosts.Enabled = idle && Mode != UpdateExecutionMode.Local; btnSaveConfig.Enabled = idle;
+        btnImport.Enabled = btnEditHosts.Enabled = idle && Mode != UpdateExecutionMode.Local;
 
         btnSelectAll.Enabled = btnClearSelection.Enabled = idle && hosts.Count > 0;
         lblSelection.Text = $"{selected.Length} von {ExecutionHosts().Count()} ausgewählt";

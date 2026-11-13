@@ -20,8 +20,10 @@ internal static partial class Program
             _ = form.Handle;
             Call(form, "LoadStartupConfig");
             HostState host = Populate(form)[0];
-            Field<TextBox>(form, "txtUser").Text = "unsaved-user";
-            Field<TextBox>(form, "txtPassword").Text = "unsaved-password";
+            Field<TextBox>(form, "txtUser").Text = "auto-saved-user";
+            Field<TextBox>(form, "txtPassword").Text = "auto-saved-password";
+            Assert((bool)Call(form, "FlushConfigChanges")!, "edited credentials are automatically persisted before column changes");
+            credential = JsonNode.Parse(File.ReadAllText(paths.ConfigFile))!["EncryptedPassword"]!.GetValue<string>();
             var table = Field<DataGridView>(form, "table");
             Control parent = table.Parent!;
             using var canvas = new Panel { Size = new Size(2200, 650), Font = form.Font };
@@ -45,9 +47,9 @@ internal static partial class Program
                     "right-click choices immediately save hidden .NET and visible optional columns without the configuration button");
                 using (var document = JsonDocument.Parse(File.ReadAllText(paths.ConfigFile)))
                     Assert(document.RootElement.GetProperty("EncryptedPassword").GetString() == credential &&
-                        document.RootElement.GetProperty("Username").GetString() == "saved-user" && document.RootElement.GetProperty("Hosts")[0].GetString() == "SAVED.invalid" &&
+                        document.RootElement.GetProperty("Username").GetString() == "auto-saved-user" && document.RootElement.GetProperty("Hosts")[0].GetString() == "SAVED.invalid" &&
                         document.RootElement.GetProperty("FutureSetting").GetString() == "preserve",
-                        "column clicks retain saved credentials, hosts and unknown settings instead of capturing current unsaved inputs");
+                        "column clicks retain automatically saved credentials, hosts and unknown settings");
                 var inventory = new WorkerResult { Success = true, PosVersion = "1.2.3", NtcVersion = "1.2.3",
                     Services = [new ServiceInfo { Kind = "payment", ProductVersion = "2026.4.9785.14868" },
                         new ServiceInfo { Kind = "serversuite", Name = "nt3_server_suite_USER", ProductVersion = "2026.4.9809.25670",

@@ -23,6 +23,9 @@ internal sealed class UpdaterConfig
     public bool SkipRemotePackageCopy { get; set; }
     public bool SkipZipTransfer { get; set; }
     public int HttpsPort { get; set; } = 5986;
+    public int ScanParallelism { get; set; } = 40;
+    public int UpdateParallelism { get; set; } = 8;
+    public bool ForceUpdate { get; set; }
     public string? WinRmCertificatePath { get; set; }
     public string? WinRmPrivateKeyPath { get; set; }
     public string ExecutionMode { get; set; } = "Remote";
@@ -62,8 +65,8 @@ internal static class AppConfigStore
             catch (Exception ex) when (ex is CryptographicException or FormatException or DecoderFallbackException)
             {
                 warning = "Das gespeicherte Passwort konnte auf diesem Rechner nicht entschlüsselt werden oder ist beschädigt. " +
-                    "Die übrigen Einstellungen wurden geladen. Bitte das Passwort neu eingeben und die Config erneut speichern. " +
-                    "Eine ältere, benutzergebundene Config kann alternativ vom ursprünglichen Windows-Benutzer geöffnet und erneut gespeichert werden.";
+                    "Die übrigen Einstellungen wurden geladen. Bitte das Passwort neu eingeben; es wird automatisch verschlüsselt gespeichert. " +
+                    "Eine ältere, benutzergebundene Config kann alternativ vom ursprünglichen Windows-Benutzer geöffnet werden; nach erneuter Passworteingabe wird der Schutz aktualisiert.";
             }
         }
         else password = config.LegacyPassword ?? "";
@@ -78,6 +81,7 @@ internal static class AppConfigStore
         {
             Hosts = NormalizeHosts(settings.Hosts), RemotePath = settings.RemotePath,
             Username = settings.Username, UseSsl = settings.UseSsl, HttpsPort = settings.HttpsPort,
+            ScanParallelism = settings.ScanParallelism, UpdateParallelism = settings.UpdateParallelism, ForceUpdate = settings.ForceUpdate,
             WinRmCertificatePath = settings.WinRmCertificatePath, WinRmPrivateKeyPath = settings.WinRmPrivateKeyPath,
             IrisUseTls = settings.IrisUseTls,
             CompileAfterInstallation = settings.CompileAfterInstallation,
@@ -99,6 +103,21 @@ internal static class AppConfigStore
     public static void SaveTheme(string path, string theme, string? fallbackConfigPath = null)
         => SavePreference(path, nameof(UpdaterConfig.Theme), JsonValue.Create(ThemeModes.Normalize(theme)), fallbackConfigPath);
 
+    public static void SaveChangedSettings(string path, UpdaterConfig settings, IEnumerable<string> fields, string? changedPassword = null, string? fallbackConfigPath = null)
+    {
+        Validate(settings);
+        settings.Hosts = NormalizeHosts(settings.Hosts);
+        var snapshot = JsonSerializer.SerializeToNode(settings, JsonOptions)!.AsObject();
+        var changes = new Dictionary<string, JsonNode?>();
+        foreach (string field in fields.Distinct())
+        {
+            if (typeof(UpdaterConfig).GetProperty(field) is null || field is nameof(UpdaterConfig.LegacyPassword) or nameof(UpdaterConfig.EncryptedPassword) or nameof(UpdaterConfig.PasswordProtectionScope))
+                throw new ArgumentException("Ungültige Konfigurationseinstellung: " + field);
+            changes[field] = snapshot[field]?.DeepClone();
+        }
+        SavePreferences(path, changes, fallbackConfigPath, changedPassword, updateCredentials: true);
+    }
+
     private static void SavePreference(string path, string name, JsonNode? value, string? fallbackConfigPath)
         => SavePreferences(path, new Dictionary<string, JsonNode?> { [name] = value }, fallbackConfigPath);
 
@@ -109,7 +128,7 @@ internal static class AppConfigStore
             [nameof(UpdaterConfig.WinRmPrivateKeyPath)] = JsonValue.Create(privateKeyPath)
         }, fallbackConfigPath);
 
-    private static void SavePreferences(string path, Dictionary<string, JsonNode?> values, string? fallbackConfigPath)
+    private static void SavePreferences(string path, Dictionary<string, JsonNode?> values, string? fallbackConfigPath, string? changedPassword = null, bool updateCredentials = false)
     {
         // Change only these preferences: retain saved credentials, unknown
         // settings and unsaved form edits without decrypting/re-encrypting them.
@@ -119,6 +138,21 @@ internal static class AppConfigStore
         {
             config = File.Exists(source) ? JsonNode.Parse(File.ReadAllText(source)) as JsonObject
                 ?? throw new JsonException("Die Konfiguration enthält keine Einstellungen.") : new JsonObject();
+            if (updateCredentials)
+            {
+                var legacy = config.Where(property => property.Key.Equals("Password", StringComparison.OrdinalIgnoreCase)).ToArray();
+                bool encrypted = config.Any(property => property.Key.Equals(nameof(UpdaterConfig.EncryptedPassword), StringComparison.OrdinalIgnoreCase));
+                string? password = changedPassword;
+                if (password is null && !encrypted && legacy.Length > 0)
+                    password = legacy[0].Value?.GetValue<string>() ?? "";
+                if (password is not null)
+                {
+                    values[nameof(UpdaterConfig.EncryptedPassword)] = JsonValue.Create(EncryptPassword(password));
+                    values[nameof(UpdaterConfig.PasswordProtectionScope)] = JsonValue.Create(nameof(DataProtectionScope.LocalMachine));
+                }
+                if (password is not null || encrypted)
+                    foreach (var property in legacy) config.Remove(property.Key);
+            }
             foreach (string key in config.Select(property => property.Key)
                 .Where(key => values.Keys.Any(name => key.Equals(name, StringComparison.OrdinalIgnoreCase))).ToArray())
                 config.Remove(key);
@@ -160,6 +194,8 @@ internal static class AppConfigStore
     {
         settings.Theme = ThemeModes.Normalize(settings.Theme);
         if (settings.HttpsPort is < 1 or > 65535) throw new JsonException("HttpsPort muss zwischen 1 und 65535 liegen.");
+        if (settings.ScanParallelism is < 1 or > 150) throw new JsonException("Prüfen parallel muss zwischen 1 und 150 liegen.");
+        if (settings.UpdateParallelism is < 1 or > 100) throw new JsonException("Update parallel muss zwischen 1 und 100 liegen.");
         if (settings.ExecutionMode is not ("Local" or "LocalAndRemote" or "Remote")) throw new JsonException("Ungültiger Ausführungsmodus in config.json.");
         try { settings.UseBuild = BuildChannels.Normalize(settings.UseBuild); }
         catch (ArgumentException ex) { throw new JsonException("Ungültige use Build-Einstellung in config.json: ALPHA, BETA oder STABLE erwartet.", ex); }

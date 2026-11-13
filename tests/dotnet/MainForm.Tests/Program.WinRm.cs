@@ -87,8 +87,7 @@ internal static partial class Program
             Field<CheckBox>(form, "chkForceUpdate"), Field<CheckBox>(form, "chkScanOnStartup"),
             Field<CheckBox>(form, "chkSkipLocalPackageCopy"), Field<CheckBox>(form, "chkSkipRemotePackageCopy"),
             Field<CheckBox>(form, "chkSkipZipTransfer"), Field<CheckBox>(form, "chkIrisTls"),
-            Field<CheckBox>(form, "chkUploadToZzzSoftware"), Field<CheckBox>(form, "chkRestartPosAfterUpdate"),
-            Field<Button>(form, "btnSaveConfig")];
+            Field<CheckBox>(form, "chkUploadToZzzSoftware"), Field<CheckBox>(form, "chkRestartPosAfterUpdate")];
         foreach (int execution in new[] { 0, 1, 2 })
         {
             mode.SelectedIndex = execution;

@@ -29,6 +29,7 @@ internal static partial class Program
             var general = All(form).OfType<Label>().Single(label => label.Text == "ALLGEMEIN");
             Assert(general.Parent!.Parent == combo.Parent!.Parent, "the theme choice belongs to General settings");
             Field<TextBox>(form, "txtUser").Text = "unsaved";
+            Assert((bool)Call(form, "FlushConfigChanges")!, "the edited username is automatically saved before a design change");
             combo.SelectedIndex = 1;
             Assert(UiTheme.IsDark && form.BackColor == UiTheme.Background && Field<DataGridView>(form, "table").DefaultCellStyle.ForeColor == UiTheme.Text,
                 "selecting Dark immediately updates the window and host table");
@@ -39,9 +40,9 @@ internal static partial class Program
                     "the native theme dropdown has no white background in Dark mode");
             }
             saved = JsonNode.Parse(File.ReadAllText(paths.ConfigFile))!.AsObject();
-            Assert(saved["Theme"]!.GetValue<string>() == "Dark" && saved["Username"]!.GetValue<string>() == "saved" &&
+            Assert(saved["Theme"]!.GetValue<string>() == "Dark" && saved["Username"]!.GetValue<string>() == "unsaved" &&
                 saved["EncryptedPassword"]!.GetValue<string>() == encrypted && saved["FutureSetting"]!.GetValue<string>() == "keep" && saved.Last().Key == "Hosts",
-                "automatic theme persistence preserves saved hosts, credentials, unknown settings and unsaved form edits");
+                "automatic theme persistence preserves hosts, credentials, unknown settings and previously auto-saved edits");
             using var log = new HostLogDialog("THEME-PREVIEW", _ => ["2026-11-12 13:00:00.000 [THEME-PREVIEW] Installation: Paket wird verarbeitet."]);
             Assert(log.BackColor == UiTheme.Background && All(log).OfType<TextBox>().All(input => input.BackColor.GetBrightness() < .2),
                 "new log windows and their detail fields use the active dark theme");
@@ -58,6 +59,8 @@ internal static partial class Program
             using (var bitmap = new Bitmap(form.Width, form.Height))
             { form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "theme-dark-main.png")); }
             var settings = All(form).OfType<ExpandableSection>().Single(section => section.Name == "settingsCard");
+            form.Activate();
+            Application.DoEvents();
             ClickSection(settings);
             for (int pass = 0; pass < 3; pass++) Layout(form);
             using (var bitmap = new Bitmap(settings.Width, settings.Height))
@@ -79,8 +82,8 @@ internal static partial class Program
             try
             {
                 var choice = (ToolStripMenuItem)menu.Items["hostname"]!;
-                choice.Select();
                 Application.DoEvents();
+                choice.Select();
                 using var bitmap = new Bitmap(menu.Width, menu.Height);
                 menu.DrawToBitmap(bitmap, menu.ClientRectangle);
                 bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "theme-dark-column-menu-hover.png"));

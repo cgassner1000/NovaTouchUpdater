@@ -52,6 +52,7 @@ AppDataPathsTests.Run(Assert);
 HostColumnConfigTests.Run(Assert);
 ThemeConfigTests.Run(Assert);
 WinRmCertificateConfigTests.Run(Assert);
+AutoSaveConfigTests.Run(Assert);
 string fixture=Path.GetFullPath(Path.Combine(TestWorkspace.Artifacts,"cfg-"+Guid.NewGuid().ToString("N")[..8]));
 Assert(fixture.StartsWith(TestWorkspace.Artifacts+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase), "fixture stays within workspace artifacts/test-results");
 Directory.CreateDirectory(fixture);
