@@ -17,6 +17,7 @@ internal static partial class Program
             UiTheme.SetMode("System");
             if (args.Contains("--theme")) { ThemeTests(); return 0; }
             if (args.Contains("--actions")) { ActionLayoutTests(); return 0; }
+            if (args.Contains("--program-updates")) { ProgramUpdateTests(); return 0; }
             if (args.Contains("--host-log")) { HostLogTests(); return 0; }
             if (args.Contains("--user-data")) { UserDataConfigTests(); return 0; }
             if (args.Contains("--autosave")) { ConfigAutoSaveTests(); return 0; }
@@ -58,6 +59,7 @@ internal static partial class Program
                 TogglePaintingTests();
                 ThemeTests();
                 ActionLayoutTests();
+                ProgramUpdateTests();
                 FeedbackTests();
                 AdministratorTests();
                 BetaFeatureTests();

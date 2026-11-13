@@ -163,6 +163,7 @@ internal static partial class Program
         var worker = new FakeRunner();
         using var form = new MainForm(preview: true, worker, new FakeRunner());
         HostState[] hosts = Populate(form);
+        EnableAdvanced(form);
         var button = Field<Button>(form, "btnDatabaseCheck");
         var mode = Field<ComboBox>(form, "executionMode");
         Control content = form.Controls["mainScrollArea"]!;

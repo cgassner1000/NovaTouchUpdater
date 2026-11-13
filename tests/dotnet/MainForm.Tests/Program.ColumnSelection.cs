@@ -89,7 +89,7 @@ internal static partial class Program
                 foreach (string name in Visible().Where(name => name != "include")) Choice(name).PerformClick();
                 Settle();
                 Assert(Visible().SequenceEqual(["include"]) && AppConfigStore.Load(paths.ConfigFile).Settings.VisibleHostColumns!.SequenceEqual(["include"]) &&
-                    table.Columns["include"].Width == (int)Math.Ceiling(36 * table.DeviceDpi / 96F),
+                    table.Columns["include"].Width == (int)Math.Ceiling(32 * table.DeviceDpi / 96F),
                     "hiding every data column persists while the fixed checkbox column keeps its narrow width");
                 Point contextPoint = table.PointToScreen(new Point(8, 8));
                 var contextMessage = Message.Create(table.Handle, 0x007B, table.Handle,

@@ -21,8 +21,8 @@ internal sealed class SizingColumnHeaderCell : DataGridViewColumnHeaderCell
     {
         if (!RefreshAction) return cellStyle;
         var style = cellStyle.Clone();
-        style.Padding = new Padding(cellStyle.Padding.Left, cellStyle.Padding.Top,
-            cellStyle.Padding.Right + GridRefreshIcon.Space(DataGridView?.DeviceDpi ?? 96), cellStyle.Padding.Bottom);
+        int inset = (int)Math.Ceiling(2 * (DataGridView?.DeviceDpi ?? 96) / 96F);
+        style.Padding = new Padding(inset, cellStyle.Padding.Top, inset, cellStyle.Padding.Bottom);
         return style;
     }
 
@@ -35,8 +35,7 @@ internal sealed class SizingColumnHeaderCell : DataGridViewColumnHeaderCell
         if (!RefreshAction || (paintParts & DataGridViewPaintParts.ContentForeground) == 0) return;
         var state = graphics.Save();
         graphics.SetClip(Rectangle.Intersect(clipBounds, cellBounds));
-        Rectangle iconBounds = string.IsNullOrEmpty(Convert.ToString(formattedValue)) ? cellBounds : GridRefreshIcon.Bounds(cellBounds, DataGridView?.DeviceDpi ?? 96);
-        GridRefreshIcon.Draw(graphics, iconBounds, DataGridView?.DeviceDpi ?? 96, RefreshEnabled);
+        GridRefreshIcon.Draw(graphics, cellBounds, DataGridView?.DeviceDpi ?? 96, RefreshEnabled);
         graphics.Restore(state);
     }
 }

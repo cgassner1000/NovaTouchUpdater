@@ -79,7 +79,7 @@ public sealed partial class MainForm : Form
     private readonly Button btnWinRm = new AppButton { Text = "WinRM\nkonfigurieren", AccessibleName = "WinRM konfigurieren", AutoSize = false,
         Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private readonly Button btnDatabaseCheck = Button("Check Database");
-    private readonly Button btnUpdate = Button("2. Updates starten");
+    private readonly Button btnUpdate = Button("Update starten");
     private readonly Button btnServicePacks = new AppButton { Name = "importServicePacks", Text = "Servicepacks\neinspielen", AutoSize = false,
         Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private readonly Button btnCompileSoftware = new AppButton { Name = "compileSoftwarePackages", Text = "Softwarepakete\nkompilieren", AutoSize = false,
@@ -87,13 +87,13 @@ public sealed partial class MainForm : Form
     private BetaFeatureGate? betaFeatures;
     private Action? showBetaActivated = null;
     private readonly Button btnTransfer = new SectionNavigationButton("Upload", SectionNavigationIcon.Upload);
-    private readonly Button btnSendCommand = Button("Befehl senden");
+    private readonly Button btnSendCommand = new SectionNavigationButton("Befehl senden", SectionNavigationIcon.Command);
     private readonly Button btnRetry = Button("Fehler erneut versuchen");
     private readonly Button btnExport = new SectionNavigationButton("Protokoll / HTML-Bericht", SectionNavigationIcon.Report);
     private readonly Button btnCancel = Button("Abbrechen");
     private readonly Button btnSelectAll = Button("Alle auswählen");
     private readonly Button btnClearSelection = Button("Auswahl aufheben");
-    private bool hasCompletedRun;
+    private bool hasCompletedUpdate;
 
     private string paymentZip = "";
     private string fiscalZip = "";
@@ -436,16 +436,18 @@ public sealed partial class MainForm : Form
             else BeginInvoke(() => AppMessageBox.Show(this, "Erweiterte Einstellungen aktiviert", "Erweitert", MessageBoxButtons.OK, MessageBoxIcon.Information));
         };
 
-        // The icon rail belongs only to the configuration area above the actions.
+        // The icon rail spans the package cards and their actions so extra icons
+        // do not push the actions down below the entire rail.
         var configuration = new TableLayoutPanel
         {
             Name = "configuration",
             Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            ColumnCount = 3, RowCount = 1, Margin = new Padding(0, 0, 0, 14)
+            ColumnCount = 3, RowCount = 2, Margin = Padding.Empty
         };
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+        configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.Controls.Add(configuration, 0, 1);
 
@@ -603,13 +605,16 @@ public sealed partial class MainForm : Form
         settings.ExpandedChanged += (_, _) => settingsLauncher.Active = settings.Expanded;
         hostCard.ExpandedChanged += (_, _) => hostsLauncher.Active = hostCard.Expanded;
         btnTransfer.Name = "uploadLauncher";
+        btnSendCommand.Name = "commandLauncher";
         btnExport.Name = "reportLauncher";
         updateToolTip.SetToolTip(btnTransfer, "Dateien auf ausgewählte Remote-Hosts hochladen");
+        updateToolTip.SetToolTip(btnSendCommand, "Befehl an ausgewählte Remote-Hosts senden");
         updateToolTip.SetToolTip(btnExport, "Protokoll als HTML-Bericht öffnen");
-        var navigation = Stack(settingsLauncher, hostsLauncher, btnTransfer, btnExport, settings, hostCard);
+        var navigation = Stack(settingsLauncher, hostsLauncher, btnTransfer, btnSendCommand, btnExport, settings, hostCard);
         navigation.Name = "configurationNavigation";
         navigation.Margin = new Padding(0, 0, 12, 0);
         configuration.Controls.Add(navigation, 0, 0);
+        configuration.SetRowSpan(navigation, 2);
         var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList, selectedPackagesTable, additionalFilesTable));
         selectedPackagesCard.Name = "selectedPackagesCard";
         selectedPackagesCard.Margin = Padding.Empty;
@@ -625,6 +630,9 @@ public sealed partial class MainForm : Form
                 if (section.Expanded)
                     foreach (var other in expandableSections.Where(other => other != section)) other.Collapse();
             };
+        var actions = new TableLayoutPanel { Name = "updateActions", Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 12, 0, 0) };
+        configuration.Controls.Add(actions, 1, 1);
+        configuration.SetColumnSpan(actions, 2);
         bool stacked = false;
         configuration.Layout += (_, _) =>
         {
@@ -634,7 +642,7 @@ public sealed partial class MainForm : Form
             stacked = needsStack;
             configuration.SuspendLayout();
             configuration.ColumnCount = stacked ? 2 : 3;
-            configuration.RowCount = stacked ? 2 : 1;
+            configuration.RowCount = stacked ? 3 : 2;
             configuration.ColumnStyles.Clear();
             configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64 * scale));
             configuration.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, stacked ? 100 : 55));
@@ -642,9 +650,12 @@ public sealed partial class MainForm : Form
             configuration.RowStyles.Clear();
             configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             if (stacked) configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            configuration.SetRowSpan(navigation, stacked ? 2 : 1);
+            configuration.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            configuration.SetRowSpan(navigation, stacked ? 3 : 2);
             configuration.SetCellPosition(packageColumn, new TableLayoutPanelCellPosition(1, stacked ? 1 : 0));
             configuration.SetCellPosition(selectedColumn, new TableLayoutPanelCellPosition(stacked ? 1 : 2, 0));
+            configuration.SetCellPosition(actions, new TableLayoutPanelCellPosition(1, stacked ? 2 : 1));
+            configuration.SetColumnSpan(actions, stacked ? 1 : 2);
             packageColumn.Margin = stacked ? Padding.Empty : new Padding(0, 0, 8, 0);
             selectedColumn.Margin = stacked ? new Padding(0, 0, 0, 12) : new Padding(8, 0, 0, 0);
             configuration.ResumeLayout(true);
@@ -653,7 +664,7 @@ public sealed partial class MainForm : Form
         var bar = FlowRow();
         ((AppButton)btnUpdate).Role = ButtonRole.Primary;
         ((AppButton)btnCancel).Role = ButtonRole.Danger;
-        foreach (Button btn in new[] { btnUpdate, btnServicePacks, btnCompileSoftware, btnSendCommand })
+        foreach (Button btn in new[] { btnUpdate, btnServicePacks, btnCompileSoftware })
         {
             ((AppButton)btn).AccentInDarkMode = true;
             btn.Margin = new Padding(0, 3, 7, 3);
@@ -684,14 +695,13 @@ public sealed partial class MainForm : Form
         filterBar.Controls.Add(btnSelectAll);
         filterBar.Controls.Add(btnClearSelection);
         filterBar.Controls.Add(lblSelection);
-        var actions = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2, Margin = Padding.Empty };
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         actions.Controls.Add(bar, 0, 0);
         btnDatabaseCheck.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         btnDatabaseCheck.Margin = new Padding(7, 3, 0, 3);
         actions.Controls.Add(btnDatabaseCheck, 1, 0);
-        main.Controls.Add(Stack(actions, filterBar), 0, 2);
+        main.Controls.Add(filterBar, 0, 2);
 
         table.Name = "hosts";
         table.Dock = DockStyle.Fill;
@@ -741,6 +751,8 @@ public sealed partial class MainForm : Form
         table.Columns.Add("ntv", "NovaTouch Voucher");
         table.Columns["ksm"].DisplayIndex = table.Columns["serversuite"].DisplayIndex + 1;
         table.Columns["ntv"].DisplayIndex = table.Columns["ntc"].DisplayIndex + 1;
+        foreach (string name in new[] { "payment", "fiscal", "serversuite", "pos", "ntc", "ntv" })
+            table.Columns[name].CellTemplate = new ProgramUpdateCell();
         foreach (DataGridViewColumn column in table.Columns)
         {
             column.HeaderCell = new SizingColumnHeaderCell { Value = column.HeaderText };
@@ -1038,12 +1050,12 @@ public sealed partial class MainForm : Form
         if (local is not null) hosts.Add(local);
         foreach (string value in entries)
             hosts.Add(existing.TryGetValue(value, out HostState? host) ? host : new HostState { Host = value });
+        QueueConfigSave(nameof(UpdaterConfig.Hosts));
         lblFile.Text = entries.Length == 0 ? "Keine Remote-Hosts · Prüfung lokal" : $"{source} ({entries.Length})";
         RebuildRows();
         UpdateSummary();
         UpdateButtons();
         Log("SYSTEM", $"Remote-Hostliste aktualisiert ({source}): {added} hinzugefügt, {removed} entfernt");
-        QueueConfigSave(nameof(UpdaterConfig.Hosts));
     }
 
     private HostState[] SelectedHosts() => ExecutionHosts().Where(host => host.IsSelected).ToArray();
@@ -1597,6 +1609,8 @@ public sealed partial class MainForm : Form
                         h.Phase = "Paketprüfung " + (ex is OperationCanceledException ? "abgebrochen" : "fehlgeschlagen");
                         h.UpdateFailed = true;
                         h.Error = ex is OperationCanceledException ? "" : ex.Message;
+                        if (ex is not OperationCanceledException)
+                            foreach (var component in HostUpdateState.Each(h.Updates!.Pending)) h.Updates.Fail(component, ex.Message);
                     });
                 throw;
             }
@@ -1620,6 +1634,8 @@ public sealed partial class MainForm : Form
             foreach (HostState host in selected) CountCompleted();
             Log("SYSTEM", "Update-Durchlauf abgeschlossen.");
         });
+        hasCompletedUpdate = true;
+        if (!IsDisposed) UpdateButtons();
     }
 
     private async Task UpdateHostAsync(HostState host, CancellationToken token, Func<TimeSpan, CancellationToken, Task>? delay = null)
@@ -1701,6 +1717,7 @@ public sealed partial class MainForm : Form
         {
             Mark(host, h =>
             {
+                state.StopActiveComponents();
                 h.UpdateFailed = state.Pending != UpdateComponents.None;
                 if (!string.IsNullOrWhiteSpace(state.ErrorText)) h.Error = state.ErrorText;
                 h.Result = "Abgebrochen"; h.Phase = "Update abgebrochen";
@@ -1908,7 +1925,11 @@ public sealed partial class MainForm : Form
         WorkerResult result = await runner.RunAsync(request, ev =>
         {
             Log(host.Host, ev.Phase + ": " + ev.Message);
-            Mark(host, h => h.ApplyProgress(ev));
+            Mark(host, h =>
+            {
+                h.ApplyProgress(ev);
+                if (action == "update") h.Updates?.ReportProgress(components, ev);
+            });
         }, ct);
         if (action == "scan")
         {
@@ -1954,7 +1975,6 @@ public sealed partial class MainForm : Form
             foreach (HostState host in targets)
                 Mark(host, h => h.FinishRun(cancelled || cancellation.IsCancellationRequested, batchError));
             cancellation.Dispose(); cancellation = null; busy = false;
-            hasCompletedRun = true;
             preparedPackageHashes = null;
             activeAdditionalFiles = [];
             activeInstallHashComponents = UpdateComponents.All;
@@ -2037,13 +2057,7 @@ public sealed partial class MainForm : Form
         cells["connection"].ToolTipText = connectionToolTip;
         cells["dotnet48"].Value = DisplayText.DotNet48(h.DotNet48Installed);
         cells["dotnet48"].ToolTipText = DisplayText.DotNet48Description(h.DotNet48Installed);
-        cells["payment"].Value = h.Payment;
-        cells["fiscal"].Value = h.Fiscal;
-        cells["serversuite"].Value = h.ServerSuite;
         cells["serversuite"].ToolTipText = DisplayText.ServiceInstances(h.Services.Where(s => s.Kind == "serversuite"), h.ServerSuite);
-        cells["pos"].Value = h.PosVersion;
-        cells["ntc"].Value = h.NtcVersion;
-        cells["ntv"].Value = h.NtvVersion;
         cells["ntv"].ToolTipText = string.Join(Environment.NewLine, h.InstalledPrograms.Where(program => program.Kind == "ntv")
             .Select(program => program.DisplayName + ": " + (program.Version.Length == 0 ? "Version unbekannt" : program.Version)));
         cells["ksm"].Value = h.KsmVersion;
@@ -2063,6 +2077,7 @@ public sealed partial class MainForm : Form
         cells["information"].ToolTipText = info;
         cells["result"].Value = h.Result == "Bereits aktuell / übersprungen" ? "Aktuell" : h.Result;
         cells["result"].ToolTipText = h.Result;
+        PaintProgramUpdates(h);
     }
 
     private void UpdateSummary()
@@ -2227,7 +2242,7 @@ public sealed partial class MainForm : Form
             local.Row!.Cells["include"].ReadOnly = !idle || LocalFallback;
         btnWinRm.Visible = Mode != UpdateExecutionMode.Local;
         btnWinRm.Enabled = idle;
-        btnDatabaseCheck.Visible = selected.Length > 0;
+        btnDatabaseCheck.Visible = betaFeatures?.Enabled == true && selected.Length > 0;
         btnDatabaseCheck.Enabled = idle && selected.Length > 0;
         btnUpdate.Enabled = idle && UpdateTargets(false).Length > 0;
         btnServicePacks.Enabled = idle && selected.Length > 0;
@@ -2238,7 +2253,7 @@ public sealed partial class MainForm : Form
         btnSendCommand.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnRetry.Visible = betaFeatures?.Enabled == true && !busy && ExecutionHosts().Any(h => h.CanRetryUpdate);
         btnRetry.Enabled = idle && selected.Any(h => h.CanRetryUpdate);
-        btnExport.Visible = hasCompletedRun;
+        btnExport.Visible = hasCompletedUpdate;
         btnExport.Enabled = idle && hosts.Count > 0;
         btnCancel.Enabled = busy || selfUpdating || loadingPackages || preparingDatabaseUpload;
         nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle; chkForceUpdate.Enabled = idle;

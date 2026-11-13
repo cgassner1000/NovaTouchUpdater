@@ -56,6 +56,10 @@ internal static partial class Program
                 !File.ReadAllText(paths.ConfigFile).Contains("Synthetic changed password"), "text input is automatically saved after a short pause and passwords remain encrypted");
             Call(form, "ApplyRemoteHosts", new[] { "HOST-A.invalid", "HOST-B.invalid" }, "synthetic editor");
             Assert(AppConfigStore.Load(paths.ConfigFile).Settings.Hosts!.SequenceEqual(["HOST-A.invalid", "HOST-B.invalid"]), "editing the remote host list persists it immediately");
+            Call(form, "ApplyRemoteHosts", new[] { "HOST-B.invalid", "HOST-A.invalid" }, "synthetic reorder");
+            Assert(AppConfigStore.Load(paths.ConfigFile).Settings.Hosts!.SequenceEqual(["HOST-B.invalid", "HOST-A.invalid"]), "reordering hosts is automatically persisted");
+            Call(form, "ApplyRemoteHosts", Array.Empty<string>(), "synthetic clear");
+            Assert(AppConfigStore.Load(paths.ConfigFile).Settings.Hosts is { Length: 0 }, "clearing the host list is automatically persisted without saving the managed local host");
             byte[] original = File.ReadAllBytes(paths.ConfigFile);
             var upload = Field<CheckBox>(form, "chkUploadToZzzSoftware");
             using (File.Open(paths.ConfigFile, FileMode.Open, FileAccess.Read, FileShare.Read)) upload.Checked = !upload.Checked;

@@ -31,7 +31,11 @@ internal static partial class Program
             var retry = Field<Button>(form, "btnRetry");
             var cancel = Field<Button>(form, "btnCancel");
             Assert(upload.Parent == navigation && upload.Text.Length == 0 && report.Parent == navigation && report.Text.Length == 0 && !report.Visible,
-                "upload and report use sidebar symbols and the report stays hidden until a run has completed");
+                "upload and report use sidebar symbols and the report stays hidden until an update has completed");
+            var command = Field<Button>(form, "btnSendCommand");
+            Assert(command.Parent == navigation && command.Text.Length == 0 && command.AccessibleName == "Befehl senden" &&
+                Field<Button>(form, "btnUpdate").Text == "Update starten" && !Field<Button>(form, "btnDatabaseCheck").Visible,
+                "commands use a sidebar symbol, Update starten uses its new caption and Database Check requires advanced activation");
             var hostsMenu = All(canvas).OfType<ExpandableSection>().Single(section => section.Name == "hostsCard");
             Assert(All(hostsMenu).Contains(Field<Button>(form, "btnWinRm")) && !All(canvas).OfType<Button>().Any(button => button.Text == "Versionen prüfen"),
                 "WinRM configuration belongs to Remote Hosts and table refresh replaces the scan text button");
@@ -53,18 +57,21 @@ internal static partial class Program
             Assert(worker.Requests.Count == 4 && worker.Requests.All(request => request.Host != hosts[2].Host),
                 "the selection header refresh checks all selected hosts");
             Assert(selected.SequenceEqual(hosts.Select(host => host.IsSelected)) &&
-                selected.SequenceEqual(hosts.Select(host => host.Row!.Cells["include"].Value is true)) && report.Visible && report.Enabled,
-                "header refresh leaves every selection checkbox unchanged and exposes the completed report");
+                selected.SequenceEqual(hosts.Select(host => host.Row!.Cells["include"].Value is true)) && !report.Visible,
+                "header refresh leaves every selection checkbox unchanged and cannot expose an update report");
             hosts[0].Updates = new(UpdateComponents.Payment);
             hosts[0].Updates!.Fail(UpdateComponents.Payment, "Synthetic failure");
             hosts[0].UpdateFailed = true; hosts[0].Result = "Fehler";
             Call(form, "UpdateButtons");
             Assert(!retry.Visible, "a failed run does not expose retry before advanced activation");
+            // Render the post-update layout; the actual update lifecycle is checked in AutoCompilationTests.
+            SetField(form, "hasCompletedUpdate", true);
+            Call(form, "UpdateButtons");
             canvas.Controls.Remove(content); form.Controls.Add(content);
             EnableAdvanced(form);
             form.Show(); Application.DoEvents();
-            Assert(retry.Visible && Field<Button>(form, "btnCompileSoftware").Visible,
-                "advanced activation exposes manual compilation and retry for the existing failure");
+            Assert(retry.Visible && Field<Button>(form, "btnCompileSoftware").Visible && Field<Button>(form, "btnDatabaseCheck").Visible,
+                "advanced activation exposes manual compilation, Database Check and retry for the existing failure");
             hosts[0].ConnectionState.SetForegroundStatus("Verbunden", true);
             Call(form, "PaintRow", hosts[0]);
             foreach (string mode in new[] { "Light", "Dark" })
@@ -80,6 +87,10 @@ internal static partial class Program
                         "cancel and advanced retry remain ordered under the table at " + width + "px in " + mode);
                     Assert(upload.Top > All(form).Single(control => control.Name == "hostsLauncher").Bottom,
                         "upload stays beneath the remote-host symbol");
+                    Rectangle packages = InForm(form, All(form).Single(control => control.Name == "localUpdateCard"));
+                    Rectangle update = InForm(form, Field<Button>(form, "btnUpdate"));
+                    Assert(update.Left == packages.Left && update.Top >= packages.Bottom && update.Top - packages.Bottom < 24 && command.Parent == navigation,
+                        "update actions stay flush directly under the installation card even with every sidebar action visible");
                     using var bitmap = new Bitmap(form.Width, form.Height);
                     form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
                     bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "actions-" + mode.ToLowerInvariant() + "-" + width + ".png"));

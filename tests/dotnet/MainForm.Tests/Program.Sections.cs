@@ -48,9 +48,9 @@ internal static partial class Program
                 var configuration = settingsLauncher.Parent!.Parent!;
                 var actionBar = Field<Button>(form, "btnUpdate").Parent!.Parent!;
                 Assert(settingsLauncher.Parent.Bottom <= configuration.Height &&
-                    InForm(form, actionBar).Top >= InForm(form, configuration).Bottom &&
-                    InForm(form, actionBar).Left == InForm(form, configuration).Left && actionBar.Width == configuration.Width,
-                    "the action bar below the configuration area keeps its full width");
+                    InForm(form, actionBar).Top >= InForm(form, packages).Bottom &&
+                    InForm(form, actionBar).Left == InForm(form, packages).Left && InForm(form, actionBar).Right == InForm(form, configuration).Right,
+                    "the action bar starts flush under the installation card beside the icon rail");
                 var packageList = Field<TableLayoutPanel>(form, "selectedPackagesTable");
                 Assert(packageList.RowCount == 7 && packageList.Controls.OfType<Button>().Count() == 7 &&
                     packageList.Controls.Cast<Control>().All(control => control.Right <= packageList.Width && control.Bottom <= packageList.Height),

@@ -81,7 +81,7 @@ public sealed partial class MainForm
             var columns = table.Columns.Cast<DataGridViewColumn>().Where(column => column.Visible).OrderBy(column => column.DisplayIndex).ToArray();
             if (columns.Length == 0) { table.HorizontalScrollingOffset = 0; return; }
             int selection = Array.FindIndex(columns, column => column.Name == "include");
-            int checkbox = selection < 0 ? 0 : (int)Math.Ceiling(36 * table.DeviceDpi / 96F);
+            int checkbox = selection < 0 ? 0 : (int)Math.Ceiling(32 * table.DeviceDpi / 96F);
             var minimums = new int[columns.Length];
             var desired = new int[columns.Length];
             int info = Array.FindIndex(columns, column => column.Name == "information");

@@ -73,6 +73,7 @@ internal sealed class HostState
 
     public void FinishRun(bool cancelled = false, string error = "")
     {
+        if (cancelled || error.Length > 0) Updates?.StopActiveComponents(cancelled ? "" : error);
         // A host may already have its own final result while others still run.
         if (Result != "Läuft") return;
         if (error.Length > 0)

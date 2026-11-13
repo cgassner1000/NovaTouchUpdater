@@ -51,8 +51,10 @@ internal static partial class Program
                     "update confirmation asks to start the selection without technical workflow explanations");
                 return true;
             }));
+            bool firstUpdateInProgress = true;
             worker.OnCompile = (request, progress, ct) =>
             {
+                Assert(!firstUpdateInProgress || !Field<Button>(form, "btnExport").Visible, "the first update report stays hidden while the update is active");
                 Assert(ct.CanBeCanceled && !toggle.Enabled && local.Result == "Läuft" && local.Error.Length == 0,
                     "automatic compilation locks settings, clears old displayed errors and lets an accepted host finish");
                 Assert(request.LocalExecution && request.Username.Length == 0 && request.IrisUseTls && request.MsiPackages.Length == 0 &&
@@ -66,6 +68,8 @@ internal static partial class Program
             };
             worker.FailCompilation = true;
             Complete((Task)Call(form, "RunUpdatesAsync", false)!);
+            firstUpdateInProgress = false;
+            Assert(Field<Button>(form, "btnExport").Visible, "a completed update exposes its report even when post-install compilation failed");
             Assert(worker.Requests.Select(request => request.Action).SequenceEqual(["update", "compile-software-packages", "publish-msi-packages"]) && preparations == 1 &&
                 local.Updates is { NtcInstalled: true, Pending: UpdateComponents.None, SoftwareCompilationCompleted: false, DatabaseUploadCompleted: true } &&
                 local.CanRetryUpdate && local.Error.Contains("Synthetic compiler error") && local.Phase.Contains("kompilieren fehlgeschlagen"),

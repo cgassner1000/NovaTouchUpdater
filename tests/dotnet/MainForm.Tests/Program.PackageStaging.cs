@@ -46,8 +46,8 @@ internal static partial class Program
             Assert(staged.LocalExecution && worker.Requests.First().Action == "stage-packages" && worker.Requests.Count(r => r.Action == "update") == 4,
                 "the confirmed update execution stages all chosen LOCALHOST packages before individual component updates");
             Assert(worker.Requests.All(r => r.Action != "publish-msi-packages") &&
-                ((string)Call(form, "UpdateConfirmation", (object)new[] { local }, components, false)!).Contains("zzzSoftware"),
-                "local updates without local IRIS instances skip database upload and the confirmation describes the upload step");
+                ((string)Call(form, "UpdateConfirmation", (object)new[] { local }, components, false)!).TrimEnd().EndsWith('?'),
+                "local updates without local IRIS instances skip database upload and the confirmation asks to start the selected updates");
             Assert(staged.TransferFiles.Length == 4 && staged.TransferFiles.Any(f => f.RelativePath == @"cabinets\data.cab") &&
                 staged.TransferFiles.Select(f => f.RelativePath).Distinct(StringComparer.OrdinalIgnoreCase).Count() == 4 && staged.TransferFiles.All(f => f.Sha256.Length == 64),
                 "local staging includes ZIPs, MSI payloads and companion cabinets while deduplicating a shared ZIP");

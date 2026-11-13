@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace NovaTouchUpdater;
 
-internal enum SectionNavigationIcon { Settings, RemoteHosts, Upload, Report }
+internal enum SectionNavigationIcon { Settings, RemoteHosts, Upload, Report, Command }
 
 internal sealed class SectionNavigationButton : AppButton
 {
@@ -77,11 +77,19 @@ internal sealed class SectionNavigationButton : AppButton
             e.Graphics.DrawLine(pen, Point(0, 4), Point(0, -11));
             e.Graphics.DrawLines(pen, new[] { Point(-6, -5), Point(0, -11), Point(6, -5) });
         }
-        else
+        else if (icon == SectionNavigationIcon.Report)
         {
             e.Graphics.DrawLines(pen, new[] { Point(-9, -13), Point(4, -13), Point(10, -7), Point(10, 13), Point(-9, 13), Point(-9, -13) });
             e.Graphics.DrawLines(pen, new[] { Point(4, -13), Point(4, -7), Point(10, -7) });
             foreach (float y in new[] { -2F, 3F, 8F }) e.Graphics.DrawLine(pen, Point(-4, y), Point(5, y));
+        }
+        else
+        {
+            PointF corner = Point(-13, -10);
+            using var terminal = UiTheme.RoundRectangle(new RectangleF(corner.X, corner.Y, 26 * scale, 20 * scale), 2 * scale);
+            e.Graphics.DrawPath(pen, terminal);
+            e.Graphics.DrawLines(pen, new[] { Point(-7, -4), Point(-3, 0), Point(-7, 4) });
+            e.Graphics.DrawLine(pen, Point(1, 4), Point(7, 4));
         }
     }
 

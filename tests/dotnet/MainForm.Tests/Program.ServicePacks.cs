@@ -39,14 +39,14 @@ internal static partial class Program
         image.DrawToBitmap(before, image.ClientRectangle);
         Cursor cursor = image.Cursor;
         Assert(!gate.Enabled && !betaDivider.Visible && button.Visible && !compile.Visible && button.Enabled && compile.Enabled && !tls.Visible && autoCompile.Visible &&
-            autoCompile is AppToggleSwitch { Checked: false, Text: "nach Installation kompilieren" } && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
+            autoCompile is AppToggleSwitch { Checked: false, Text: "nach Installation kompilieren" } && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && !check.Visible,
             "servicepacks and automatic compilation remain available while manual compilation and IRIS TLS require advanced activation");
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         gate.RegisterClick(check, true);
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         Assert(!gate.Enabled && popups == 0 && button.Visible && !compile.Visible, "another control resets the five logo clicks while advanced actions stay hidden");
         var fifth = Message.Create(image.Handle, 0x0203, IntPtr.Zero, IntPtr.Zero);
-        Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && betaDivider.Visible && button.Visible && compile.Visible && tls.Visible && autoCompile.Visible,
+        Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && betaDivider.Visible && button.Visible && compile.Visible && tls.Visible && autoCompile.Visible && check.Visible,
             "the fifth logo click reveals IRIS TLS while regular actions remain available");
         tlsParent.Controls.Add(tls, tlsCell.Column, tlsCell.Row);
         tlsParent.Controls.Add(autoCompile, autoCompileCell.Column, autoCompileCell.Row);

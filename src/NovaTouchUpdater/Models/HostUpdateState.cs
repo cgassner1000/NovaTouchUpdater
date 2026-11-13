@@ -7,6 +7,9 @@ internal enum UpdateComponents
     ZipServices = Payment | Fiscal | ServerSuite, Msi = Pos | Ntc | Ntv | Oman, All = ZipServices | Msi
 }
 
+internal enum ComponentUpdateStatus { Updating, Succeeded, Failed, Cancelled }
+internal readonly record struct ComponentUpdateProgress(ComponentUpdateStatus Status, int? Percent = null, string Phase = "", string Message = "");
+
 // One update run, including automatic attempts and later manual retries.
 // Only verified successes leave Pending; scans and commands do not reset it.
 internal sealed class HostUpdateState(UpdateComponents components)
@@ -82,6 +85,25 @@ internal sealed class HostUpdateState(UpdateComponents components)
     }
     internal void RecordDatabaseUploads(IEnumerable<string> kinds) => SuccessfulPosUploadInRun |= kinds.Contains("pos", StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<UpdateComponents, string> errors = [];
+    private readonly Dictionary<UpdateComponents, ComponentUpdateProgress> componentProgress = [];
+
+    internal ComponentUpdateProgress? ProgressFor(UpdateComponents component)
+        => componentProgress.TryGetValue(component, out var progress) ? progress : null;
+
+    internal void ReportProgress(UpdateComponents component, WorkerEvent progress)
+    {
+        foreach (var part in Each(component))
+            if (componentProgress.TryGetValue(part, out var current) && current.Status == ComponentUpdateStatus.Updating)
+                componentProgress[part] = new(ComponentUpdateStatus.Updating,
+                    progress.ProgressPercent is int percent ? Math.Clamp(percent, 0, 100) : null, progress.Phase, progress.Message);
+    }
+
+    internal void StopActiveComponents(string error = "")
+    {
+        foreach (var part in componentProgress.Where(pair => pair.Value.Status == ComponentUpdateStatus.Updating).Select(pair => pair.Key).ToArray())
+            if (error.Length > 0) Fail(part, error);
+            else componentProgress[part] = new(ComponentUpdateStatus.Cancelled);
+    }
 
     internal static IEnumerable<UpdateComponents> Each(UpdateComponents components) =>
         new[] { UpdateComponents.Payment, UpdateComponents.Fiscal, UpdateComponents.ServerSuite, UpdateComponents.Pos,
@@ -100,13 +122,23 @@ internal sealed class HostUpdateState(UpdateComponents components)
     };
 
     internal bool WasAttempted(UpdateComponents component) => (Attempted & component) != 0;
-    internal void BeginComponent(UpdateComponents component) => Attempted |= component;
+    internal void BeginComponent(UpdateComponents component)
+    {
+        Attempted |= component;
+        foreach (var part in Each(component))
+        {
+            errors.Remove(part);
+            componentProgress[part] = new(ComponentUpdateStatus.Updating);
+        }
+    }
     internal void RestrictTo(UpdateComponents allowed)
     {
         Pending &= allowed;
         Attempted &= allowed;
         foreach (UpdateComponents component in errors.Keys.Where(component => (component & allowed) == 0).ToArray())
             errors.Remove(component);
+        foreach (var component in componentProgress.Keys.Where(component => (component & allowed) == 0).ToArray())
+            componentProgress.Remove(component);
     }
     internal string ErrorText => string.Join(" | ", Each(Pending).Where(errors.ContainsKey).Select(c => Label(c) + ": " + errors[c])
         .Concat(new[] { SoftwareCompilationError, DatabaseUploadError, PosRestartError, AdditionalFilesError }.Where(error => error.Length > 0)));
@@ -115,11 +147,22 @@ internal sealed class HostUpdateState(UpdateComponents components)
     {
         if (!result.Success) throw new ArgumentException("Nur verifizierte Komponenten dürfen als abgeschlossen markiert werden.", nameof(result));
         Pending &= ~component;
-        errors.Remove(component);
+        foreach (var part in Each(component))
+        {
+            errors.Remove(part);
+            componentProgress[part] = new(ComponentUpdateStatus.Succeeded, 100, "Update verifiziert", result.Message);
+        }
         Changed |= result.Changed;
         AllSkipped &= result.Skipped;
         NtcInstalled |= (component & UpdateComponents.Ntc) != 0 && result.Changed && !result.Skipped;
     }
 
-    internal void Fail(UpdateComponents component, string error) => errors[component] = error;
+    internal void Fail(UpdateComponents component, string error)
+    {
+        foreach (var part in Each(component))
+        {
+            errors[part] = error;
+            componentProgress[part] = new(ComponentUpdateStatus.Failed, null, "Update fehlgeschlagen", error);
+        }
+    }
 }
