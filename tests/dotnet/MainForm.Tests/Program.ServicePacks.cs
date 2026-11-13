@@ -38,13 +38,13 @@ internal static partial class Program
         using var before = new Bitmap(image.Width, image.Height);
         image.DrawToBitmap(before, image.ClientRectangle);
         Cursor cursor = image.Cursor;
-        Assert(!gate.Enabled && !betaDivider.Visible && button.Visible && compile.Visible && button.Enabled && compile.Enabled && !tls.Visible && autoCompile.Visible &&
+        Assert(!gate.Enabled && !betaDivider.Visible && button.Visible && !compile.Visible && button.Enabled && compile.Enabled && !tls.Visible && autoCompile.Visible &&
             autoCompile is AppToggleSwitch { Checked: false, Text: "nach Installation kompilieren" } && tls.Text == "IRIS-Verbindung mit TLS" && check.Text == "Check Database" && check.Visible,
-            "servicepacks, compilation and its automatic option are available without activation while IRIS TLS remains advanced");
+            "servicepacks and automatic compilation remain available while manual compilation and IRIS TLS require advanced activation");
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
         gate.RegisterClick(check, true);
         for (int click = 0; click < 4; click++) gate.RegisterClick(image, true);
-        Assert(!gate.Enabled && popups == 0 && button.Visible && compile.Visible, "another control resets the five logo clicks without hiding regular actions");
+        Assert(!gate.Enabled && popups == 0 && button.Visible && !compile.Visible, "another control resets the five logo clicks while advanced actions stay hidden");
         var fifth = Message.Create(image.Handle, 0x0203, IntPtr.Zero, IntPtr.Zero);
         Assert(!gate.PreFilterMessage(ref fifth) && gate.Enabled && popups == 1 && betaDivider.Visible && button.Visible && compile.Visible && tls.Visible && autoCompile.Visible,
             "the fifth logo click reveals IRIS TLS while regular actions remain available");
@@ -247,7 +247,7 @@ internal static partial class Program
         await (Task)Call(form, "ImportServicePackFilesAsync", new object[] { new[] { classes, routines } })!;
         Assert(worker.Requests.Count(request => request.Action == "import-servicepacks") == 1 &&
             Targets(form).Count(host => host.Log.Any(line => line.Contains("Servicepacks: Abgebrochen; Host wurde nicht gestartet."))) == 3,
-            "cancellation completes the accepted host and prevents all remaining host imports");
+            "cancellation reaches the active host and prevents all remaining host imports");
         using var actualWorker = new WorkerRunner();
         WorkerResult rejectedRequest = await actualWorker.RunAsync(new WorkerRequest { Action = "import-servicepacks", LocalExecution = true }, _ => { }, CancellationToken.None);
         Assert(!rejectedRequest.Success && rejectedRequest.Error.Contains("Keine XML-Servicepacks"),
@@ -265,8 +265,8 @@ internal static partial class Program
             if (request.Action == "database-inventory") return Task.FromResult(new WorkerResult { Success = true,
                 IrisInstances = [new() { Name = "REMOTE", Directory = "C:\\IRIS", SuperServerPort = 1972, Namespaces = ["USER", "%SYS", "APP"] },
                     new() { Name = "REMOTE2", Directory = "C:\\IRIS2", SuperServerPort = 56772, Namespaces = ["USER", "%SYS", "APP"] }] });
-            Assert(request.Action == "import-servicepacks" && !ct.CanBeCanceled && request.ServicePackFiles.All(file => File.Exists(file.Path)),
-                "an accepted host uses existing XML paths and finishes without forced cancellation");
+            Assert(request.Action == "import-servicepacks" && ct.CanBeCanceled && request.ServicePackFiles.All(file => File.Exists(file.Path)),
+                "an active host uses existing XML paths and receives the cancellation token");
             OnImport?.Invoke();
             if (FailImports) return Task.FromResult(new WorkerResult { Success = false, Error = "simulated import error", Message = "Import fehlgeschlagen" });
             return Task.FromResult(new WorkerResult { Success = true, Message = "importiert und kompiliert", ServicePackResults =

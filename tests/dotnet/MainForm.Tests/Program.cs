@@ -16,6 +16,7 @@ internal static partial class Program
             UiTheme.SystemDarkReader = () => false; // Existing light-theme fixtures are independent of the developer's Windows theme.
             UiTheme.SetMode("System");
             if (args.Contains("--theme")) { ThemeTests(); return 0; }
+            if (args.Contains("--actions")) { ActionLayoutTests(); return 0; }
             if (args.Contains("--host-log")) { HostLogTests(); return 0; }
             if (args.Contains("--user-data")) { UserDataConfigTests(); return 0; }
             if (args.Contains("--autosave")) { ConfigAutoSaveTests(); return 0; }
@@ -28,7 +29,7 @@ internal static partial class Program
             if (args.Contains("--beta")) { BetaFeatureTests(); return 0; }
             if (args.Contains("--builds")) { Complete(BuildChannelCatalogTests()); BuildChannelSelectionTests(); return 0; }
             if (args.Contains("--compile-software")) { Complete(SoftwareCompilationTests()); return 0; }
-            if (args.Contains("--servicepacks")) { Complete(ServicePackTests()); return 0; }
+            if (args.Contains("--servicepacks")) { Complete(ServicePackTests(), TimeSpan.FromSeconds(60)); return 0; }
             if (args.Contains("--administrator")) { AdministratorTests(); return 0; }
             if (args.Contains("--toggles")) { TogglePaintingTests(); return 0; }
             if (args.Contains("--feedback")) { FeedbackTests(); return 0; }
@@ -56,10 +57,11 @@ internal static partial class Program
             {
                 TogglePaintingTests();
                 ThemeTests();
+                ActionLayoutTests();
                 FeedbackTests();
                 AdministratorTests();
                 BetaFeatureTests();
-                Complete(ServicePackTests());
+                Complete(ServicePackTests(), TimeSpan.FromSeconds(60));
                 Complete(SoftwareCompilationTests());
                 ExpandableSectionTests();
                 FormattingTests();
@@ -116,10 +118,10 @@ internal static partial class Program
 
     private static T Field<T>(MainForm form, string name) => (T)typeof(MainForm).GetField(name, Private)!.GetValue(form)!;
 
-    private static void Complete(Task task)
+    private static void Complete(Task task, TimeSpan? timeoutLimit = null)
     {
         var timeout = System.Diagnostics.Stopwatch.StartNew();
-        while (!task.IsCompleted && timeout.Elapsed < TimeSpan.FromSeconds(15)) { Application.DoEvents(); Thread.Sleep(5); }
+        while (!task.IsCompleted && timeout.Elapsed < (timeoutLimit ?? TimeSpan.FromSeconds(15))) { Application.DoEvents(); Thread.Sleep(5); }
         Assert(task.IsCompleted, "the simulated operation completes without a real remote worker");
         task.GetAwaiter().GetResult();
         Application.DoEvents();
@@ -234,7 +236,7 @@ internal static partial class Program
         Application.DoEvents();
         Assert(Targets(form) is [{ IsLocal: true }], "Space toggles the last remote checkbox and restores the local target");
         Assert(new[] { "btnTransfer", "btnSendCommand", "btnUpdate", "btnRetry" }
-            .All(name => !Field<Button>(form, name).Enabled) && Field<Button>(form, "btnScan").Enabled && Field<Button>(form, "btnWinRm").Enabled,
+            .All(name => !Field<Button>(form, name).Enabled) && RefreshEnabled(form) && Field<Button>(form, "btnWinRm").Enabled,
             "without selected remote hosts, remote actions are disabled while local checking and WinRM diagnosis remain available");
         Complete((Task)Call(form, "RunScansAsync")!);
         Complete((Task)Call(form, "TransferFilesAsync")!);
@@ -314,8 +316,8 @@ internal static partial class Program
                 for (int pass = 0; pass < 3; pass++) Layout(canvas);
                 Application.DoEvents();
                 Rectangle checkbox = table.Rows[0].Cells["include"].ContentBounds;
-                Assert(!checkbox.IsEmpty && table.Columns["include"].HeaderText.Length == 0 && table.Columns["include"].Width <= checkbox.Width + 16 * table.DeviceDpi / 96F,
-                    $"the untitled selection column has only room for its checkbox at {scale:P0}: header='{table.Columns["include"].HeaderText}', width={table.Columns["include"].Width}, checkbox={checkbox}");
+                Assert(!checkbox.IsEmpty && table.Columns["include"].HeaderText.Length == 0 && table.Columns["include"].Width <= checkbox.Width + 26 * table.DeviceDpi / 96F,
+                    $"the untitled selection column leaves room for the header refresh icon at {scale:P0}: header='{table.Columns["include"].HeaderText}', width={table.Columns["include"].Width}, checkbox={checkbox}");
                 Rectangle status = table.GetCellDisplayRectangle(table.Columns["result"].Index, 0, false);
                 int rightEdge = table.ClientSize.Width - table.Controls.OfType<VScrollBar>().Where(scrollbar => scrollbar.Visible).Sum(scrollbar => scrollbar.Width);
                 Assert(status.Width > 0 && Math.Abs(status.Right - rightEdge) <= 1,

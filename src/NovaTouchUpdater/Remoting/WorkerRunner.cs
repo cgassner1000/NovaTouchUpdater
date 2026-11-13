@@ -279,7 +279,7 @@ public sealed class WorkerRunner : IWorkerRunner
         object gate = new();
         process.OutputDataReceived += (_, e) =>
         {
-            if (string.IsNullOrWhiteSpace(e.Data)) return;
+            if (ct.IsCancellationRequested || string.IsNullOrWhiteSpace(e.Data)) return;
             try
             {
                 using var doc = JsonDocument.Parse(e.Data);
@@ -308,12 +308,14 @@ public sealed class WorkerRunner : IWorkerRunner
 
         try
         {
+            ct.ThrowIfCancellationRequested();
             if (request.Action is "publish-msi-packages" or "import-servicepacks")
                 request.DatabaseProviderDirectory = irisProvider.EnsureExtracted();
+            ct.ThrowIfCancellationRequested();
             if (!process.Start()) throw new InvalidOperationException("Windows PowerShell konnte nicht gestartet werden.");
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request));
+            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request).AsMemory(), ct);
             process.StandardInput.Close();
             await process.WaitForExitAsync(ct);
             // WaitForExit() also waits for the asynchronous stdout/stderr reader callbacks.
@@ -330,7 +332,8 @@ public sealed class WorkerRunner : IWorkerRunner
         }
         catch (OperationCanceledException)
         {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            try { if (process.Id > 0 && !process.HasExited) process.Kill(entireProcessTree: true); }
+            catch (InvalidOperationException) { /* The worker has already exited or was never started. */ }
             throw;
         }
         catch (Exception ex)

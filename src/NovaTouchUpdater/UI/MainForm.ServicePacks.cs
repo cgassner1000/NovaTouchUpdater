@@ -92,13 +92,11 @@ public sealed partial class MainForm
                             RemoteInstallPath = plan.Host.IsLocal ? "" : activeRemoteInstallPath,
                             ServicePackFiles = plan.Host.IsLocal ? selection.LocalFiles : selection.Files,
                             DatabaseTargets = plan.Targets, IrisUseTls = activeIrisUseTls };
-                        // Like installed-component updates, an accepted host finishes.
-                        // Cancellation prevents the next host from starting.
                         result = await runner.RunAsync(request, progress =>
                         {
                             Log(plan.Host.Host, progress.Phase + ": " + progress.Message);
                             Mark(plan.Host, host => { host.Phase = progress.Phase + ": " + DisplayText.Clean(progress.Message); });
-                        }, CancellationToken.None);
+                        }, ct);
                     }
                     Log(plan.Host.Host, "Servicepacks: " + result.Message + (result.Error.Length > 0 ? " | " + result.Error : ""));
                     Mark(plan.Host, host =>

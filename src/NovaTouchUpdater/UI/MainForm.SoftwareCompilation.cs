@@ -7,13 +7,12 @@ public sealed partial class MainForm
     private Action<IReadOnlyList<SoftwareCompilationHostOutcome>>? showSoftwareCompilationResults = null;
     private bool activeCompileAfterInstallation;
 
-    private Task<WorkerResult> RunSoftwareCompilationAsync(HostState host, IrisUploadTarget[] targets)
+    private Task<WorkerResult> RunSoftwareCompilationAsync(HostState host, IrisUploadTarget[] targets, CancellationToken ct)
     {
         var request = new WorkerRequest { Action = "compile-software-packages", Host = host.Host, LocalExecution = host.IsLocal,
             Username = host.IsLocal ? "" : activeUser, Password = host.IsLocal ? "" : activePassword,
             UseSsl = !host.IsLocal && activeSsl, HttpsPort = activeHttpsPort,
             DatabaseTargets = targets, IrisUseTls = activeIrisUseTls };
-        // An accepted host finishes; cancellation skips subsequent hosts/phases.
         return runner.RunAsync(request, progress =>
         {
             Log(host.Host, progress.Phase + ": " + progress.Message);
@@ -24,7 +23,7 @@ public sealed partial class MainForm
                 h.Phase = progress.Phase == "Softwarepakete vorbereiten" ? progress.Phase : DisplayText.Clean(progress.Message);
                 h.SetProgress(progress.ProgressPercent);
             });
-        }, CancellationToken.None);
+        }, ct);
     }
 
     private async Task CompileAfterNtcInstallationAsync(HostState host, CancellationToken ct, Lazy<Task<IrisUploadTarget[]>> localTargets)
@@ -42,7 +41,7 @@ public sealed partial class MainForm
             if (targets.Select(target => target.Port).Distinct().Count() != targets.Length)
                 throw new InvalidDataException("Mehrdeutige IRIS-Instanzen mit demselben SuperServer-Port. Check Database prüfen.");
             Log(host.Host, "Softwarepakete nach NTC-Installation: " + targets.Sum(target => target.Namespaces.Length) + " lokale IRIS-Namespaces.");
-            WorkerResult result = await RunSoftwareCompilationAsync(host, targets);
+            WorkerResult result = await RunSoftwareCompilationAsync(host, targets, ct);
             if (!result.Success) throw new IOException(FriendlyError(result));
             Mark(host, h => state.CompleteSoftwareCompilation(result));
             Log(host.Host, "Softwarepakete nach NTC-Installation => OK " + result.Message);
@@ -104,7 +103,7 @@ public sealed partial class MainForm
                     else if (plan.Targets.Length == 0) result = new() { Success = true, Skipped = true, Message = "Keine IRIS-Namespaces ohne %-Präfix; übersprungen." };
                     else
                     {
-                        result = await RunSoftwareCompilationAsync(plan.Host, plan.Targets);
+                        result = await RunSoftwareCompilationAsync(plan.Host, plan.Targets, ct);
                     }
                     outcomes.Add(new(plan.Host.IsLocal ? Environment.MachineName + " (lokal)" : plan.Host.Host, result));
                     Log(plan.Host.Host, "Softwarepakete kompilieren: " + result.Message + (result.Error.Length > 0 ? " | " + result.Error : ""));

@@ -53,7 +53,7 @@ internal static partial class Program
             }));
             worker.OnCompile = (request, progress, ct) =>
             {
-                Assert(!ct.CanBeCanceled && !toggle.Enabled && local.Result == "Läuft" && local.Error.Length == 0,
+                Assert(ct.CanBeCanceled && !toggle.Enabled && local.Result == "Läuft" && local.Error.Length == 0,
                     "automatic compilation locks settings, clears old displayed errors and lets an accepted host finish");
                 Assert(request.LocalExecution && request.Username.Length == 0 && request.IrisUseTls && request.MsiPackages.Length == 0 &&
                     request.DatabaseTargets.Length == 2 && request.DatabaseTargets[0].Namespaces.SequenceEqual(["USER", "PROG-DEV"]) &&
@@ -70,8 +70,8 @@ internal static partial class Program
                 local.Updates is { NtcInstalled: true, Pending: UpdateComponents.None, SoftwareCompilationCompleted: false, DatabaseUploadCompleted: true } &&
                 local.CanRetryUpdate && local.Error.Contains("Synthetic compiler error") && local.Phase.Contains("kompilieren fehlgeschlagen"),
                 "a real update run compiles only after verified NTC installation, preserves compilation failures and still completes the independent database upload");
-            Assert(Field<Button>(form, "btnRetry").Visible && toggle.Enabled,
-                "automatic compilation failures expose retry and unlock settings when the batch finishes");
+            Assert(!Field<Button>(form, "btnRetry").Visible && toggle.Enabled,
+                "automatic compilation failures keep advanced retry hidden while restoring access to general settings");
             worker.Requests.Clear(); worker.FailCompilation = false;
             Complete((Task)Call(form, "RunUpdatesAsync", true)!);
             Assert(worker.Requests.ToArray() is [{ Action: "compile-software-packages" }] && local.Updates!.SoftwareCompilationCompleted &&

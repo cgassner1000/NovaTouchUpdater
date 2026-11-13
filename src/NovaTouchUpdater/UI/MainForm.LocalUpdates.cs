@@ -92,7 +92,7 @@ public sealed partial class MainForm
         updateToolTip.SetToolTip(browsePackageFiles, "Eine oder mehrere Paketdateien oder zusätzliche Dateien auswählen.");
         updateToolTip.SetToolTip(readPackages, "Die Pakete aus dem eingestellten Quellordner erneut laden.");
         var dropArea = new PackageDropArea();
-        var card = Section("Installations-Pakete", Stack(dropArea, FlowRow(browseSoftware, browsePackageFiles, readPackages), packageStatus));
+        var card = Section("Installations-Pakete", Stack(dropArea, FlowRow(browseSoftware, browsePackageFiles, readPackages, useFolderPackages), packageStatus));
         card.Name = "localUpdateCard";
         EnablePackageDrop(card);
         browseSoftware.Click += async (_, _) =>

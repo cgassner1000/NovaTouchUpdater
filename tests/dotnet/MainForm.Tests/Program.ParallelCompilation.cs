@@ -26,6 +26,7 @@ internal static partial class Program
     {
         var worker = new ParallelCompilationRunner();
         using var form = ParallelCompilationForm(worker, payload);
+        using var operation = new CancellationTokenSource();
         HostState local = Targets(form).Single();
         var remote = new HostState { Host = "REMOTE-POS.invalid", Scanned = true, PosVersion = "1.0.0",
             Updates = new(UpdateComponents.None) { RunId = local.Updates!.RunId } };
@@ -37,7 +38,7 @@ internal static partial class Program
             Interlocked.Increment(ref preparations);
             return discovery.Task;
         }));
-        Task run = (Task)Call(form, "CompleteUpdateRunAsync", targets, CancellationToken.None)!;
+        Task run = (Task)Call(form, "CompleteUpdateRunAsync", targets, operation.Token)!;
         try
         {
             discovery.SetResult([new() { Instance = "IRIS", Port = 1972, Namespaces = ["USER"] }]);
@@ -86,7 +87,7 @@ internal static partial class Program
             worker.Requests.Clear();
             worker.ImmediateSuccess = true;
             // Direct finalization simulates retrying only outstanding work.
-            await (Task)Call(form, "CompleteUpdateRunAsync", targets, CancellationToken.None)!;
+            await (Task)Call(form, "CompleteUpdateRunAsync", targets, operation.Token)!;
             Assert(worker.Requests.Count(request => request.Action == "compile-software-packages") == (test.CompileFails ? 1 : 0) &&
                 worker.Requests.Count(request => request.Action == "publish-msi-packages") == (test.UploadFails ? 2 : 0) && !local.CanRetryUpdate,
                 "a parallel retry repeats only failed compilation/uploads, preserving every successful step");
@@ -112,14 +113,11 @@ internal static partial class Program
             {
                 await Task.WhenAll(cancelling.CompilationStarted.Task, cancelling.LocalUploadStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
                 cancel.Cancel();
-                await WaitForPipelineAsync(() => !local.Updates!.DatabaseUploadRunning);
-                Assert(!run.IsCompleted && local.Updates!.SoftwareCompilationRunning,
-                    "cancelling the upload still waits for an accepted compilation to finish");
-                cancelling.Compilation.SetResult(new WorkerResult { Success = true, Changed = true });
                 bool cancelled = false;
                 try { await run; } catch (OperationCanceledException) { cancelled = true; }
-                Assert(cancelled && local.Result == "Abgebrochen" && local.Updates is { SoftwareCompilationCompleted: true, DatabaseUploadCompleted: false } && local.CanRetryUpdate,
-                    "parallel cancellation preserves completed compilation and the unfinished upload for a targeted retry");
+                Assert(cancelled && local.Result == "Abgebrochen" && local.Updates is { SoftwareCompilationRunning: false, DatabaseUploadRunning: false,
+                    SoftwareCompilationCompleted: false, DatabaseUploadCompleted: false } && local.CanRetryUpdate,
+                    "parallel cancellation interrupts both active workers and preserves their unfinished work for retry");
             }
             finally
             {
@@ -185,10 +183,10 @@ internal static partial class Program
             if (ImmediateSuccess || request.Action == "restart-pos") return Task.FromResult(new WorkerResult { Success = true, Changed = true, DatabaseUploadedKinds = ["pos"] });
             if (request.Action == "compile-software-packages")
             {
-                Assert(!ct.CanBeCanceled, "parallel compilation retains accepted-host cancellation semantics");
+                Assert(ct.CanBeCanceled, "parallel compilation receives the operation cancellation token");
                 CompilationProgress = progress;
                 CompilationStarted.TrySetResult(true);
-                return Compilation.Task;
+                return Compilation.Task.WaitAsync(ct);
             }
             if (request.Action == "publish-msi-packages")
             {

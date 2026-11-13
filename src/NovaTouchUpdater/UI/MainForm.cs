@@ -78,7 +78,6 @@ public sealed partial class MainForm : Form
     private readonly Button btnEditHosts = Button("Host bearbeiten");
     private readonly Button btnWinRm = new AppButton { Text = "WinRM\nkonfigurieren", AccessibleName = "WinRM konfigurieren", AutoSize = false,
         Size = new Size(128, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
-    private readonly Button btnScan = Button("Versionen prüfen");
     private readonly Button btnDatabaseCheck = Button("Check Database");
     private readonly Button btnUpdate = Button("2. Updates starten");
     private readonly Button btnServicePacks = new AppButton { Name = "importServicePacks", Text = "Servicepacks\neinspielen", AutoSize = false,
@@ -87,13 +86,14 @@ public sealed partial class MainForm : Form
         Size = new Size(142, 38), Font = new Font("Segoe UI", 8.5F, FontStyle.Bold), Padding = Padding.Empty };
     private BetaFeatureGate? betaFeatures;
     private Action? showBetaActivated = null;
-    private readonly Button btnTransfer = Button("Upload");
+    private readonly Button btnTransfer = new SectionNavigationButton("Upload", SectionNavigationIcon.Upload);
     private readonly Button btnSendCommand = Button("Befehl senden");
     private readonly Button btnRetry = Button("Fehler erneut versuchen");
-    private readonly Button btnExport = Button("HTML-Bericht erstellen");
+    private readonly Button btnExport = new SectionNavigationButton("Protokoll / HTML-Bericht", SectionNavigationIcon.Report);
     private readonly Button btnCancel = Button("Abbrechen");
     private readonly Button btnSelectAll = Button("Alle auswählen");
     private readonly Button btnClearSelection = Button("Auswahl aufheben");
+    private bool hasCompletedRun;
 
     private string paymentZip = "";
     private string fiscalZip = "";
@@ -428,8 +428,10 @@ public sealed partial class MainForm : Form
         activationImage.Name = "appMark";
         betaFeatures = new BetaFeatureGate(this, activationImage);
         betaFeatures.Register(chkIrisTls);
+        betaFeatures.Register(btnCompileSoftware);
         betaFeatures.Activated += () =>
         {
+            UpdateButtons();
             if (showBetaActivated is { } show) show();
             else BeginInvoke(() => AppMessageBox.Show(this, "Erweiterte Einstellungen aktiviert", "Erweitert", MessageBoxButtons.OK, MessageBoxIcon.Information));
         };
@@ -476,7 +478,7 @@ public sealed partial class MainForm : Form
         targetPath.Controls.Add(txtRemotePath, 1, 0);
         var localCard = CreateLocalUpdateCard();
         localCard.Margin = Padding.Empty;
-        var hostCard = new ExpandableSection("Remote-Hosts", Stack(hostList, lblFile), showExpansionIndicator: false);
+        var hostCard = new ExpandableSection("Remote-Hosts", Stack(hostList, lblFile, FlowRow(btnWinRm)), showExpansionIndicator: false);
         hostCard.Name = "hostsCard";
         hostCard.Margin = Padding.Empty;
         useFolderPackages.Click += (_, _) => UseFolderPackages();
@@ -551,7 +553,6 @@ public sealed partial class MainForm : Form
         chkScanOnStartup.Anchor = AnchorStyles.Left;
         var tips = new ToolTip { AutoPopDelay = 10000, InitialDelay = 350, ReshowDelay = 200 };
         tips.SetToolTip(nScan, "Maximal gleichzeitig geprüfte Hosts. LOKAL wird direkt geprüft; Remote-Hosts über WinRM.");
-        tips.SetToolTip(btnScan, "Nur Verbindung und installierte Versionen prüfen. Es werden keine Update-Dateien kopiert und keine Programme installiert.");
         tips.SetToolTip(btnWinRm, "Lokales WinRM prüfen und bei Bedarf starten, alle geladenen Remote-Hosts zu TrustedHosts ergänzen und danach die ausgewählten Remote-Hosts testen. Ohne Remote-Auswahl wird nur lokal getestet. Für Dienststart und TrustedHosts den Updater über das Schutzschild im Header mit erhöhten Rechten starten, auch bei einem Administratorkonto.");
         tips.SetToolTip(nUpdate, "Maximal gleichzeitig aktualisierte Hosts (Dateiübertragung und Installation).");
         tips.SetToolTip(nHttpsPort, "WinRM-Port für HTTPS, z. B. 443 (Standard: 5986). Gilt auch für die WinRM-Konfiguration und die Verbindungsüberwachung. HTTP verwendet Port 5985.");
@@ -594,18 +595,22 @@ public sealed partial class MainForm : Form
         settings.Name = "settingsCard";
         settings.Visible = hostCard.Visible = false;
         var settingsLauncher = new SectionNavigationButton("Einstellungen", SectionNavigationIcon.Settings) { Name = "settingsLauncher" };
-        var hostsLauncher = new SectionNavigationButton("Remote-Hosts", SectionNavigationIcon.RemoteHosts) { Name = "hostsLauncher", Margin = Padding.Empty };
+        var hostsLauncher = new SectionNavigationButton("Remote-Hosts", SectionNavigationIcon.RemoteHosts) { Name = "hostsLauncher" };
         updateToolTip.SetToolTip(settingsLauncher, "Einstellungen");
         updateToolTip.SetToolTip(hostsLauncher, "Remote-Hosts");
         settingsLauncher.Click += (_, _) => { if (settings.Expanded) settings.Collapse(restoreFocus: true); else settings.Expand(); };
         hostsLauncher.Click += (_, _) => { if (hostCard.Expanded) hostCard.Collapse(restoreFocus: true); else hostCard.Expand(); };
         settings.ExpandedChanged += (_, _) => settingsLauncher.Active = settings.Expanded;
         hostCard.ExpandedChanged += (_, _) => hostsLauncher.Active = hostCard.Expanded;
-        var navigation = Stack(settingsLauncher, hostsLauncher, settings, hostCard);
+        btnTransfer.Name = "uploadLauncher";
+        btnExport.Name = "reportLauncher";
+        updateToolTip.SetToolTip(btnTransfer, "Dateien auf ausgewählte Remote-Hosts hochladen");
+        updateToolTip.SetToolTip(btnExport, "Protokoll als HTML-Bericht öffnen");
+        var navigation = Stack(settingsLauncher, hostsLauncher, btnTransfer, btnExport, settings, hostCard);
         navigation.Name = "configurationNavigation";
         navigation.Margin = new Padding(0, 0, 12, 0);
         configuration.Controls.Add(navigation, 0, 0);
-        var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList, selectedPackagesTable, additionalFilesTable, FlowRow(useFolderPackages)));
+        var selectedPackagesCard = Section("Ausgewählte Pakete", Stack(selectedPackagesList, selectedPackagesTable, additionalFilesTable));
         selectedPackagesCard.Name = "selectedPackagesCard";
         selectedPackagesCard.Margin = Padding.Empty;
         var selectedColumn = Stack(selectedPackagesCard);
@@ -646,16 +651,16 @@ public sealed partial class MainForm : Form
         };
 
         var bar = FlowRow();
-        ((AppButton)btnScan).Role = ButtonRole.Accent;
         ((AppButton)btnUpdate).Role = ButtonRole.Primary;
         ((AppButton)btnCancel).Role = ButtonRole.Danger;
-        foreach (Button btn in new[] { btnWinRm, btnScan, btnUpdate, btnServicePacks, btnCompileSoftware, btnTransfer, btnSendCommand, btnRetry, btnExport, btnCancel })
+        foreach (Button btn in new[] { btnUpdate, btnServicePacks, btnCompileSoftware, btnSendCommand })
         {
             ((AppButton)btn).AccentInDarkMode = true;
             btn.Margin = new Padding(0, 3, 7, 3);
             bar.Controls.Add(btn);
         }
-        bar.Layout += (_, _) => btnCompileSoftware.Height = btnServicePacks.Height = btnWinRm.Height = btnUpdate.Height;
+        bar.Name = "mainActions";
+        bar.Layout += (_, _) => btnCompileSoftware.Height = btnServicePacks.Height = btnUpdate.Height;
         updateToolTip.SetToolTip(btnCompileSoftware, "Softwarepakete aus der installierten NovaTouch Control in allen IRIS-Namespaces ohne %-Präfix der ausgewählten Hosts importieren und kompilieren.");
         updateToolTip.SetToolTip(btnServicePacks, "XML-Servicepacks in alle IRIS-Namespaces ohne %-Präfix der ausgewählten Hosts importieren und mit ckbf kompilieren.");
         var filterBar = FlowRow();
@@ -753,9 +758,9 @@ public sealed partial class MainForm : Form
         table.Columns["result"].HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
         table.Columns["result"].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
         table.ShowCellToolTips = true;
-        table.CellDoubleClick += (_, e) =>
+        table.CellMouseDoubleClick += (_, e) =>
         {
-            if (e.RowIndex < 0 || e.ColumnIndex == table.Columns["include"].Index) return;
+            if (e.RowIndex < 0 || e.ColumnIndex == table.Columns["include"].Index || IsTableRefreshHit(e.RowIndex, e.ColumnIndex, e.X, e.Y)) return;
             if (table.Rows[e.RowIndex].Tag is HostState host) ShowHostLog(host);
         };
         table.SelectionChanged += (_, _) => UpdateButtons();
@@ -810,6 +815,7 @@ public sealed partial class MainForm : Form
             e.Handled = true;
         };
         ConfigureHostColumnSelection();
+        ConfigureTableRefresh();
         main.Controls.Add(table, 0, 3);
 
         lblSummary.Text = "0 Hosts";
@@ -820,7 +826,20 @@ public sealed partial class MainForm : Form
         progress.Dock = DockStyle.Fill;
         progress.Height = 6;
         progress.Margin = Padding.Empty;
-        main.Controls.Add(Stack(lblSummary, configSaveStatus, progress), 0, 4);
+        var footer = new TableLayoutPanel { Name = "tableFooter", Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = Padding.Empty };
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.Controls.Add(lblSummary, 0, 0);
+        var bottomActions = FlowRow(btnRetry, btnCancel);
+        bottomActions.WrapContents = false;
+        bottomActions.Name = "bottomActions";
+        bottomActions.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        btnCancel.Margin = new Padding(7, 8, 0, 8);
+        btnRetry.Margin = new Padding(0, 8, 0, 8);
+        ((AppButton)btnRetry).AccentInDarkMode = true;
+        ((AppButton)btnCancel).AccentInDarkMode = true;
+        footer.Controls.Add(bottomActions, 1, 0);
+        main.Controls.Add(Stack(footer, configSaveStatus, progress), 0, 4);
 
         btnImport.Click += (_, _) => LoadHosts();
         btnEditHosts.Click += (_, _) => EditHosts();
@@ -844,7 +863,6 @@ public sealed partial class MainForm : Form
                 });
             dialog.ShowDialog(this);
         };
-        btnScan.Click += async (_, _) => await RunScansAsync();
         btnDatabaseCheck.Name = "databaseCheck";
         btnDatabaseCheck.Click += (_, _) =>
         {
@@ -861,7 +879,8 @@ public sealed partial class MainForm : Form
         btnSendCommand.Click += async (_, _) => await SendCommandAsync();
         btnRetry.Click += async (_, _) => await RunUpdatesAsync(true);
         btnExport.Click += (_, _) => ExportHtml();
-        btnCancel.Click += (_, _) => { selfUpdateCancellation?.Cancel(); cancellation?.Cancel(); packageCancellation?.Cancel(); };
+        btnCancel.Click += (_, _) => CancelCurrentOperation();
+        updateToolTip.SetToolTip(btnCancel, "Aktuellen Vorgang abbrechen und aktive Worker beenden. Bereits ausgeführte Änderungen werden nicht rückgängig gemacht; an Windows übergebene Installationen oder Neustarts können weiterlaufen.");
 
         main.Layout += (_, _) =>
         {
@@ -1287,8 +1306,6 @@ public sealed partial class MainForm : Form
                         });
                         commandStarted = true;
                         using var commandRunner = new WorkerRunner("NovaTouchUpdater.RemoteCommand.ps1");
-                        // Finish an accepted restart and its cleanup. Cancellation
-                        // only stops scheduling more terminal/POS restart requests.
                         WorkerResult result = await commandRunner.RunAsync(new WorkerRequest
                         {
                             Action = action, Host = host.Host,
@@ -1299,7 +1316,7 @@ public sealed partial class MainForm : Form
                         {
                             Log(host.Host, ev.Phase + ": " + ev.Message);
                             Mark(host, h => h.ApplyProgress(ev));
-                        }, restartTerminals || restartPos ? CancellationToken.None : token);
+                        }, token);
                         if (result.Success && result.Skipped)
                         {
                             skipped.Add(host.Host + ": " + result.Message);
@@ -1417,9 +1434,11 @@ public sealed partial class MainForm : Form
         (onlyFailed && host.Updates is { } state ? state.Pending : SelectedUpdateComponents()) &
         AllowedUpdateComponents(host) & (host.IsLocal ? UpdateComponents.All : host.InstalledComponents ?? UpdateComponents.All);
 
-    private bool ValidateCredentials()
+    private bool ValidateCredentials() => ValidateTargetCredentials(SelectedHosts());
+
+    private bool ValidateTargetCredentials(HostState[] targets)
     {
-        if (SelectedRemoteHosts().Length == 0) return true;
+        if (!targets.Any(host => !host.IsLocal)) return true;
         if (!string.IsNullOrWhiteSpace(txtUser.Text) && txtPassword.TextLength == 0)
         {
             AppMessageBox.Show(this, "Bitte das Passwort für den angegebenen Benutzer eingeben. Bei leerem Benutzernamen wird die aktuelle Windows-Anmeldung verwendet.");
@@ -1428,23 +1447,18 @@ public sealed partial class MainForm : Form
         return true;
     }
 
-    private Task RunScansAsync()
-    {
-        if (!hostScanTask.IsCompleted) return Task.CompletedTask;
-        return hostScanTask = RunScansCoreAsync();
-    }
+    private Task RunScansAsync() => StartHostScan(SelectedHosts());
 
-    private async Task RunScansCoreAsync()
+    private async Task RunScansCoreAsync(HostState[] targets)
     {
-        HostState[] targets = SelectedHosts();
-        if (busy || selfUpdating || targets.Length == 0 || !ValidateCredentials()) return;
+        if (!CanStartHostScan || targets.Length == 0 || !ValidateTargetCredentials(targets)) return;
         connectionScanPaused = true;
         InvalidateConnectionChecks();
         try { await RunScanPhaseAsync(targets); }
         finally
         {
             connectionScanPaused = false;
-            _ = RefreshConnectionsAsync();
+            if (targets.All(host => host.Result != "Abgebrochen")) _ = RefreshConnectionsAsync();
         }
     }
 
@@ -1888,8 +1902,6 @@ public sealed partial class MainForm : Form
         UpdateComponents components = UpdateComponents.All, bool retryUpdate = false)
     {
         Log(host.Host, action.ToUpperInvariant() + (action == "update" ? " [" + HostUpdateState.Label(components) + "]" : "") + " gestartet");
-        // A running update is not interrupted midway through stop/copy/start.
-        // Cancellation prevents new hosts and new attempts, but active updates finish.
         WorkerRequest request = Request(action, host, components);
         request.RetryUpdate = retryUpdate;
         if (action == "update") request.CompletedServiceNames = host.Updates?.CompletedServiceNames.ToArray() ?? [];
@@ -1897,7 +1909,7 @@ public sealed partial class MainForm : Form
         {
             Log(host.Host, ev.Phase + ": " + ev.Message);
             Mark(host, h => h.ApplyProgress(ev));
-        }, action == "update" ? CancellationToken.None : ct);
+        }, ct);
         if (action == "scan")
         {
             Log(host.Host, DisplayText.DotNet48Description(result.DotNet48Installed));
@@ -1942,6 +1954,7 @@ public sealed partial class MainForm : Form
             foreach (HostState host in targets)
                 Mark(host, h => h.FinishRun(cancelled || cancellation.IsCancellationRequested, batchError));
             cancellation.Dispose(); cancellation = null; busy = false;
+            hasCompletedRun = true;
             preparedPackageHashes = null;
             activeAdditionalFiles = [];
             activeInstallHashComponents = UpdateComponents.All;
@@ -2214,7 +2227,6 @@ public sealed partial class MainForm : Form
             local.Row!.Cells["include"].ReadOnly = !idle || LocalFallback;
         btnWinRm.Visible = Mode != UpdateExecutionMode.Local;
         btnWinRm.Enabled = idle;
-        btnScan.Enabled = idle && selected.Length > 0;
         btnDatabaseCheck.Visible = selected.Length > 0;
         btnDatabaseCheck.Enabled = idle && selected.Length > 0;
         btnUpdate.Enabled = idle && UpdateTargets(false).Length > 0;
@@ -2224,10 +2236,11 @@ public sealed partial class MainForm : Form
         btnTransfer.Visible = Mode != UpdateExecutionMode.Local;
         btnTransfer.Enabled = idle && selected.Any(h => !h.IsLocal);
         btnSendCommand.Enabled = idle && selected.Any(h => !h.IsLocal);
-        btnRetry.Visible = !busy && ExecutionHosts().Any(h => h.CanRetryUpdate);
+        btnRetry.Visible = betaFeatures?.Enabled == true && !busy && ExecutionHosts().Any(h => h.CanRetryUpdate);
         btnRetry.Enabled = idle && selected.Any(h => h.CanRetryUpdate);
+        btnExport.Visible = hasCompletedRun;
         btnExport.Enabled = idle && hosts.Count > 0;
-        btnCancel.Enabled = busy || selfUpdating || loadingPackages;
+        btnCancel.Enabled = busy || selfUpdating || loadingPackages || preparingDatabaseUpload;
         nScan.Enabled = idle; nUpdate.Enabled = idle; chkSsl.Enabled = idle; chkForceUpdate.Enabled = idle;
         chkScanOnStartup.Enabled = idle;
         themeMode.Enabled = idle;
@@ -2248,6 +2261,7 @@ public sealed partial class MainForm : Form
         foreach (Button remove in selectedPackagesTable.Controls.OfType<Button>()) remove.Enabled = idle;
         foreach (Button remove in additionalFilesTable.Controls.OfType<Button>()) remove.Enabled = idle;
         foreach (var drop in shellPackageDrops) drop.Enabled = idle && !connectionClosing;
+        UpdateTableRefresh(idle);
     }
 
     private void Log(string host, string msg)

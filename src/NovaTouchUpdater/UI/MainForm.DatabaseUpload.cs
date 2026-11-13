@@ -255,11 +255,12 @@ public sealed partial class MainForm
             using IWorkerRunner command = createPosUpdateRunner();
             WorkerResult result = await command.RunAsync(new WorkerRequest { Action="restart-pos", Host=host.Host,
                 Username=activeUser, Password=activePassword, UseSsl=activeSsl, HttpsPort=activeHttpsPort }, ev =>
-                { Log(host.Host, ev.Phase + ": " + ev.Message); Mark(host, h => h.ApplyProgress(ev)); }, CancellationToken.None);
+                { Log(host.Host, ev.Phase + ": " + ev.Message); Mark(host, h => h.ApplyProgress(ev)); }, ct);
             if (!result.Success) throw new IOException(FriendlyError(result));
             state.CompletePosRestart(result);
             Log(host.Host, "POS nach Update => " + (result.Skipped ? "ÜBERSPRUNGEN " : "OK ") + result.Message);
         }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             state.PosRestartError = "POS-Neustart: " + ex.Message;

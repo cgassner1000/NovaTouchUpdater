@@ -46,7 +46,7 @@ internal static partial class Program
                     InForm(form, settingsLauncher).Right < InForm(form, packages).Left && hostsLauncher.Top > settingsLauncher.Top,
                     "the left icon rail has clear tooltips and precedes the package cards");
                 var configuration = settingsLauncher.Parent!.Parent!;
-                var actionBar = Field<Button>(form, "btnScan").Parent!.Parent!;
+                var actionBar = Field<Button>(form, "btnUpdate").Parent!.Parent!;
                 Assert(settingsLauncher.Parent.Bottom <= configuration.Height &&
                     InForm(form, actionBar).Top >= InForm(form, configuration).Bottom &&
                     InForm(form, actionBar).Left == InForm(form, configuration).Left && actionBar.Width == configuration.Width,

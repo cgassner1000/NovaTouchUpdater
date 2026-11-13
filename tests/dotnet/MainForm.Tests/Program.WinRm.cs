@@ -93,7 +93,7 @@ internal static partial class Program
             mode.SelectedIndex = execution;
             Call(form, "UpdateButtons");
             Assert(winRm.Visible == (execution != (int)UpdateExecutionMode.Local) && upload.Visible == winRm.Visible &&
-                winRm.Text == "WinRM\nkonfigurieren" && Field<Button>(form, "btnScan").Text == "Versionen prüfen",
+                winRm.Text == "WinRM\nkonfigurieren" && ((SizingColumnHeaderCell)Field<DataGridView>(form, "table").Columns["include"].HeaderCell).RefreshAction,
                 $"the two-line WinRM configuration button and upload follow local/remote mode {execution}; the scan button is named Versionen prüfen");
             Assert(settings.All(control => control.Enabled) && port.Enabled && Field<Button>(form, "btnWinRm").Enabled,
                 $"all settings remain editable in execution mode {execution}");

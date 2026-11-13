@@ -77,7 +77,7 @@ internal static partial class Program
         worker.Requests.Clear(); worker.OnCompile = () => Field<CancellationTokenSource>(form, "cancellation").Cancel();
         await (Task)Call(form, "CompileSoftwarePackagesAsync")!;
         Assert(worker.Requests.Count(request => request.Action == "compile-software-packages") == 1,
-            "cancellation lets the accepted host finish and prevents subsequent hosts from starting");
+            "cancellation is available to the active host and prevents subsequent hosts from starting");
         using var nativeWorker = new WorkerRunner();
         WorkerResult empty = await nativeWorker.RunAsync(new WorkerRequest { Action = "compile-software-packages", LocalExecution = true, Host = "LOCALHOST", DatabaseTargets = [] }, _ => { }, CancellationToken.None);
         Assert(empty.Success && empty.Skipped && !empty.Changed,
@@ -210,7 +210,7 @@ internal static partial class Program
             Requests.Add(request);
             if (request.Action == "database-inventory")
                 return Task.FromResult(new WorkerResult { Success = true, IrisInstances = [new() { Name = "REMOTE", Directory = "C:\\IRIS", SuperServerPort = 1972, Namespaces = ["%SYS", "USER", "PROG-DEV"] }] });
-            Assert(request.Action == "compile-software-packages" && !ct.CanBeCanceled, "an accepted host compilation is isolated from UI cancellation");
+            Assert(request.Action == "compile-software-packages" && ct.CanBeCanceled, "an active host compilation receives the operation cancellation token");
             OnCompile?.Invoke();
             onProgress(new WorkerEvent { Event = "progress", Phase = "Softwarepaket kompilieren",
                 Message = "IRIS:1972/USER · Klasse 101 von 250 · Novacom-NT-BOH.xml", ProgressPercent = 40 });

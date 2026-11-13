@@ -10,7 +10,7 @@ internal static partial class Program
         _ = form.Handle;
         var table = Field<DataGridView>(form, "table");
         Assert(Targets(form) is [{ IsLocal: true }] && table.Rows.Count == 1 &&
-            table.Rows[0].Cells["hostname"].Value is "LOKAL" && Field<Button>(form, "btnScan").Enabled,
+            table.Rows[0].Cells["hostname"].Value is "LOKAL" && RefreshEnabled(form),
             "an empty initial host list shows LOKAL and enables local checking in Remote mode");
         Assert(table.Rows[0].Cells["include"].ReadOnly && table.Rows[0].Cells["include"].Value is true,
             "the local fallback stays checked while no remote host is selected");

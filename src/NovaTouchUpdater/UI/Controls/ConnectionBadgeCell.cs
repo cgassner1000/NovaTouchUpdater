@@ -16,11 +16,11 @@ internal sealed class ConnectionBadgeCell : StatusBadgeCell
             return;
         }
         var padded = cellStyle.Clone();
-        padded.Padding = new Padding(cellStyle.Padding.Left, cellStyle.Padding.Top, cellStyle.Padding.Right + IconSpace, cellStyle.Padding.Bottom);
+        padded.Padding = new Padding(cellStyle.Padding.Left + IconSpace, cellStyle.Padding.Top, cellStyle.Padding.Right, cellStyle.Padding.Bottom);
         base.Paint(graphics, clipBounds, cellBounds, rowIndex, cellState, value, formattedValue, errorText, padded, advancedBorderStyle, paintParts);
         if ((paintParts & DataGridViewPaintParts.ContentForeground) == 0) return;
         float scale = (DataGridView?.DeviceDpi ?? 96) / 96F;
-        float x = cellBounds.Right - cellStyle.Padding.Right - 17 * scale;
+        float x = cellBounds.Left + cellStyle.Padding.Left + 2 * scale;
         float y = cellBounds.Y + (cellBounds.Height - 14 * scale) / 2;
         var state = graphics.Save();
         graphics.SetClip(Rectangle.Intersect(clipBounds, cellBounds));

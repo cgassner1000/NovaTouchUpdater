@@ -6,6 +6,7 @@ internal static partial class Program
     {
         using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner());
         _ = form.Handle;
+        EnableAdvanced(form);
         using var canvas = new Panel { Size = form.ClientSize };
         Control content = form.Controls[0];
         canvas.Controls.Add(content); canvas.CreateControl();

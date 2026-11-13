@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace NovaTouchUpdater;
 
-internal enum SectionNavigationIcon { Settings, RemoteHosts }
+internal enum SectionNavigationIcon { Settings, RemoteHosts, Upload, Report }
 
 internal sealed class SectionNavigationButton : AppButton
 {
@@ -14,7 +14,7 @@ internal sealed class SectionNavigationButton : AppButton
     {
         this.icon = icon;
         AccessibleName = title;
-        AccessibleRole = AccessibleRole.ButtonDropDown;
+        AccessibleRole = icon is SectionNavigationIcon.Settings or SectionNavigationIcon.RemoteHosts ? AccessibleRole.ButtonDropDown : AccessibleRole.PushButton;
         AutoSize = false;
         Size = new Size(52, 52);
         Padding = Padding.Empty;
@@ -29,7 +29,9 @@ internal sealed class SectionNavigationButton : AppButton
         {
             active = value;
             Role = value ? ButtonRole.Accent : ButtonRole.Normal;
-            AccessibleDescription = value ? "Geöffnet. Zum Schließen klicken." : "Geschlossen. Zum Öffnen klicken.";
+            AccessibleDescription = icon is SectionNavigationIcon.Settings or SectionNavigationIcon.RemoteHosts
+                ? value ? "Geöffnet. Zum Schließen klicken." : "Geschlossen. Zum Öffnen klicken."
+                : AccessibleName;
         }
     }
 
@@ -37,7 +39,7 @@ internal sealed class SectionNavigationButton : AppButton
     {
         base.OnPaint(e);
         float scale = Math.Max(DeviceDpi / 96F, Font.SizeInPoints / 9.5F);
-        Color color = SystemInformation.HighContrast ? SystemColors.ControlText
+        Color color = !Enabled ? SystemColors.GrayText : SystemInformation.HighContrast ? SystemColors.ControlText
             : active ? UiTheme.AccentButtonText : hovered ? UiTheme.Accent : UiTheme.Muted;
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
         using var pen = new Pen(color, 1.8F * scale)
@@ -56,7 +58,7 @@ internal sealed class SectionNavigationButton : AppButton
             PointF center = Point(-4.25F, -4.25F);
             e.Graphics.DrawEllipse(pen, center.X, center.Y, 8.5F * scale, 8.5F * scale);
         }
-        else
+        else if (icon == SectionNavigationIcon.RemoteHosts)
         {
             foreach (float x in new[] { -13F, 2F })
             {
@@ -68,6 +70,18 @@ internal sealed class SectionNavigationButton : AppButton
             }
             e.Graphics.DrawLines(pen, new[] { Point(-7.5F, 4), Point(-7.5F, 8), Point(7.5F, 8), Point(7.5F, 4) });
             e.Graphics.DrawLine(pen, Point(0, 8), Point(0, 12));
+        }
+        else if (icon == SectionNavigationIcon.Upload)
+        {
+            e.Graphics.DrawLines(pen, new[] { Point(-11, 3), Point(-11, 10), Point(11, 10), Point(11, 3) });
+            e.Graphics.DrawLine(pen, Point(0, 4), Point(0, -11));
+            e.Graphics.DrawLines(pen, new[] { Point(-6, -5), Point(0, -11), Point(6, -5) });
+        }
+        else
+        {
+            e.Graphics.DrawLines(pen, new[] { Point(-9, -13), Point(4, -13), Point(10, -7), Point(10, 13), Point(-9, 13), Point(-9, -13) });
+            e.Graphics.DrawLines(pen, new[] { Point(4, -13), Point(4, -7), Point(10, -7) });
+            foreach (float y in new[] { -2F, 3F, 8F }) e.Graphics.DrawLine(pen, Point(-4, y), Point(5, y));
         }
     }
 

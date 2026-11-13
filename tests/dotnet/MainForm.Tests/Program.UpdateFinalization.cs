@@ -216,7 +216,7 @@ internal static partial class Program
         public Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> progress, CancellationToken ct)
         {
             Requests.Enqueue(request);
-            if (request.Action == "restart-pos") Assert(!ct.CanBeCanceled, "accepted POS restarts finish their cleanup even when the batch is cancelled");
+            if (request.Action == "restart-pos") Assert(ct.CanBeCanceled, "POS restart workers receive the operation cancellation token");
             bool failure = request.Action == "publish-msi-packages" ? request.Host == FailedUploadHost : request.Host == FailedPosHost;
             bool unchanged = request.Action == "publish-msi-packages" && UnchangedUploadHosts.Contains(request.Host);
             return Task.FromResult(new WorkerResult { Success=!failure, Error=failure ? "Synthetic final step failure" : "", Changed=!failure && !unchanged,
