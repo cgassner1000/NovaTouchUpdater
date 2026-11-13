@@ -33,6 +33,8 @@
     <InternalsVisibleTo Include="MainForm.Tests" />
     <EmbeddedResource Include="Assets\NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
     <EmbeddedResource Include="Assets\NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
+    <EmbeddedResource Include="Assets\novacom_default_cert.pem" LogicalName="NovaTouchUpdater.novacom_default_cert.pem" />
+    <EmbeddedResource Include="Assets\novacom_default_key.pem" LogicalName="NovaTouchUpdater.novacom_default_key.pem" />
     <EmbeddedResource Include="Scripts\RemoteWorker.ps1" LogicalName="NovaTouchUpdater.RemoteWorker.ps1" />
     <EmbeddedResource Include="Scripts\UpdateSteps.ps1" LogicalName="NovaTouchUpdater.UpdateSteps.ps1" />
     <EmbeddedResource Include="Scripts\ServerSuiteSetup.ps1" LogicalName="NovaTouchUpdater.ServerSuiteSetup.ps1" />
@@ -45,6 +47,8 @@
     <EmbeddedResource Include="Scripts\SoftwareCompilation.ps1" LogicalName="NovaTouchUpdater.SoftwareCompilation.ps1" />
     <EmbeddedResource Include="Scripts\RemoteCommand.ps1" LogicalName="NovaTouchUpdater.RemoteCommand.ps1" />
     <EmbeddedResource Include="Scripts\WinRmWorker.ps1" LogicalName="NovaTouchUpdater.WinRmWorker.ps1" />
+    <EmbeddedResource Include="Scripts\WinRmClientHttp.ps1" LogicalName="NovaTouchUpdater.WinRmClientHttp.ps1" />
+    <EmbeddedResource Include="Scripts\WinRmClientHttps.ps1" LogicalName="NovaTouchUpdater.WinRmClientHttps.ps1" />
     <EmbeddedResource Include="Scripts\ConnectionWorker.ps1" LogicalName="NovaTouchUpdater.ConnectionWorker.ps1" />
     <EmbeddedResource Include="Scripts\SelfUpdate.ps1" LogicalName="NovaTouchUpdater.SelfUpdate.ps1" />
     <EmbeddedResource Include="Scripts\DirectorySearch.ps1" LogicalName="NovaTouchUpdater.DirectorySearch.ps1" />

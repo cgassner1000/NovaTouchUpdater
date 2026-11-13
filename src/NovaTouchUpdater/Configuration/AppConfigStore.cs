@@ -23,6 +23,8 @@ internal sealed class UpdaterConfig
     public bool SkipRemotePackageCopy { get; set; }
     public bool SkipZipTransfer { get; set; }
     public int HttpsPort { get; set; } = 5986;
+    public string? WinRmCertificatePath { get; set; }
+    public string? WinRmPrivateKeyPath { get; set; }
     public string ExecutionMode { get; set; } = "Remote";
     public string? SoftwarePath { get; set; }
     public string UseBuild { get; set; } = BuildChannels.Default;
@@ -76,6 +78,7 @@ internal static class AppConfigStore
         {
             Hosts = NormalizeHosts(settings.Hosts), RemotePath = settings.RemotePath,
             Username = settings.Username, UseSsl = settings.UseSsl, HttpsPort = settings.HttpsPort,
+            WinRmCertificatePath = settings.WinRmCertificatePath, WinRmPrivateKeyPath = settings.WinRmPrivateKeyPath,
             IrisUseTls = settings.IrisUseTls,
             CompileAfterInstallation = settings.CompileAfterInstallation,
             UploadToZzzSoftware = settings.UploadToZzzSoftware, RestartPosAfterUpdate = settings.RestartPosAfterUpdate,
@@ -97,8 +100,18 @@ internal static class AppConfigStore
         => SavePreference(path, nameof(UpdaterConfig.Theme), JsonValue.Create(ThemeModes.Normalize(theme)), fallbackConfigPath);
 
     private static void SavePreference(string path, string name, JsonNode? value, string? fallbackConfigPath)
+        => SavePreferences(path, new Dictionary<string, JsonNode?> { [name] = value }, fallbackConfigPath);
+
+    public static void SaveWinRmCertificatePaths(string path, string certificatePath, string privateKeyPath, string? fallbackConfigPath = null)
+        => SavePreferences(path, new Dictionary<string, JsonNode?>
+        {
+            [nameof(UpdaterConfig.WinRmCertificatePath)] = JsonValue.Create(certificatePath),
+            [nameof(UpdaterConfig.WinRmPrivateKeyPath)] = JsonValue.Create(privateKeyPath)
+        }, fallbackConfigPath);
+
+    private static void SavePreferences(string path, Dictionary<string, JsonNode?> values, string? fallbackConfigPath)
     {
-        // Change only this preference: retain saved credentials, unknown
+        // Change only these preferences: retain saved credentials, unknown
         // settings and unsaved form edits without decrypting/re-encrypting them.
         string source = File.Exists(path) ? path : fallbackConfigPath ?? path;
         JsonObject config;
@@ -107,11 +120,11 @@ internal static class AppConfigStore
             config = File.Exists(source) ? JsonNode.Parse(File.ReadAllText(source)) as JsonObject
                 ?? throw new JsonException("Die Konfiguration enthält keine Einstellungen.") : new JsonObject();
             foreach (string key in config.Select(property => property.Key)
-                .Where(key => key.Equals(name, StringComparison.OrdinalIgnoreCase)).ToArray())
+                .Where(key => values.Keys.Any(name => key.Equals(name, StringComparison.OrdinalIgnoreCase))).ToArray())
                 config.Remove(key);
         }
         catch (ArgumentException ex) { throw new JsonException("Die Konfiguration enthält doppelte Einträge.", ex); }
-        config[name] = value;
+        foreach (var (name, value) in values) config[name] = value;
         // As with a normal config save, keep the host list at the end.
         var hosts = config.Where(property => property.Key.Equals(nameof(UpdaterConfig.Hosts), StringComparison.OrdinalIgnoreCase)).ToArray();
         foreach (var property in hosts) config.Remove(property.Key);

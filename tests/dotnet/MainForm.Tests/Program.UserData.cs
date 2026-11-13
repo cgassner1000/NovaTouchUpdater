@@ -10,13 +10,15 @@ internal static partial class Program
         {
             paths.InitializeAndMigrate(Path.Combine(fixture, "exe"));
             AppConfigStore.Save(paths.ConfigFile, new UpdaterConfig { Hosts = ["CENTRAL.invalid"], Username = "central-user",
-                CompileAfterInstallation = true, ScanOnStartup = false, ExecutionMode = "LocalAndRemote" }, "");
+                CompileAfterInstallation = true, ScanOnStartup = false, ExecutionMode = "LocalAndRemote",
+                WinRmCertificatePath = @"C:\Synthetic\ca.pem", WinRmPrivateKeyPath = @"C:\Synthetic\key.pem" }, "");
             using var form = new MainForm(preview: true, new FakeRunner(), new FakeRunner(), dataPaths: paths);
             _ = form.Handle;
             Call(form, "LoadStartupConfig");
             var settings = (UpdaterConfig)Call(form, "CaptureConfig")!;
             Assert(Field<bool>(form, "startupConfigLoaded") && settings.Hosts!.SequenceEqual(["CENTRAL.invalid"]) &&
-                settings.Username == "central-user" && settings.CompileAfterInstallation && !settings.ScanOnStartup && settings.ExecutionMode == "LocalAndRemote",
+                settings.Username == "central-user" && settings.CompileAfterInstallation && !settings.ScanOnStartup && settings.ExecutionMode == "LocalAndRemote" &&
+                settings.WinRmCertificatePath == @"C:\Synthetic\ca.pem" && settings.WinRmPrivateKeyPath == @"C:\Synthetic\key.pem",
                 "startup loads hosts, credentials and options from the central user-data config without requiring a config beside the EXE");
             Field<CheckBox>(form, "chkCompileAfterInstallation").Checked = false;
             AppConfigStore.Save(paths.ConfigFile, (UpdaterConfig)Call(form, "CaptureConfig")!, "");

@@ -2,7 +2,7 @@ using System.Drawing.Drawing2D;
 
 namespace NovaTouchUpdater;
 
-internal sealed class StatusBadgeCell : DataGridViewTextBoxCell
+internal class StatusBadgeCell : DataGridViewTextBoxCell
 {
     protected override void Paint(Graphics graphics, Rectangle clipBounds, Rectangle cellBounds,
         int rowIndex, DataGridViewElementStates cellState, object? value, object? formattedValue,
@@ -17,7 +17,7 @@ internal sealed class StatusBadgeCell : DataGridViewTextBoxCell
         }
         (Color foreground, Color background) = text switch
         {
-            "Lokal" or "Verbunden" or "Erfolgreich" or "Wieder online" or "Dienste OK" or "POS OK" or "OK" => (UiTheme.Success, UiTheme.SuccessSoft),
+            "Lokal" or "Verbunden" or "WinRM - OK" or "Erfolgreich" or "Wieder online" or "Dienste OK" or "POS OK" or "OK" => (UiTheme.Success, UiTheme.SuccessSoft),
             "Nicht erreichbar" or "Fehler" => (UiTheme.Danger, UiTheme.DangerSoft),
             "Aktuell" => (UiTheme.Accent, UiTheme.AccentSoft),
             "Läuft" or "Neustart angefordert" => (UiTheme.Warning, UiTheme.WarningSoft),

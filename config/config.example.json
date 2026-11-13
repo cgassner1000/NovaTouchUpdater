@@ -14,6 +14,8 @@
   "SkipRemotePackageCopy": false,
   "SkipZipTransfer": false,
   "HttpsPort": 5986,
+  "WinRmCertificatePath": null,
+  "WinRmPrivateKeyPath": null,
   "ExecutionMode": "Remote",
   "SoftwarePath": "",
   "VisibleHostColumns": ["include", "hostname", "connection", "dotnet48", "payment", "fiscal", "serversuite", "pos", "ntc", "information", "result"],

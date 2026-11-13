@@ -33,6 +33,18 @@ Assert(state.Apply(state.Revision, true, "ready", now.AddSeconds(131)) && state.
 Assert(state.Apply(state.Revision, null, "worker unavailable", now.AddSeconds(140)) && state.Status == "Unbekannt", "monitor failure remains distinct from a proven unreachable host");
 Assert(state.Apply(state.Revision, false, "authentication rejected", now.AddSeconds(150)) && state.Status == "Nicht erreichbar", "failed authentication does not count as a usable connection");
 
+var transport = new ConnectionState();
+Assert(transport.UsesHttps is null, "an untested connection has no confirmed transport");
+transport.SetForegroundStatus("Verbunden", true);
+Assert(transport.UsesHttps is true && transport.ToolTip.Contains("TLS-verschlüsselt"), "a successful foreground HTTPS probe records the confirmed encrypted transport");
+int transportRevision = transport.Revision;
+transport.SetForegroundStatus("Prüfung läuft");
+Assert(transport.UsesHttps is null && !transport.Apply(transportRevision, true, "stale HTTPS", now, true), "a new check clears the encryption indication and rejects stale HTTPS confirmations");
+Assert(transport.Apply(transport.Revision, true, "HTTPS", now, true) && transport.UsesHttps is true, "successful HTTPS monitoring confirms the lock state");
+Assert(!transport.Apply(transport.Revision, true, "older HTTP", now.AddSeconds(-1), false) && transport.UsesHttps is true, "out-of-order monitoring cannot relabel a confirmed HTTPS connection");
+Assert(transport.Apply(transport.Revision, true, "HTTP", now.AddSeconds(1), false) && transport.UsesHttps is false, "a fresh HTTP check removes the HTTPS indication");
+Assert(transport.Apply(transport.Revision, false, "offline", now.AddSeconds(2), true) && transport.UsesHttps is null, "a failed HTTPS check never displays an encrypted connection as confirmed");
+
 if (OperatingSystem.IsWindows())
 {
     using var runner = new WorkerRunner("ConnectionState.Tests.MockWorker.ps1");

@@ -12,8 +12,20 @@ function Test-TcpPort([string]$computer, [int]$port) {
         $connect = $client.ConnectAsync($computer, $port)
         if (-not $connect.Wait(5000)) { throw "TCP-Verbindung zu ${computer}:$port nach 5 Sekunden abgebrochen (Timeout)." }
         $connect.GetAwaiter().GetResult()
+        return $client.Client.RemoteEndPoint.Address.IPAddressToString
     }
     finally { $client.Dispose() }
+}
+
+function Get-NameResolutionHint([string]$computer, $record) {
+    $address = $null
+    if ([Net.IPAddress]::TryParse($computer, [ref]$address)) { return '' }
+    $cause = $record.Exception.GetBaseException()
+    if ($cause -is [Net.Sockets.SocketException] -and $cause.SocketErrorCode -in @(
+        [Net.Sockets.SocketError]::HostNotFound, [Net.Sockets.SocketError]::NoData, [Net.Sockets.SocketError]::TryAgain)) {
+        return "Namensauflösung für '$computer' fehlgeschlagen. Auf dem Updater-Rechner den vollständigen Hostnamen (FQDN), den DNS-Eintrag und den DNS-Suffix prüfen. Die Client-Einrichtung allein kann einen unbekannten Namen im Netzwerk nicht auflösbar machen."
+    }
+    return ''
 }
 
 function Error-Details($record) {
@@ -80,6 +92,8 @@ function Initialize-LocalWinRm([string[]]$remoteHosts) {
 $result = @{ Event='result'; Success=$false; Tcp='Nicht getestet'; Session='Nicht getestet'; Command='Nicht getestet'; Error=''; Message=''; Services=@() }
 $session = $null
 $details = [Collections.Generic.List[string]]::new()
+$targetDescription = ''
+$nameResolutionFailed = $false
 try {
     $req = [Console]::In.ReadLine() | ConvertFrom-Json
     if ($null -ne $req.PSObject.Properties['Action'] -and $req.Action -eq 'winrm-prepare') {
@@ -98,11 +112,14 @@ try {
     if ([bool]$req.UseSsl -and $null -ne $req.PSObject.Properties['HttpsPort']) { $port = [int]$req.HttpsPort }
     if ($port -lt 1 -or $port -gt 65535) { throw 'HTTPS-Port muss zwischen 1 und 65535 liegen.' }
     try {
-        Test-TcpPort ([string]$req.Host) $port
+        $connectedAddress = [string](Test-TcpPort ([string]$req.Host) $port)
         $result.Tcp = 'OK'
+        if ($connectedAddress) { $targetDescription = "TCP-Ziel: $($req.Host) -> $connectedAddress`:$port." }
     }
     catch {
         $result.Tcp = 'Fehler'
+        $hint = Get-NameResolutionHint ([string]$req.Host) $_
+        if ($hint) { $nameResolutionFailed = $true; $details.Add($hint) }
         $details.Add("TCP ${port}:`r`n$(Error-Details $_)")
     }
 
@@ -150,6 +167,9 @@ finally {
     }
 }
 $result.Success = $result.Tcp -eq 'OK' -and $result.Session -eq 'OK' -and $result.Command -eq 'OK' -and $details.Count -eq 0
-$result.Message = if ($result.Success) { 'TCP, New-PSSession und Invoke-Command erfolgreich.' } else { 'WinRM-Test fehlgeschlagen; siehe Details.' }
+$result.Message = if ($result.Success) { 'TCP, New-PSSession und Invoke-Command erfolgreich.' }
+    elseif ($nameResolutionFailed) { 'Hostname nicht auflösbar; DNS/FQDN auf dem Updater-Rechner prüfen.' }
+    else { 'WinRM-Test fehlgeschlagen; siehe Details.' }
+if ($targetDescription) { $result.Message = "$targetDescription`r`n$($result.Message)" }
 $result.Error = $details -join "`r`n`r`n"
 [Console]::Out.WriteLine(($result | ConvertTo-Json -Compress -Depth 6))

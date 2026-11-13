@@ -43,6 +43,9 @@ internal static partial class Program
             if (args.Contains("--parallel")) { ScanTests(); ScanPipelineTests(); return 0; }
             if (args.Contains("--startup")) { UserDataConfigTests(); StartupChecksTests(); return 0; }
             if (args.Contains("--winrm")) { WinRmPreparationTests(); return 0; }
+            if (args.Contains("--connection-badge")) { ConnectionBadgeTests(); return 0; }
+            if (args.Contains("--winrm-setup")) { WinRmClientSetupTests(); return 0; }
+            if (args.Length == 3 && args[0] == "--winrm-pem") { WinRmPemTest(args[1], args[2]); return 0; }
             if (args.Contains("--database")) { DatabaseCheckTests(); return 0; }
             if (args.Contains("--iris-provider")) { BundledIrisProviderTests(); return 0; }
             if (args.Contains("--database-live")) { DatabaseCheckLiveSmoke(); return 0; }
@@ -66,6 +69,8 @@ internal static partial class Program
                 StartupChecksTests();
                 UserDataConfigTests();
                 WinRmPreparationTests();
+                ConnectionBadgeTests();
+                WinRmClientSetupTests();
                 DatabaseCheckTests();
                 BundledIrisProviderTests();
                 ScanTests();

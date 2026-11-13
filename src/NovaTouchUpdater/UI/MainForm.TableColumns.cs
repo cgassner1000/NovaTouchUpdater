@@ -50,7 +50,7 @@ public sealed partial class MainForm
                         TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix).Width;
                     columnTextWidths.Add(key, textWidth);
                 }
-                width = Math.Max(width, textWidth + style.Padding.Horizontal + 2);
+                width = Math.Max(width, textWidth + style.Padding.Horizontal + 2 + (cell is ConnectionBadgeCell connection ? connection.IconSpace : 0));
             }
         }
         columnContentWidths[column] = width;

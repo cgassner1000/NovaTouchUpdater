@@ -48,6 +48,8 @@ public sealed partial class MainForm : Form
     private Func<bool> restartAsAdministrator = AppElevation.Restart;
     private bool restartingAsAdministrator;
     private readonly ToolTip updateToolTip = new();
+    private string? winRmCertificatePath;
+    private string? winRmPrivateKeyPath;
 
     private readonly DataGridView table = new();
     private readonly ComboBox statusFilter = new AppComboBox();
@@ -236,6 +238,8 @@ public sealed partial class MainForm : Form
     private void ApplyLoadedConfig(LoadedConfig loaded)
     {
         var config = loaded.Settings;
+        winRmCertificatePath = config.WinRmCertificatePath;
+        winRmPrivateKeyPath = config.WinRmPrivateKeyPath;
         ApplyThemePreference(config.Theme);
         ApplyVisibleHostColumns(config.VisibleHostColumns);
         txtRemotePath.Text = config.RemotePath ?? DefaultRemoteInstallPath;
@@ -309,6 +313,7 @@ public sealed partial class MainForm : Form
         SoftwarePath = softwarePath.Text.Trim(), ExecutionMode = Mode.ToString(), UseBuild = BuildChannels.Normalize(useBuild.SelectedItem as string),
         ScanOnStartup = chkScanOnStartup.Checked,
         Theme = SelectedTheme,
+        WinRmCertificatePath = winRmCertificatePath, WinRmPrivateKeyPath = winRmPrivateKeyPath,
         SkipLocalPackageCopy = chkSkipLocalPackageCopy.Checked, SkipRemotePackageCopy = chkSkipRemotePackageCopy.Checked, SkipZipTransfer = chkSkipZipTransfer.Checked
     };
 
@@ -716,8 +721,8 @@ public sealed partial class MainForm : Form
         });
         table.Columns.Add("hostname", "Hostname");
         table.Columns.Add("connection", "Verbindung");
-        table.Columns["connection"].CellTemplate = new StatusBadgeCell();
-        table.Columns["connection"].ToolTipText = "Automatische WinRM-Prüfung ca. alle 10 Sekunden. Letzte Prüfung und Fehlerdetails stehen im Tooltip des Hosts.";
+        table.Columns["connection"].CellTemplate = new ConnectionBadgeCell();
+        table.Columns["connection"].ToolTipText = "Automatische WinRM-Prüfung ca. alle 10 Sekunden. WinRM - OK bestätigt die Verbindung; das Schloss kennzeichnet bestätigtes HTTPS. Letzte Prüfung und Details stehen im Tooltip des Hosts.";
         table.Columns.Add("dotnet48", ".NET 4.8");
         table.Columns.Add("payment", "Nt.Payment");
         table.Columns.Add("fiscal", "Nt.Fiskal");
@@ -829,7 +834,18 @@ public sealed partial class MainForm : Form
             if (busy || selfUpdating || !ValidateCredentials()) return;
             using var dialog = new WinRmTestForm(targets.Select(h => h.Host).ToArray(),
                 txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked, (int)nHttpsPort.Value,
-                hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray());
+                hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), winRmCertificatePath, winRmPrivateKeyPath,
+                (certificate, key) =>
+                {
+                    winRmCertificatePath = certificate; winRmPrivateKeyPath = key;
+                    try
+                    {
+                        Directory.CreateDirectory(userDataPaths.RootDirectory);
+                        AppConfigStore.SaveWinRmCertificatePaths(userDataPaths.ConfigFile, certificate, key, startupConfigPath);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                    { AppMessageBox.Show(this, "Die PEM-Dateipfade konnten nicht gespeichert werden.\n" + ex.Message, "WinRM Konfiguration", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+                });
             dialog.ShowDialog(this);
         };
         btnScan.Click += async (_, _) => await RunScansAsync();
@@ -1459,7 +1475,8 @@ public sealed partial class MainForm : Form
                     var result = await DoWorkerAsync(host, "probe", token);
                     Mark(host, h =>
                     {
-                        h.Connection = result.Success ? (h.IsLocal ? "Lokal" : "Verbunden") : "Nicht erreichbar";
+                        h.ConnectionState.SetForegroundStatus(result.Success ? (h.IsLocal ? "Lokal" : "Verbunden") : "Nicht erreichbar",
+                            result.Success && !h.IsLocal ? activeSsl : null);
                         h.Phase = result.Success ? "Verbunden" : "Verbindungsfehler";
                         h.Error = result.Success ? "" : FriendlyError(result);
                         h.Result = result.Success ? "Läuft" : "Fehler";
@@ -1619,7 +1636,7 @@ public sealed partial class MainForm : Form
                             continue;
                         }
                     }
-                    Mark(host, h => h.Connection = h.IsLocal ? "Lokal" : "Verbunden");
+                    Mark(host, h => h.ConnectionState.SetForegroundStatus(h.IsLocal ? "Lokal" : "Verbunden", h.IsLocal ? null : activeSsl));
                     var scan = await DoWorkerAsync(host, "scan", token);
                     Mark(host, h => ReadScanInventory(h, scan));
                     if (!scan.Success)
@@ -1740,7 +1757,7 @@ public sealed partial class MainForm : Form
         {
             foreach (var target in targets.Values)
                 if (!received.ContainsKey(target.Host.Host))
-                    ApplyConnectionResult(target.Host, target.Revision, generation, null, error, DateTimeOffset.Now);
+                    ApplyConnectionResult(target.Host, target.Revision, generation, null, error, DateTimeOffset.Now, useSsl);
         }
 
         try
@@ -1755,7 +1772,7 @@ public sealed partial class MainForm : Form
                 received.TryAdd(ev.Host, 0);
                 DateTimeOffset checkedAt = DateTimeOffset.Now;
                 Ui(() => ApplyConnectionResult(target.Host, target.Revision, generation, ev.Connected,
-                    transport + ": " + DisplayText.Clean(ev.Message), checkedAt));
+                    transport + ": " + DisplayText.Clean(ev.Message), checkedAt, useSsl));
             }, timeout.Token);
             if (!result.Success) MissingResults("Automatische Verbindungsprüfung fehlgeschlagen: " + FriendlyError(result));
             else MissingResults("Keine Rückmeldung der automatischen Verbindungsprüfung.");
@@ -1769,7 +1786,7 @@ public sealed partial class MainForm : Form
         }
     }
 
-    private void ApplyConnectionResult(HostState host, int revision, int generation, bool? connected, string detail, DateTimeOffset checkedAt)
+    private void ApplyConnectionResult(HostState host, int revision, int generation, bool? connected, string detail, DateTimeOffset checkedAt, bool usesHttps)
     {
         if (connectionClosing || IsDisposed || connectionScanPaused || generation != connectionGeneration || !host.IsSelected || !hosts.Contains(host)) return;
         string previous;
@@ -1778,7 +1795,7 @@ public sealed partial class MainForm : Form
         {
             previous = host.Connection;
             previousResult = host.Result;
-            if (!host.ApplyConnectionCheck(revision, connected, detail, checkedAt)) return;
+            if (!host.ApplyConnectionCheck(revision, connected, detail, checkedAt, usesHttps)) return;
         }
         if (previous != host.Connection)
         {
@@ -1984,12 +2001,14 @@ public sealed partial class MainForm : Form
         if (h.Row is null) return;
         string connection;
         string connectionToolTip;
+        bool connectionUsesHttps;
         string info;
         int? rowProgress;
         int attempt;
         lock (h)
         {
-            connection = h.Connection;
+            connection = h.Connection == "Verbunden" ? "WinRM - OK" : h.Connection;
+            connectionUsesHttps = !h.IsLocal && h.Connection == "Verbunden" && h.ConnectionState.UsesHttps is true;
             connectionToolTip = h.ConnectionState.ToolTip;
             info = DisplayText.Information(h.Phase, h.Error);
             rowProgress = h.ProgressPercent;
@@ -1999,6 +2018,11 @@ public sealed partial class MainForm : Form
         cells["include"].ReadOnly = h.IsLocal && LocalFallback;
         cells["include"].Value = h.IsSelected;
         cells["hostname"].Value = h.DisplayName;
+        if (!Equals(cells["connection"].Tag, connectionUsesHttps))
+        {
+            cells["connection"].Tag = connectionUsesHttps;
+            InvalidateColumnContent(table.Columns["connection"]);
+        }
         cells["connection"].Value = connection;
         cells["connection"].ToolTipText = connectionToolTip;
         cells["dotnet48"].Value = DisplayText.DotNet48(h.DotNet48Installed);

@@ -141,9 +141,9 @@ internal sealed class HostState
         SetCommandResult("Abgebrochen");
     }
 
-    public bool ApplyConnectionCheck(int revision, bool? connected, string detail, DateTimeOffset checkedAt)
+    public bool ApplyConnectionCheck(int revision, bool? connected, string detail, DateTimeOffset checkedAt, bool? usesHttps = null)
     {
-        if (!ConnectionState.Apply(revision, connected, detail, checkedAt)) return false;
+        if (!ConnectionState.Apply(revision, connected, detail, checkedAt, usesHttps)) return false;
         // Only finish a pending restart. An online host alone must never clear a
         // failed command or a scan/update error. During the 30-second countdown
         // ConnectionState deliberately retains "Neustart angefordert".

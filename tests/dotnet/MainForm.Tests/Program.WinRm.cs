@@ -12,6 +12,8 @@ internal static partial class Program
             using var dialog = new WinRmTestForm(["POS01.invalid", "POS02.invalid"], "test-user", "test-only", 2, true, 443,
                 ["POS01.invalid", "POS02.invalid", "UNSELECTED.invalid"]);
             _ = dialog.Handle;
+            typeof(WinRmTestForm).GetField("isAuthorityTrusted", Private)!.SetValue(dialog, (Func<WinRmCertificateAuthority, bool>)(_ => true));
+            typeof(WinRmTestForm).GetField("trustAuthority", Private)!.SetValue(dialog, (Action<WinRmCertificateAuthority>)(_ => throw new InvalidOperationException("A diagnostic fixture must never change a real trust store.")));
             Task test = dialog.RunDiagnosticsAsync(worker);
             Assert(worker.Requests.Count == 1 && worker.Requests.Single().Action == "winrm-prepare" &&
                 worker.Requests.Single().Hosts.SequenceEqual(["POS01.invalid", "POS02.invalid", "UNSELECTED.invalid"]),
@@ -23,8 +25,8 @@ internal static partial class Program
             Complete(test);
             var grid = (DataGridView)All(dialog).Single(c => c.Name == "winRmResults");
             var details = (TextBox)All(dialog).Single(c => c.Name == "winRmDetails");
-            Assert(success ? worker.Requests.Count == 3 && grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells[5].Value is "OK")
-                : worker.Requests.Count == 1 && grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells[5].Value is "Nicht gestartet"),
+            Assert(success ? worker.Requests.Count == 3 && grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells["result"].Value is "OK")
+                : worker.Requests.Count == 1 && grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells["result"].Value is "Nicht gestartet"),
                 "remote diagnostics start only after successful preparation and otherwise remain explicitly untested");
             Assert(details.Text.Contains(success ? "TrustedHosts" : "Administrator"),
                 "local preparation results and actionable failures remain visible in the details");
@@ -49,7 +51,7 @@ internal static partial class Program
         Task operation = cancelled.RunDiagnosticsAsync(cancelledWorker);
         ((CancellationTokenSource)typeof(WinRmTestForm).GetField("cancellation", Private)!.GetValue(cancelled)!).Cancel();
         Complete(operation);
-        Assert(cancelledWorker.Requests.Count == 1 && All(cancelled).OfType<DataGridView>().Single().Rows[0].Cells[5].Value is "Abgebrochen",
+        Assert(cancelledWorker.Requests.Count == 1 && All(cancelled).OfType<DataGridView>().Single().Rows[0].Cells["result"].Value is "Abgebrochen",
             "cancelling local preparation prevents all remote tests and marks pending rows cancelled");
 
         var localWorker = new DiagnosticRunner { PreparationSucceeds = true };

@@ -6,12 +6,14 @@ internal sealed class ConnectionState
     public int Revision { get; private set; }
     public DateTimeOffset? LastCheckedAt { get; private set; }
     public string Detail { get; private set; } = "";
+    public bool? UsesHttps { get; private set; }
     private DateTimeOffset? restartNotBefore;
 
-    public void SetForegroundStatus(string status)
+    public void SetForegroundStatus(string status, bool? usesHttps = null)
     {
         Revision++;
         Status = status;
+        UsesHttps = status == "Verbunden" ? usesHttps : null;
         Detail = "";
         LastCheckedAt = status is "Verbunden" or "Nicht erreichbar" ? DateTimeOffset.Now : null;
     }
@@ -22,7 +24,7 @@ internal sealed class ConnectionState
         restartNotBefore = requestedAt.AddSeconds(30);
     }
 
-    public bool Apply(int expectedRevision, bool? connected, string detail, DateTimeOffset checkedAt)
+    public bool Apply(int expectedRevision, bool? connected, string detail, DateTimeOffset checkedAt, bool? usesHttps = null)
     {
         // A result started before a manual scan/restart must not overwrite that
         // newer action. Also reject results delivered out of time order.
@@ -37,11 +39,13 @@ internal sealed class ConnectionState
             null => "Unbekannt"
         };
         if (Status == "Verbunden") restartNotBefore = null;
+        UsesHttps = Status == "Verbunden" ? usesHttps : null;
         return true;
     }
 
     public string ToolTip =>
         (LastCheckedAt.HasValue ? $"Letzte WinRM-Prüfung: {LastCheckedAt.Value:dd.MM.yyyy HH:mm:ss}" : "Noch keine aktuelle Verbindungsprüfung.") +
         (Status == "Neustart angefordert" ? "\nWindows-Neustart angefordert; der Host kann während der 30 Sekunden Vorlauf noch erreichbar sein." : "") +
+        (UsesHttps is true ? "\nBestätigte WinRM-Verbindung über HTTPS (TLS-verschlüsselt)." : UsesHttps is false ? "\nBestätigte WinRM-Verbindung über HTTP." : "") +
         (string.IsNullOrWhiteSpace(Detail) ? "" : "\n" + Detail);
 }
