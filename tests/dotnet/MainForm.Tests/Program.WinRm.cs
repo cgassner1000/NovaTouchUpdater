@@ -74,6 +74,8 @@ internal static partial class Program
         visibility.Controls.Add(winRm);
         var upload = Field<Button>(form, "btnTransfer");
         visibility.Controls.Add(upload);
+        var hostBar = Field<FlowLayoutPanel>(form, "hostSelectionBar");
+        visibility.Controls.Add(hostBar);
         HostState[] hosts = Populate(form);
         var mode = Field<ComboBox>(form, "executionMode");
         var https = Field<CheckBox>(form, "chkSsl");
@@ -88,10 +90,17 @@ internal static partial class Program
             Field<CheckBox>(form, "chkSkipLocalPackageCopy"), Field<CheckBox>(form, "chkSkipRemotePackageCopy"),
             Field<CheckBox>(form, "chkSkipZipTransfer"), Field<CheckBox>(form, "chkIrisTls"),
             Field<CheckBox>(form, "chkUploadToZzzSoftware"), Field<CheckBox>(form, "chkRestartPosAfterUpdate")];
+        var filter = Field<ComboBox>(form, "statusFilter");
+        filter.SelectedIndex = 1;
         foreach (int execution in new[] { 0, 1, 2 })
         {
             mode.SelectedIndex = execution;
             Call(form, "UpdateButtons");
+            Assert(hostBar.Visible == (execution != (int)UpdateExecutionMode.Local) && filter.SelectedIndex == 1,
+                "the host selection strip is hidden only in Local mode and preserves the remote filter");
+            if (execution == (int)UpdateExecutionMode.Local)
+                Assert(Field<DataGridView>(form, "table").Rows.Cast<DataGridViewRow>().Single().Tag is HostState { IsLocal: true },
+                    "a hidden remote filter cannot hide the local computer");
             Assert(winRm.Visible == (execution != (int)UpdateExecutionMode.Local) && upload.Visible == winRm.Visible &&
                 winRm.Text == "WinRM\nkonfigurieren" && ((SizingColumnHeaderCell)Field<DataGridView>(form, "table").Columns["include"].HeaderCell).RefreshAction,
                 $"the two-line WinRM configuration button and upload follow local/remote mode {execution}; the scan button is named Versionen prüfen");
@@ -102,6 +111,7 @@ internal static partial class Program
                 Field<TextBox>(form, "txtPassword").Text == "test-only",
                 "switching execution mode retains connection settings for configuration capture");
         }
+        filter.SelectedIndex = 0;
         foreach (HostState host in hosts) host.IsSelected = false;
         Call(form, "UpdateButtons");
         Assert(Targets(form) is [{ IsLocal: true }] && settings.All(control => control.Enabled),

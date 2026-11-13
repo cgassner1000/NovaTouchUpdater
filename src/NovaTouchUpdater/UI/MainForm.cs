@@ -54,6 +54,7 @@ public sealed partial class MainForm : Form
 
     private readonly DataGridView table = new();
     private readonly ComboBox statusFilter = new AppComboBox();
+    private readonly FlowLayoutPanel hostSelectionBar = FlowRow();
     private readonly Label lblFile = new();
     private readonly Label lblSummary = new();
     private readonly Label lblSelection = new() { Name = "hostSelection", AutoSize = true, Anchor = AnchorStyles.Left };
@@ -674,7 +675,8 @@ public sealed partial class MainForm : Form
         bar.Layout += (_, _) => btnCompileSoftware.Height = btnServicePacks.Height = btnUpdate.Height;
         updateToolTip.SetToolTip(btnCompileSoftware, "Softwarepakete aus der installierten NovaTouch Control in allen IRIS-Namespaces ohne %-Präfix der ausgewählten Hosts importieren und kompilieren.");
         updateToolTip.SetToolTip(btnServicePacks, "XML-Servicepacks in alle IRIS-Namespaces ohne %-Präfix der ausgewählten Hosts importieren und mit ckbf kompilieren.");
-        var filterBar = FlowRow();
+        var filterBar = hostSelectionBar;
+        filterBar.Name = "hostSelectionBar";
         filterBar.Margin = new Padding(0, 9, 0, 12);
         filterBar.Controls.Add(new Label { Text = "Hostübersicht", Font = new Font(Font, FontStyle.Bold), AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 18, 3) });
         filterBar.Controls.Add(new Label { Text = "Anzeige", ForeColor = UiTheme.Muted, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 3, 8, 3) });
@@ -1098,14 +1100,14 @@ public sealed partial class MainForm : Form
         foreach (HostState host in hosts) host.Row = null;
         foreach (HostState host in ExecutionHosts())
         {
-            bool include = statusFilter.SelectedIndex switch
+            bool include = Mode == UpdateExecutionMode.Local || (statusFilter.SelectedIndex switch
             {
                 1 => host.Result == "Fehler",
                 2 => host.Result == "Erfolgreich" || host.CommandSucceeded,
                 3 => host.Result == "Bereits aktuell / übersprungen",
                 4 => host.Connection == "Nicht erreichbar",
                 _ => true
-            };
+            });
             if (!include) continue;
             int idx = table.Rows.Add(host.IsSelected);
             host.Row = table.Rows[idx];
@@ -2234,6 +2236,7 @@ public sealed partial class MainForm : Form
         btnAdministrator.Enabled = idle;
         updateNotice.Enabled = CanUpdateApplication;
         btnImport.Enabled = btnEditHosts.Enabled = idle && Mode != UpdateExecutionMode.Local;
+        hostSelectionBar.Visible = Mode != UpdateExecutionMode.Local;
 
         btnSelectAll.Enabled = btnClearSelection.Enabled = idle && hosts.Count > 0;
         lblSelection.Text = $"{selected.Length} von {ExecutionHosts().Count()} ausgewählt";
