@@ -5,7 +5,7 @@ public sealed partial class MainForm
     private static readonly (string Column, UpdateComponents Component)[] programColumns =
     [
         ("payment", UpdateComponents.Payment), ("fiscal", UpdateComponents.Fiscal), ("serversuite", UpdateComponents.ServerSuite),
-        ("pos", UpdateComponents.Pos), ("ntc", UpdateComponents.Ntc), ("ntv", UpdateComponents.Ntv)
+        ("ntc", UpdateComponents.Ntc), ("pos", UpdateComponents.Pos), ("ntv", UpdateComponents.Ntv), ("oman", UpdateComponents.Oman)
     ];
 
     private void PaintProgramUpdates(HostState host)
@@ -21,7 +21,7 @@ public sealed partial class MainForm
                 {
                     UpdateComponents.Payment => host.Payment, UpdateComponents.Fiscal => host.Fiscal,
                     UpdateComponents.ServerSuite => host.ServerSuite, UpdateComponents.Pos => host.PosVersion,
-                    UpdateComponents.Ntc => host.NtcVersion, UpdateComponents.Ntv => host.NtvVersion, _ => "–"
+                    UpdateComponents.Ntc => host.NtcVersion, UpdateComponents.Ntv => host.NtvVersion, UpdateComponents.Oman => host.OmanVersion, _ => "–"
                 };
             }
             var cell = host.Row!.Cells[column];
@@ -43,7 +43,7 @@ public sealed partial class MainForm
             cell.ToolTipText = string.Join(Environment.NewLine, new[]
             {
                 cell.ToolTipText.Length > 0 ? cell.ToolTipText : version,
-                status + percent, current.Phase, DisplayText.Clean(current.Message)
+                DisplayText.WithAttempt(status + percent, current.Attempt), current.Phase, DisplayText.Clean(current.Message)
             }.Where(line => line.Length > 0));
         }
     }

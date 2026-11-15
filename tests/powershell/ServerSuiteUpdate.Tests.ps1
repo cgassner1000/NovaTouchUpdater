@@ -9,6 +9,7 @@ function AssertLivePhase([string]$phase) {
     if (-not $script:checkLiveProgress) { return }
     $lastLine=@($script:workerOutput.ToString() -split '\r?\n' | Where-Object { $_.Trim() })[-1]
     $lastMessage=$lastLine | ConvertFrom-Json
+    if ($phase -eq 'Update installieren' -and $lastMessage.Phase -eq 'Warte auf Dateifreigabe') { return }
     Assert ($lastMessage.Event -eq 'progress' -and $lastMessage.Phase -eq $phase) "Phase '$phase' must reach the UI before the operation starts, not after the remote call returns"
 }
 $workspace = $RepositoryRoot
@@ -106,6 +107,13 @@ function Copy-Item {
     $source = FixturePath $LiteralPath
     $target = FixturePath $Destination
     $script:events.Add($(if ($null -ne $ToSession) { 'transfer:' } else { 'copy:' }) + $target)
+    if ($null -eq $ToSession -and $target -eq $script:transientLockFile) {
+        Assert (@($script:serviceStates.Values | Where-Object Status -ne 'Stopped').Count -eq 0) 'Services must remain stopped throughout retries of the locked DLL'
+        if ($script:transientCopyFailures -gt 0) {
+            $script:transientCopyFailures--
+            throw [IO.IOException]::new('Synthetic sharing violation', -2147024864)
+        }
+    }
     if ($script:copyFailure -and $target.StartsWith($script:copyFailure + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Simulated copy failure' }
     Microsoft.PowerShell.Management\Copy-Item -LiteralPath $source -Destination $target -Recurse:$Recurse -Force:$Force -ErrorAction Stop
 }
@@ -178,6 +186,7 @@ function ResetCase([string]$name) {
     $script:serviceStates = @{}; $script:installed = @(); $script:pythonRoots=@()
     ResetSuiteProcessFixture $script:events $script:serviceStates
     $script:stopFailure=''; $script:startFailure=''; $script:copyFailure=''; $script:reparsePath=''
+    $script:transientLockFile=''; $script:transientCopyFailures=0
     $script:deleteFailure=''; $script:eventLogWaitFailure=''
     $script:eventLogService = [pscustomobject]@{ Name='EventLog'; Status='Running' }
     $script:eventLogService | Add-Member -MemberType ScriptMethod -Name WaitForStatus -Value {
@@ -930,6 +939,24 @@ try {
     $result=RunWorker
     Assert ($result.Changed -and @($script:events | Where-Object { $_ -like 'transfer:*' }).Count -gt 0) 'The local copy switch cannot suppress remote transfers'
     Passed 'remote ZIP uploads remain independent of the local copy switch'
+
+    foreach ($local in @($false,$true)) {
+        ResetCase ('file-lock-retry-' + $local)
+        $script:request.LocalExecution=$local
+        $script:checkLiveProgress=$true
+        Component 'fiscal'
+        Package @{ 'component.exe'='1.2.3.4'; 'grpc_csharp_ext.x64.dll'='updated dummy DLL'; 'nested/updated.txt'='new' } 'fiscal'
+        $script:transientLockFile=Join-Path $script:case 'fiscal\grpc_csharp_ext.x64.dll'
+        $script:transientCopyFailures=2
+        $result=RunWorker
+        Assert ($result.Success -and $script:transientCopyFailures -eq 0) 'A temporary DLL lock must recover within the first worker operation'
+        Assert (@($script:events | Where-Object { $_ -eq ('copy:' + $script:transientLockFile) }).Count -eq 3) 'Only the blocked DLL receives repeated copy attempts'
+        Assert (@($script:events | Where-Object { $_ -eq ('copy:' + (Join-Path $script:case 'fiscal\component.exe')) }).Count -eq 1) 'Files already copied successfully must not be recopied'
+        Assert (@($script:events | Where-Object { $_ -eq 'stop:nt.fiscal_shop' }).Count -eq 1 -and
+            @($script:events | Where-Object { $_ -eq 'start:nt.fiscal_shop' }).Count -eq 1) 'Transient file locks must not restart the whole service installation cycle'
+        Assert (@($script:lastWorkerMessages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'Warte auf Dateifreigabe' }).Count -gt 0) 'File-lock waits must reach the worker progress stream'
+        Passed ('transient Fiskal DLL locks recover without another installation attempt; local=' + $local)
+    }
 
     ResetCase 'temporary-preflight'
     $script:request.SkipRemotePackageCopy=$true

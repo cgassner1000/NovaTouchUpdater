@@ -54,10 +54,18 @@ internal static partial class Program
             Settle();
             Assert(table.Columns["payment"].Width > baseline["payment"], "a longer version automatically expands its software column");
             var withVersion = Widths();
+            table.AutoResizeRows(DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders);
+            int singleLineHeight = firstRow.Height;
             firstRow.Cells["information"].Value = new string('W', 1000);
             firstRow.Cells["information"].Tag = 75;
             Settle();
             Assert(Widths().All(c => c.Value == withVersion[c.Key]), "long Information text and copy progress do not influence column widths");
+            table.AutoResizeRows(DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders);
+            Assert(firstRow.Height == singleLineHeight, "long Information text stays on one line instead of expanding the host row");
+            firstRow.Cells["information"].Value = "First detail\r\nSecond detail\n" + new string('W', 500);
+            Settle();
+            table.AutoResizeRows(DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders);
+            Assert(firstRow.Height == singleLineHeight, "embedded line breaks in Information also cannot expand the host row");
             firstRow.Cells["information"].Value = "Datei wird kopiert (75 %)";
 
             canvas.Width += 240;
@@ -97,6 +105,33 @@ internal static partial class Program
             using var bitmap = new Bitmap(canvas.Width, canvas.Height);
             canvas.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
             bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "main-content-columns.png"));
+
+            hosts[0].Phase = "Synthetic detail\r\nSecond detail " + new string('W', 300);
+            Call(form, "PaintRow", hosts[0]);
+            Assert(firstRow.Cells["information"].ToolTipText == firstRow.Cells["information"].Value?.ToString() &&
+                firstRow.Cells["information"].ToolTipText.Contains("Second detail"), "the full Information text remains available in the tooltip");
+            hosts[0].Phase = "Bereit";
+
+            foreach (string mode in new[] { "Light", "Dark" })
+            {
+                UiTheme.SetMode(mode);
+                UiTheme.StyleGrid(table);
+                canvas.BackColor = UiTheme.Surface;
+                Call(form, "PaintRow", hosts[0]);
+                firstRow.Cells["information"].Value = "Short information";
+                Settle();
+                table.AutoResizeRows(DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders);
+                int themedHeight = firstRow.Height;
+                firstRow.Cells["information"].Value = "45 % · IRIS:1972/USER · Klasse 10 von 20 · Novacom-NT-BOH.xml · " + new string('W', 100) + "\r\nMore details";
+                firstRow.Cells["information"].Tag = 45;
+                Settle();
+                table.AutoResizeRows(DataGridViewAutoSizeRowsMode.AllCellsExceptHeaders);
+                Assert(firstRow.Height == themedHeight, mode + " keeps long multiline Information on a single displayed line");
+                using var singleLine = new Bitmap(canvas.Width, 240);
+                canvas.DrawToBitmap(singleLine, new Rectangle(Point.Empty, singleLine.Size));
+                singleLine.Save(Path.Combine(TestWorkspace.Artifacts, "information-single-line-" + mode.ToLowerInvariant() + ".png"));
+            }
+            UiTheme.SetMode("System");
         }
         finally
         {

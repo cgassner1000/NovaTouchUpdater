@@ -71,8 +71,8 @@ internal static partial class Program
         Call(form, "ClearPackageSelection");
         Call(form, "SelectIndividualPackage", Package(UpdateComponents.Pos));
         Assert(Updates(form, false).Select(host => host.Host).ToHashSet().SetEquals(["pos.invalid", "ntc.invalid"]) &&
-            (UpdateComponents)Call(form, "ComponentsForUpdate", databaseServer, false)! == UpdateComponents.None,
-            "known IRIS server without POS remains a database-upload destination without receiving a remote MSI installation");
+            (UpdateComponents)Call(form, "ComponentsForUpdate", databaseServer, false)! == UpdateComponents.Pos,
+            "the MSI step verifies installed POS on the IRIS server before any upload; absent products are skipped by the worker");
         Call(form, "ClearPackageSelection");
         Call(form, "SelectIndividualPackage", Package(UpdateComponents.Payment));
         Assert(!Updates(form, false).Contains(databaseServer), "service-only updates do not connect to an unrelated IRIS server");

@@ -31,6 +31,7 @@ internal static partial class Program
         var remote = new HostState { Host = "REMOTE-POS.invalid", Scanned = true, PosVersion = "1.0.0",
             Updates = new(UpdateComponents.None) { RunId = local.Updates!.RunId } };
         var targets = new[] { local, remote };
+        remote.Updates!.Complete(UpdateComponents.Pos, new() { Success = true });
         int preparations = 0;
         var discovery = new TaskCompletionSource<IrisUploadTarget[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         SetField(form, "prepareDatabaseTargets", new Func<CancellationToken, Task<IrisUploadTarget[]>>(_ =>
@@ -158,6 +159,7 @@ internal static partial class Program
             new() { Kind = "pos", ProductName = "NovaTouch POS", ProductVersion = "2.0.0", PayloadPath = payload });
         HostState local = Targets(form).Single();
         local.Updates = InstalledNtc();
+        local.Updates.Complete(UpdateComponents.Pos, new() { Success = true, Changed = true });
         local.Scanned = true;
         SetField(form, "prepareDatabaseTargets", new Func<CancellationToken, Task<IrisUploadTarget[]>>(_ => Task.FromResult(new[] {
             new IrisUploadTarget { Instance = "IRIS", Port = 1972, Namespaces = ["USER"] }

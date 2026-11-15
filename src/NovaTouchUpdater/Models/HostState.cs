@@ -20,6 +20,7 @@ internal sealed class HostState
     public string PosVersion { get; set; } = "–";
     public string NtcVersion { get; set; } = "–";
     public string NtvVersion { get; set; } = "–";
+    public string OmanVersion { get; set; } = "–";
     public string KsmVersion { get; set; } = "–";
     public string NtcBefore { get; set; } = "–";
     public string PosBefore { get; set; } = "–";

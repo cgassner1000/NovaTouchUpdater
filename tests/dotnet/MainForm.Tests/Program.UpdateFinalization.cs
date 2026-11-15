@@ -32,6 +32,7 @@ internal static partial class Program
             Call(form, "CaptureCredentials");
             HostState[] hosts = [new() { Host="LOCALHOST", Scanned=true }, new() { Host="REMOTE-A", Scanned=true }, new() { Host="REMOTE-B", Scanned=true }];
             foreach (HostState host in hosts) { host.PosVersion="1.0.0"; host.Updates = new(UpdateComponents.None); }
+            foreach (HostState host in hosts) host.Updates!.Complete(UpdateComponents.Pos, new() { Success=true, Changed=true });
             worker.FailedUploadHost = "LOCALHOST";
             FinishUpdates(form, hosts);
             Assert(worker.Requests.Count(request => request.Action == "publish-msi-packages") == 3 && worker.Requests.All(request => request.Action != "restart-pos"),
@@ -51,9 +52,11 @@ internal static partial class Program
             Assert(worker.Requests.Count == 0, "completed uploads and POS restarts are never repeated by a finalization retry");
 
             HostUpdateState localFailure = hosts[0].Updates = new(UpdateComponents.Payment);
+            localFailure.Complete(UpdateComponents.Pos, new() { Success=true, Changed=true });
             localFailure.Fail(UpdateComponents.Payment, "Payment service failed");
             hosts[0].UpdateFailed = true;
             HostUpdateState remoteFailure = hosts[1].Updates = new(UpdateComponents.Fiscal);
+            remoteFailure.Complete(UpdateComponents.Pos, new() { Success=true, Changed=true });
             remoteFailure.Fail(UpdateComponents.Fiscal, "Fiscal service failed");
             hosts[1].UpdateFailed = true;
             FinishUpdates(form, hosts);
@@ -73,6 +76,7 @@ internal static partial class Program
                 "retrying a failed service does not repeat a database upload or POS restart that already succeeded");
 
             localFailure = hosts[0].Updates = new(UpdateComponents.Payment);
+            localFailure.Complete(UpdateComponents.Pos, new() { Success=true, Changed=true });
             localFailure.Fail(UpdateComponents.Payment, "Payment service failed");
             hosts[0].UpdateFailed = true;
             worker.FailedUploadHost = "LOCALHOST";
@@ -99,7 +103,12 @@ internal static partial class Program
             void NewRun()
             {
                 Guid runId = Guid.NewGuid();
-                foreach (HostState host in hosts) host.Updates = new(UpdateComponents.None) { RunId=runId };
+                foreach (HostState host in hosts)
+                {
+                    host.Updates = new(UpdateComponents.None) { RunId=runId };
+                    foreach (var component in Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages").Keys)
+                        host.Updates.Complete(component, new() { Success=true });
+                }
                 worker.Requests.Clear(); worker.UnchangedUploadHosts.Clear(); worker.UploadMessage=""; worker.FailedPosHost=""; worker.UploadedKindsOverride=null;
             }
             Field<CheckBox>(form, "chkUploadToZzzSoftware").Checked = true;
@@ -149,6 +158,7 @@ internal static partial class Program
             hosts[0].Updates!.CompleteDatabaseUpload(true, "Earlier successful upload");
             hosts[0].Updates!.RecordDatabaseUploads(["pos"]);
             hosts[1].Updates = new(UpdateComponents.None); // Different update run.
+            hosts[1].Updates!.Complete(UpdateComponents.Pos, new() { Success=true });
             worker.UnchangedUploadHosts.Add("REMOTE-A");
             FinishUpdates(form, hosts[0], hosts[1]);
             Assert(worker.Requests.ToArray() is [{ Action:"publish-msi-packages", Host:"REMOTE-A" }] && !hosts[1].Updates!.SuccessfulPosUploadInRun,
@@ -184,6 +194,7 @@ internal static partial class Program
             hosts[1].PosVersion="1.0.0"; hosts[2].PosVersion="1.0.0";
             NewRun();
             packages.Add(UpdateComponents.Ntc, new() { Kind="ntc", ProductName="NovaTouch Control", ProductVersion="2.0.0", PayloadPath=msi });
+            foreach (HostState host in hosts) host.Updates!.Complete(UpdateComponents.Ntc, new() { Success=true });
             worker.UploadedKindsOverride=["ntc"];
             FinishUpdates(form, hosts);
             Assert(worker.Requests.All(request => request.Action == "publish-msi-packages") && hosts.Skip(1).All(host => host.Phase.Contains("kein POS-MSI neu")),

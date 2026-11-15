@@ -8,7 +8,7 @@ internal enum UpdateComponents
 }
 
 internal enum ComponentUpdateStatus { Updating, Succeeded, Failed, Cancelled }
-internal readonly record struct ComponentUpdateProgress(ComponentUpdateStatus Status, int? Percent = null, string Phase = "", string Message = "");
+internal readonly record struct ComponentUpdateProgress(ComponentUpdateStatus Status, int? Percent = null, string Phase = "", string Message = "", int Attempt = 0);
 
 // One update run, including automatic attempts and later manual retries.
 // Only verified successes leave Pending; scans and commands do not reset it.
@@ -20,6 +20,8 @@ internal sealed class HostUpdateState(UpdateComponents components)
     internal bool Changed { get; private set; }
     internal bool AllSkipped { get; private set; } = true;
     internal bool NtcInstalled { get; private set; }
+    internal UpdateComponents VerifiedMsiPackages { get; private set; }
+    internal UpdateComponents SkippedMsiPackages { get; private set; }
     internal bool SoftwareCompilationCompleted { get; private set; }
     internal bool SoftwareCompilationRunning { get; set; }
     internal bool DatabaseUploadRunning { get; set; }
@@ -42,6 +44,22 @@ internal sealed class HostUpdateState(UpdateComponents components)
     internal bool PosRestartCompleted { get; set; }
     internal string PosRestartMessage { get; private set; } = "";
     internal string DatabaseUploadError { get; set; } = "";
+    internal UpdateComponents CompletedDatabasePackages { get; private set; }
+    private readonly Dictionary<UpdateComponents, string> databasePackageErrors = [];
+    internal void CompleteDatabasePackages(UpdateComponents packages, UpdateComponents required, bool changed, string message)
+    {
+        CompletedDatabasePackages |= packages;
+        foreach (var component in Each(packages)) databasePackageErrors.Remove(component);
+        CompleteDatabaseUpload(changed, message);
+        DatabaseUploadCompleted = (CompletedDatabasePackages & required) == required;
+        DatabaseUploadError = string.Join(" | ", databasePackageErrors.Values.Distinct());
+    }
+    internal void FailDatabasePackages(UpdateComponents packages, string error)
+    {
+        foreach (var component in Each(packages)) databasePackageErrors[component] = error;
+        DatabaseUploadCompleted = false;
+        DatabaseUploadError = string.Join(" | ", databasePackageErrors.Values.Distinct());
+    }
     internal string PosRestartError { get; set; } = "";
     internal bool AdditionalFilesCompleted { get; private set; }
     internal string AdditionalFilesMessage { get; private set; } = "";
@@ -80,6 +98,8 @@ internal sealed class HostUpdateState(UpdateComponents components)
 
     internal void ResetDatabaseUpload()
     {
+        CompletedDatabasePackages = UpdateComponents.None;
+        databasePackageErrors.Clear();
         DatabaseUploadCompleted = DatabaseUploadChanged = SuccessfulPosUploadInRun = PosRestartCompleted = false;
         DatabaseUploadError = DatabaseUploadMessage = PosRestartError = PosRestartSkipMessage = "";
     }
@@ -95,14 +115,14 @@ internal sealed class HostUpdateState(UpdateComponents components)
         foreach (var part in Each(component))
             if (componentProgress.TryGetValue(part, out var current) && current.Status == ComponentUpdateStatus.Updating)
                 componentProgress[part] = new(ComponentUpdateStatus.Updating,
-                    progress.ProgressPercent is int percent ? Math.Clamp(percent, 0, 100) : null, progress.Phase, progress.Message);
+                    progress.ProgressPercent is int percent ? Math.Clamp(percent, 0, 100) : null, progress.Phase, progress.Message, current.Attempt);
     }
 
     internal void StopActiveComponents(string error = "")
     {
         foreach (var part in componentProgress.Where(pair => pair.Value.Status == ComponentUpdateStatus.Updating).Select(pair => pair.Key).ToArray())
             if (error.Length > 0) Fail(part, error);
-            else componentProgress[part] = new(ComponentUpdateStatus.Cancelled);
+            else componentProgress[part] = componentProgress[part] with { Status = ComponentUpdateStatus.Cancelled, Percent = null };
     }
 
     internal static IEnumerable<UpdateComponents> Each(UpdateComponents components) =>
@@ -122,17 +142,21 @@ internal sealed class HostUpdateState(UpdateComponents components)
     };
 
     internal bool WasAttempted(UpdateComponents component) => (Attempted & component) != 0;
-    internal void BeginComponent(UpdateComponents component)
+    internal void BeginComponent(UpdateComponents component, int attempt = 1)
     {
+        VerifiedMsiPackages &= ~component;
+        SkippedMsiPackages &= ~component;
         Attempted |= component;
         foreach (var part in Each(component))
         {
             errors.Remove(part);
-            componentProgress[part] = new(ComponentUpdateStatus.Updating);
+            componentProgress[part] = new(ComponentUpdateStatus.Updating, Attempt: attempt);
         }
     }
     internal void RestrictTo(UpdateComponents allowed)
     {
+        VerifiedMsiPackages &= allowed;
+        SkippedMsiPackages &= allowed;
         Pending &= allowed;
         Attempted &= allowed;
         foreach (UpdateComponents component in errors.Keys.Where(component => (component & allowed) == 0).ToArray())
@@ -150,19 +174,23 @@ internal sealed class HostUpdateState(UpdateComponents components)
         foreach (var part in Each(component))
         {
             errors.Remove(part);
-            componentProgress[part] = new(ComponentUpdateStatus.Succeeded, 100, "Update verifiziert", result.Message);
+            componentProgress[part] = new(ComponentUpdateStatus.Succeeded, 100, "Update verifiziert", result.Message, ProgressFor(part)?.Attempt ?? 0);
         }
         Changed |= result.Changed;
         AllSkipped &= result.Skipped;
+        if (result.Skipped) SkippedMsiPackages |= component & UpdateComponents.Msi;
+        else VerifiedMsiPackages |= component & UpdateComponents.Msi;
         NtcInstalled |= (component & UpdateComponents.Ntc) != 0 && result.Changed && !result.Skipped;
     }
 
     internal void Fail(UpdateComponents component, string error)
     {
+        VerifiedMsiPackages &= ~component;
+        SkippedMsiPackages &= ~component;
         foreach (var part in Each(component))
         {
             errors[part] = error;
-            componentProgress[part] = new(ComponentUpdateStatus.Failed, null, "Update fehlgeschlagen", error);
+            componentProgress[part] = new(ComponentUpdateStatus.Failed, null, "Update fehlgeschlagen", error, ProgressFor(part)?.Attempt ?? 0);
         }
     }
 }

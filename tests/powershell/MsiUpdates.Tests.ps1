@@ -103,7 +103,7 @@ function Invoke-Command { param($Session, $ScriptBlock, [object[]]$ArgumentList,
 function Remove-PSSession { param($Session, $ErrorAction) if ($script:localMode) { throw 'Local execution must not remove a WinRM session' }; $global:closed++ }
 function Start-Process {
     param($FilePath, $ArgumentList, [switch]$PassThru, [switch]$Wait, $WindowStyle)
-    Assert ($FilePath.EndsWith('\msiexec.exe') -and $ArgumentList.Contains('/qn /norestart REBOOT=ReallySuppress') -and $WindowStyle -eq 'Hidden') 'MSI execution is silent and suppresses automatic Windows restarts'
+    Assert ($FilePath.EndsWith('\msiexec.exe') -and $ArgumentList.Contains('/qn /norestart REBOOT=ReallySuppress') -and $WindowStyle -eq 'Hidden' -and $Wait -and $PassThru) 'MSI execution waits for installer exit, remains silent and suppresses automatic Windows restarts'
     Assert ($ArgumentList.Contains('REINSTALL=ALL REINSTALLMODE=vomus')) 'same-product-code minor upgrades use MSI reinstall properties'
     if ($global:fixtureServices.Count -gt 0) { Assert (@($global:fixtureServices.Values | Where-Object Status -ne 'Stopped').Count -eq 0) 'all MSI-associated services stop before installation' }
     if ($global:expectCab) {
@@ -120,7 +120,7 @@ function Start-Process {
     [pscustomobject]@{ ExitCode=$global:installerExit }
 }
 
-function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, [bool]$expectedSuccess, [bool]$expectedInstall, [bool]$preparedFailure=$false, [string]$action='update', [bool]$direct=$false, [bool]$emptyPath=$false, [string]$expectedError='', [string]$packageShape='both', [string]$installedAfter='') {
+function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, [bool]$expectedSuccess, [bool]$expectedInstall, [bool]$preparedFailure=$false, [string]$action='update', [bool]$direct=$false, [bool]$emptyPath=$false, [string]$expectedError='', [string]$packageShape='both', [string]$installedAfter='', [bool]$temporary=$false, [bool]$reuse=$false, [bool]$skipTransfer=$false) {
     $script:localMode=$local
     $global:fixtureKind=$package.Kind; $global:fixtureName=$package.ProductName; $global:fixtureProductCode=$package.ProductCode
     $global:expectCab=@($package.CompanionFiles).Count -gt 0
@@ -131,7 +131,15 @@ function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, 
     $base = Join-Path $fixture $name
     $global:currentBase=$base
     $request = @{ Action=$action; Host=$(if ($local) { 'LOCALHOST' } else { 'fixture.invalid' }); LocalExecution=$local; Username=''; Password='';
-        UseSsl=$false; ForceUpdate=$true; RetryUpdate=$true; SkipZipTransfer=$false; SkipLocalPackageCopy=$direct; PaymentZip=''; FiscalZip=''; ServerSuiteZip=''; RemoteInstallPath=$(if ($emptyPath) { '' } else { $base }); MsiPackage=$package; MsiPackages=@($package); CheckUpdateUpload=$true }
+        UseSsl=$false; ForceUpdate=$true; RetryUpdate=$true; SkipZipTransfer=($reuse -or $skipTransfer); SkipRemotePackageCopy=$temporary; SkipLocalPackageCopy=$direct; PaymentZip=''; FiscalZip=''; ServerSuiteZip=''; RemoteInstallPath=$(if ($emptyPath) { '' } else { $base }); MsiPackage=$package; MsiPackages=@($package); CheckUpdateUpload=$true }
+    if ($reuse) {
+        [void][IO.Directory]::CreateDirectory($base)
+        foreach ($file in @([pscustomobject]@{LocalPath=$package.PayloadPath;RelativePath=[IO.Path]::GetFileName($package.PayloadPath)}) + @($package.CompanionFiles)) {
+            $path=Join-Path $base $file.RelativePath
+            [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
+            [IO.File]::Copy($file.LocalPath,$path,$true)
+        }
+    }
     if ($packageShape -eq 'single') { $request.Remove('MsiPackages') }
     if ($packageShape -eq 'list') { $request.Remove('MsiPackage') }
     $script:requestJson = $request | ConvertTo-Json -Depth 8 -Compress
@@ -142,11 +150,14 @@ function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, 
     Assert ($result.Success -eq $expectedSuccess) ("$name reports expected outcome: " + ($result | ConvertTo-Json -Depth 4 -Compress))
     if ($expectedError) { Assert ($result.Error -like ('*' + $expectedError + '*')) "$name reports the source validation error" }
     Assert ($global:installerCalls -eq [int]$expectedInstall) "$name starts an installer only for an older installed product"
-    if (-not $expectedInstall -and -not $preparedFailure) { Assert ($global:copies -eq 0 -and -not (Test-Path -LiteralPath $base)) "$name performs no transfer or extraction" }
+    if (-not $expectedInstall -and -not $preparedFailure) { Assert ($global:copies -eq 0 -and ($reuse -or -not (Test-Path -LiteralPath $base))) "$name performs no transfer or extraction" }
     if ($preparedFailure) { Assert ($result.Error -like '*MSI-ProductName*' -and $global:copies -gt 0) "$name rejects inconsistent client MSI metadata before installation" }
-    if ($local -and $action -eq 'check-upload-directory') { Assert (-not $result.UploadRequired -and @($messages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'MSI-Vorprüfung' }).Count -eq 1) "$name defers an unreadable MSI version to its component without blocking unrelated updates" }
+    if ($action -eq 'check-upload-directory') { Assert (-not $result.UploadRequired -and @($messages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'MSI-Vorprüfung' }).Count -eq 1) "$name defers an unreadable MSI version to its component without blocking unrelated updates" }
     if ($local) { Assert ($global:sessions -eq 0 -and $global:closed -eq 0) "$name uses no WinRM calls" }
-    else { Assert ($global:sessions -eq 0 -and $global:closed -eq 0 -and $global:copies -eq 0 -and $global:adminChecks -eq 0) "$name is blocked before remote sessions, transfers or installation" }
+    elseif ($packageShape -eq 'list') { Assert ($global:sessions -eq 0 -and $global:closed -eq 0 -and $global:copies -eq 0) "$name rejects ambiguous multi-package installation before opening a session" }
+    else { Assert ($global:sessions -eq 1 -and $global:closed -eq 1 -and $global:adminChecks -eq 0) "$name installs only on the authenticated remote target and releases the session" }
+    if ($temporary) { Assert (-not (Test-Path -LiteralPath $base) -and @(Get-ChildItem -LiteralPath $copyTestTemp -Directory -Filter '.ntu-*').Count -eq 0) "$name cleans temporary packages without creating the configured target directory" }
+    if ($reuse) { Assert ($global:copies -eq 0) "$name reuses verified target packages without transferring them" }
     if ($expectedSuccess -and $expectedInstall) { Assert ($result.RebootRequired -eq ($exitCode -in @(3010,1641)) -and @($result.InstalledPrograms | Where-Object { $_.Kind -eq $package.Kind -and $_.Version -eq ([Version]$package.ProductVersion).ToString(3) }).Count -eq 1) "$name verifies the three-part installed Windows version and preserves reboot-required status" }
     if (Test-Path -LiteralPath $base) { Assert (@(Get-ChildItem -LiteralPath $base -Directory -Filter '.novatouch-updater-msi-*').Count -eq 0) "$name removes its temporary MSI staging directory" }
     if ($global:directSource) {
@@ -162,13 +173,16 @@ try {
     RunCase 'local-upgrade' '1.0.0' $true 0 $true $true
     RunCase 'local-reboot-required' '1.0.0' $true 3010 $true $true
     RunCase 'local-installer-failure' '1.0.0' $true 1603 $false $true
-    RunCase -name 'remote-absent' -version '' -local $false -exitCode 0 -expectedSuccess $false -expectedInstall $false -expectedError 'ausschließlich lokal'
-    RunCase -name 'remote-upgrade' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $false -expectedInstall $false -expectedError 'ausschließlich lokal'
-    RunCase -name 'remote-current-force' -version '2.0.0' -local $false -exitCode 0 -expectedSuccess $false -expectedInstall $false -expectedError 'ausschließlich lokal'
-    RunCase -name 'remote-unknown-preflight' -version 'unknown' -local $false -exitCode 0 -expectedSuccess $false -expectedInstall $false -action 'check-upload-directory' -expectedError 'ausschließlich lokal'
+    RunCase -name 'remote-absent' -version '' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $false
+    RunCase -name 'remote-upgrade' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $true
+    RunCase -name 'remote-current-force' -version '2.0.0' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $false
+    RunCase -name 'remote-unknown-preflight' -version 'unknown' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $false -action 'check-upload-directory'
+    RunCase -name 'remote-installer-failure' -version '1.0.0' -local $false -exitCode 1603 -expectedSuccess $false -expectedInstall $true
+    RunCase -name 'remote-temporary' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $true -temporary $true -skipTransfer $true
+    RunCase -name 'remote-reuse' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $true -reuse $true
     RunCase -name 'local-direct-msi' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
     RunCase -name 'local-empty-destination' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -emptyPath $true
-    RunCase -name 'remote-local-option-cannot-enable-msi' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $false -expectedInstall $false -direct $true -expectedError 'ausschließlich lokal'
+    RunCase -name 'remote-local-option-keeps-remote-staging' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
     $verifiedHash=$package.Sha256; $package.Sha256='0' * 64
     RunCase -name 'local-direct-hash-failure' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $false -expectedInstall $false -direct $true -expectedError 'SHA256'
     $package.Sha256=$verifiedHash
@@ -177,7 +191,7 @@ try {
     $package.RelativeMsiPath = 'installer/Control.msi'
     $package.Sha256 = (Get-FileHash -LiteralPath $package.PayloadPath -Algorithm SHA256).Hash
     RunCase 'local-msi-in-zip' '1.0.0' $true 0 $true $true
-    RunCase -name 'remote-msi-in-zip' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $false -expectedInstall $false -expectedError 'ausschließlich lokal'
+    RunCase -name 'remote-msi-in-zip' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $true
     RunCase -name 'local-direct-msi-zip' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
 
     $package.PayloadPath = [string]$msis.pos; $package.RelativeMsiPath = 'pos.msi'
@@ -190,14 +204,14 @@ try {
         CompanionFiles=@([pscustomobject]@{ LocalPath=$cab; RelativePath='data.cab'; Sha256=(Get-FileHash -LiteralPath $cab -Algorithm SHA256).Hash }) }
     RunCase 'local-external-cabinet' '1.0.0' $true 0 $true $true
     Assert ($global:copies -eq 2) 'both MSI and external cabinet are transferred and verified'
-    RunCase -name 'remote-external-cabinet' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $false -expectedInstall $false -expectedError 'ausschließlich lokal'
+    RunCase -name 'remote-external-cabinet' -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $true -expectedInstall $true
     RunCase -name 'local-direct-external-cabinet' -version '1.0.0' -local $true -exitCode 0 -expectedSuccess $true -expectedInstall $true -direct $true
 
     foreach ($kind in @('pos','ntc','ntv','oman')) {
-        $package=[pscustomobject]@{ Kind=$kind; ProductName=$kind; ProductVersion='2.0.0'; ProductCode=''; UpgradeCode='';
-            PayloadPath=[string]$msis.$kind; RelativeMsiPath=($kind + '.msi'); Sha256=''; CompanionFiles=@() }
+        $package=[pscustomobject]@{ Kind=$kind; ProductName=$names[$kind]; ProductVersion='2.0.0'; ProductCode=(FixtureProductCode ([string]$msis.$kind)); UpgradeCode='';
+            PayloadPath=[string]$msis.$kind; RelativeMsiPath=($kind + '.msi'); Sha256=(Get-FileHash -LiteralPath $msis.$kind -Algorithm SHA256).Hash; CompanionFiles=@() }
         foreach ($shape in @('single','list')) {
-            RunCase -name ("remote-block-$kind-$shape") -version '1.0.0' -local $false -exitCode 0 -expectedSuccess $false -expectedInstall $false -expectedError 'ausschließlich lokal' -packageShape $shape
+            RunCase -name ("remote-$kind-$shape") -version '1.0.0' -local $false -exitCode 0 -expectedSuccess ($shape -eq 'single') -expectedInstall ($shape -eq 'single') -expectedError $(if($shape -eq 'list'){'einzeln'}else{''}) -packageShape $shape
         }
     }
 

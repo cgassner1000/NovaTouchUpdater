@@ -566,9 +566,9 @@ public sealed partial class MainForm : Form
         tips.SetToolTip(chkSkipZipTransfer, "REMOTE: ZIP- und MSI-Pakete müssen bereits im Zielpfad des Clients liegen. Dateiname und SHA256 müssen zur gewählten Quelle passen. Die Einstellung betrifft keine lokalen Updates.");
         tips.SetToolTip(chkSkipRemotePackageCopy, "REMOTE: Pakete für die Installation nur temporär auf dem Client bereitstellen und danach entfernen. Der eingestellte Zielordner wird weder befüllt noch bereinigt. MSI-Pakete für zzzSoftware werden über WinRM gestreamt. Hat Vorrang vor der Verwendung vorhandener Update-Dateien.");
         tips.SetToolTip(chkIrisTls, "TLS für den MSI-Upload zu erkannten IRIS-Instanzen auf lokalen und entfernten Hosts verwenden. Änderungen werden automatisch für den nächsten Start gespeichert.");
-        tips.SetToolTip(chkCompileAfterInstallation, "Nach einer erfolgreichen lokalen NovaTouch-Control-Installation die Softwarepakete automatisch in allen lokalen IRIS-Namespaces ohne %-Präfix kompilieren. Bei gleicher/neuerer NTC-Version kein automatisches Kompilieren. Standard: ausgeschaltet. Wird automatisch in der Konfiguration gespeichert.");
+        tips.SetToolTip(chkCompileAfterInstallation, "Nach erfolgreicher NovaTouch-Control-Installation und Abschluss aller gewählten MSI-Installationen die Softwarepakete auf dem jeweiligen Ziel automatisch kompilieren. Gilt lokal und remote. Bei gleicher/neuerer NTC-Version kein automatisches Kompilieren. Wird automatisch gespeichert.");
         tips.SetToolTip(useBuild, "Bei einem Softwareordner mit dem Namen builds nur ALPHA, BETA oder STABLE einlesen. Änderungen werden automatisch für zukünftige Abfragen und den nächsten Start gespeichert.");
-        tips.SetToolTip(chkUploadToZzzSoftware, "Ausgewählte MSI-Pakete nach den Updates in zzzSoftware hochladen. Standard: eingeschaltet. Wird automatisch in der Konfiguration gespeichert.");
+        tips.SetToolTip(chkUploadToZzzSoftware, "Jedes MSI-Paket erst nach seiner erfolgreichen Installation bzw. Versionsprüfung auf dem jeweiligen Ziel in zzzSoftware hochladen, parallel zu den weiteren MSI-Installationen. Gilt lokal und remote. Wird automatisch gespeichert.");
         tips.SetToolTip(chkRestartPosAfterUpdate, "Nur ältere Remote-POS nach einem neu gespeicherten POS-MSI in zzzSoftware starten / neu starten. Kein Neustart ohne POS-Paket, bei gleicher/neuerer POS-Version oder wenn das POS-MSI bereits in zzzSoftware vorhanden ist. LOKAL wird ausgeschlossen. Nicht gespeicherte POS-Eingaben können verloren gehen.");
         tips.SetToolTip(btnRetry, "Nur fehlgeschlagene Komponenten erneut aktualisieren. Bereits verifizierte Komponenten werden auch bei Force-Update nicht wiederholt. Prüfungsfehler werden erneut geprüft; Dienst- und Neustartbefehle werden hier nicht wiederholt.");
         executionMode.Items.AddRange(["Lokal", "Lokal & Remote", "Remote"]);
@@ -745,15 +745,19 @@ public sealed partial class MainForm : Form
         table.Columns.Add("ntc", "NovaTouch NTC");
         table.Columns.Add("information", "Information");
         table.Columns["information"].CellTemplate = new InformationProgressCell();
+        table.Columns["information"].DefaultCellStyle.WrapMode = DataGridViewTriState.False;
         table.Columns.Add("result", "Status");
         table.Columns["result"].CellTemplate = new StatusBadgeCell();
         // Keep existing collection indices stable; group optional software
         // columns with the versions in their visual display order.
         table.Columns.Add("ksm", "NT3.ServiceDisplay");
         table.Columns.Add("ntv", "NovaTouch Voucher");
+        table.Columns.Add("oman", "NovaTouch SOL");
         table.Columns["ksm"].DisplayIndex = table.Columns["serversuite"].DisplayIndex + 1;
-        table.Columns["ntv"].DisplayIndex = table.Columns["ntc"].DisplayIndex + 1;
-        foreach (string name in new[] { "payment", "fiscal", "serversuite", "pos", "ntc", "ntv" })
+        table.Columns["ntc"].DisplayIndex = table.Columns["pos"].DisplayIndex;
+        table.Columns["ntv"].DisplayIndex = table.Columns["pos"].DisplayIndex + 1;
+        table.Columns["oman"].DisplayIndex = table.Columns["ntv"].DisplayIndex + 1;
+        foreach (string name in new[] { "payment", "fiscal", "serversuite", "pos", "ntc", "ntv", "oman" })
             table.Columns[name].CellTemplate = new ProgramUpdateCell();
         foreach (DataGridViewColumn column in table.Columns)
         {
@@ -1409,7 +1413,6 @@ public sealed partial class MainForm : Form
 
     private WorkerRequest Request(string action, HostState host, UpdateComponents components = UpdateComponents.All)
     {
-        components &= AllowedUpdateComponents(host);
         var request = new WorkerRequest
         {
         Action = action, Host = host.Host,
@@ -1442,11 +1445,9 @@ public sealed partial class MainForm : Form
         (string.IsNullOrWhiteSpace(serverSuiteZip) ? UpdateComponents.None : UpdateComponents.ServerSuite) |
         msiPackages.Keys.Aggregate(UpdateComponents.None, (mask, component) => mask | component);
 
-    private static UpdateComponents AllowedUpdateComponents(HostState host) => host.IsLocal ? UpdateComponents.All : UpdateComponents.ZipServices;
-
     private UpdateComponents ComponentsForUpdate(HostState host, bool onlyFailed) =>
         (onlyFailed && host.Updates is { } state ? state.Pending : SelectedUpdateComponents()) &
-        AllowedUpdateComponents(host) & (host.IsLocal ? UpdateComponents.All : host.InstalledComponents ?? UpdateComponents.All);
+        (host.IsLocal ? UpdateComponents.All : (host.InstalledComponents ?? UpdateComponents.All) | UpdateComponents.Msi);
 
     private bool ValidateCredentials() => ValidateTargetCredentials(SelectedHosts());
 
@@ -1547,7 +1548,7 @@ public sealed partial class MainForm : Form
                     (chkCompileAfterInstallation.Checked && host.IsLocal && state.NtcInstalled && !state.SoftwareCompilationCompleted)))).ToArray();
             if (selected.Length == 0)
             {
-                AppMessageBox.Show(this, "Remote sind ausschließlich Payment, Fiscal und Server Suite erlaubt. POS, NTC, SOL und NTV können nur lokal aktualisiert werden.",
+                AppMessageBox.Show(this, "Für die ausgewählten Hosts sind keine ausstehenden Update-Schritte vorhanden.",
                     "Keine passenden Update-Pakete", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -1586,8 +1587,6 @@ public sealed partial class MainForm : Form
             UpdateComponents components = ComponentsForUpdate(host, onlyFailed);
             if (!onlyFailed || host.Updates is null)
                 Mark(host, h => h.Updates = new HostUpdateState(components) { RunId = updateRunId, PosVersionBeforeUpdate = h.PosVersion });
-            else
-                Mark(host, h => h.Updates!.RestrictTo(AllowedUpdateComponents(h)));
         }
         await InBatchAsync(selected, async ct =>
         {
@@ -1643,76 +1642,31 @@ public sealed partial class MainForm : Form
     private async Task UpdateHostAsync(HostState host, CancellationToken token, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         HostUpdateState state = host.Updates ?? throw new InvalidOperationException("Update-Komponenten wurden nicht vorbereitet.");
-        state.RestrictTo(AllowedUpdateComponents(host) & (host.IsLocal ? UpdateComponents.All : host.InstalledComponents ?? UpdateComponents.All));
+        state.RestrictTo(host.IsLocal ? UpdateComponents.All : (host.InstalledComponents ?? UpdateComponents.All) | UpdateComponents.Msi);
         delay ??= (duration, ct) => Task.Delay(duration, ct);
-        UpdateComponents exhaustedAutomaticRetries = UpdateComponents.None;
         try
         {
-            for (int attempt = 1; attempt <= 3 && (state.Pending & ~exhaustedAutomaticRetries) != UpdateComponents.None; attempt++)
+            int scanAttempt = 0;
+            if (state.Pending != UpdateComponents.None && !host.Scanned)
             {
-                token.ThrowIfCancellationRequested();
-                Mark(host, h => { h.Attempt = attempt; h.Phase = "Update: " + HostUpdateState.Label(state.Pending); h.Error = ""; h.Result = "Läuft"; });
-                if (!host.Scanned)
-                {
-                    Mark(host, h => { h.DotNet48Installed = null; h.PosVersion = "–"; });
-                    if (!host.IsLocal)
-                    {
-                        var probe = await DoWorkerAsync(host, "probe", token);
-                        if (!probe.Success)
-                        {
-                            Mark(host, h => { h.Connection = "Nicht erreichbar"; h.Error = FriendlyError(probe); });
-                            if (attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
-                            continue;
-                        }
-                    }
-                    Mark(host, h => h.ConnectionState.SetForegroundStatus(h.IsLocal ? "Lokal" : "Verbunden", h.IsLocal ? null : activeSsl));
-                    var scan = await DoWorkerAsync(host, "scan", token);
-                    Mark(host, h => ReadScanInventory(h, scan));
-                    if (!scan.Success)
-                    {
-                        Mark(host, h => h.Error = FriendlyError(scan));
-                        if (attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
-                        continue;
-                    }
-                    Mark(host, h => { h.Scanned = true; h.PaymentBefore = h.Payment; h.FiscalBefore = h.Fiscal; h.ServerSuiteBefore = h.ServerSuite; });
-                }
-                foreach (UpdateComponents component in HostUpdateState.Each(state.Pending & ~exhaustedAutomaticRetries).ToArray())
-                {
-                    token.ThrowIfCancellationRequested();
-                    bool retry = state.WasAttempted(component);
-                    Mark(host, h => { h.Phase = "Update: " + HostUpdateState.Label(component); h.Error = ""; state.BeginComponent(component); });
-                    WorkerResult result;
-                    try { result = await DoWorkerAsync(host, "update", token, component, retry); }
-                    catch (OperationCanceledException) { throw; }
-                    catch (Exception ex) { result = new WorkerResult { Success = false, Error = ex.Message }; }
-                    Mark(host, h =>
-                    {
-                        state.CompletedServiceNames.UnionWith(result.CompletedServiceNames);
-                        h.RebootRequired |= result.RebootRequired;
-                        if (result.Services.Length > 0)
-                        {
-                            h.Services = result.Services.ToList();
-                            ReadVersions(h);
-                        }
-                        if (result.Success)
-                        {
-                            state.Complete(component, result);
-                            h.Services = result.Services.ToList();
-                            ReadVersions(h);
-                            if ((component & UpdateComponents.Msi) != UpdateComponents.None) ReadMsiInventory(h, result);
-                            h.Phase = HostUpdateState.Label(component) + ": " + (result.Skipped ? result.Message : "verifiziert");
-                        }
-                        else
-                        {
-                            state.Fail(component, FriendlyError(result));
-                            if (result.AutomaticRetriesExhausted) exhaustedAutomaticRetries |= component;
-                            h.Phase = HostUpdateState.Label(component) + ": Update fehlgeschlagen";
-                        }
-                        h.Error = result.Success ? "" : FriendlyError(result);
-                    });
-                }
-                if ((state.Pending & ~exhaustedAutomaticRetries) != UpdateComponents.None && attempt < 3) await delay(TimeSpan.FromSeconds(attempt * 3), token);
+                bool ready = await PrepareHostInstallationAsync(host, token, delay);
+                scanAttempt = host.Attempt;
+                if (!ready) { FinishHostUpdate(host); return; }
             }
+            var lanes = InstallationLanes(host, state.Pending);
+            Log(host.Host, "Installationsablauf: Dienste parallel zur MSI-Reihe NTC → POS → NTV → SOL; Upload je Paket nach seinem bestätigten MSI-Abschluss.");
+            int[] attempts = await Task.WhenAll(lanes.Select(async lane =>
+            {
+                int maximum = 0;
+                foreach (var component in lane)
+                    maximum = Math.Max(maximum, await InstallComponentAsync(host, component, token, delay));
+                if (lane.Any(component => (component & UpdateComponents.Msi) != 0))
+                    StartInstallationCompilation(host, token);
+                return maximum;
+            }));
+            int maximumAttempt = Math.Max(scanAttempt, attempts.DefaultIfEmpty(0).Max());
+            Mark(host, h => { if (!state.SoftwareCompilationRunning) h.Attempt = maximumAttempt; });
+            StartInstallationCompilation(host, token);
             FinishHostUpdate(host);
         }
         catch (OperationCanceledException)
@@ -1727,12 +1681,16 @@ public sealed partial class MainForm : Form
             throw;
         }
     }
-
     private void FinishHostUpdate(HostState host)
     {
         HostUpdateState state = host.Updates!;
         Mark(host, h =>
             {
+                if (state.SoftwareCompilationRunning || state.DatabaseUploadRunning)
+                {
+                    h.Result = "Läuft";
+                    return;
+                }
                 h.UpdateFailed = state.Pending != UpdateComponents.None || state.ErrorText.Length > 0;
                 if (h.UpdateFailed)
                 {
@@ -1923,14 +1881,21 @@ public sealed partial class MainForm : Form
         Log(host.Host, action.ToUpperInvariant() + (action == "update" ? " [" + HostUpdateState.Label(components) + "]" : "") + " gestartet");
         WorkerRequest request = Request(action, host, components);
         request.RetryUpdate = retryUpdate;
-        if (action == "update") request.CompletedServiceNames = host.Updates?.CompletedServiceNames.ToArray() ?? [];
+        if (action == "update")
+            lock (host) request.CompletedServiceNames = host.Updates?.CompletedServiceNames.ToArray() ?? [];
         WorkerResult result = await runner.RunAsync(request, ev =>
         {
             Log(host.Host, ev.Phase + ": " + ev.Message);
             Mark(host, h =>
             {
-                h.ApplyProgress(ev);
-                if (action == "update") h.Updates?.ReportProgress(components, ev);
+                if (action == "update" && h.Updates is { } updates)
+                {
+                    updates.ReportProgress(components, ev);
+                    if (updates.SoftwareCompilationRunning) return;
+                    h.ApplyProgress(ev);
+                    h.Attempt = updates.ProgressFor(components)?.Attempt ?? h.Attempt;
+                }
+                else h.ApplyProgress(ev);
             });
         }, ct);
         if (action == "scan")
@@ -1953,6 +1918,12 @@ public sealed partial class MainForm : Form
     private async Task InBatchAsync(IReadOnlyCollection<HostState> targets, Func<CancellationToken, Task> task)
     {
         busy = true; cancellation = new CancellationTokenSource();
+        CancellationToken runToken = cancellation.Token;
+        installationDatabaseTargets = new Lazy<Task<IrisUploadTarget[]>>(() => prepareDatabaseTargets(runToken));
+        installationUploads.Clear();
+        scheduledInstallationUploads.Clear();
+        installationCompilations.Clear();
+        remoteInstallationTargets.Clear();
         foreach (HostState host in targets)
             Mark(host, h =>
             {
@@ -1974,6 +1945,13 @@ public sealed partial class MainForm : Form
         }
         finally
         {
+            if (installationUploads.Count > 0 || installationCompilations.Count > 0)
+            {
+                if (cancelled || batchError.Length > 0) cancellation.Cancel();
+                try { await Task.WhenAll(installationUploads.Values.Concat(installationCompilations.Values)); }
+                catch (OperationCanceledException) { cancelled = true; }
+                catch (Exception ex) { batchError = ex.Message; Log("SYSTEM", "zzzSoftware-Upload: " + ex.Message); }
+            }
             foreach (HostState host in targets)
                 Mark(host, h => h.FinishRun(cancelled || cancellation.IsCancellationRequested, batchError));
             cancellation.Dispose(); cancellation = null; busy = false;
@@ -1981,6 +1959,11 @@ public sealed partial class MainForm : Form
             activeAdditionalFiles = [];
             activeInstallHashComponents = UpdateComponents.All;
             activeDatabaseTargets = null;
+            installationDatabaseTargets = null;
+            installationUploads.Clear();
+            scheduledInstallationUploads.Clear();
+            installationCompilations.Clear();
+            remoteInstallationTargets.Clear();
             activePassword = "";
             RebuildRows();
             UpdateSummary(); UpdateButtons();
@@ -2061,6 +2044,8 @@ public sealed partial class MainForm : Form
         cells["dotnet48"].ToolTipText = DisplayText.DotNet48Description(h.DotNet48Installed);
         cells["serversuite"].ToolTipText = DisplayText.ServiceInstances(h.Services.Where(s => s.Kind == "serversuite"), h.ServerSuite);
         cells["ntv"].ToolTipText = string.Join(Environment.NewLine, h.InstalledPrograms.Where(program => program.Kind == "ntv")
+            .Select(program => program.DisplayName + ": " + (program.Version.Length == 0 ? "Version unbekannt" : program.Version)));
+        cells["oman"].ToolTipText = string.Join(Environment.NewLine, h.InstalledPrograms.Where(program => program.Kind == "oman")
             .Select(program => program.DisplayName + ": " + (program.Version.Length == 0 ? "Version unbekannt" : program.Version)));
         cells["ksm"].Value = h.KsmVersion;
         cells["ksm"].ToolTipText = string.Join(Environment.NewLine, h.Services.Where(service => service.Kind == "serversuite")

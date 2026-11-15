@@ -254,6 +254,48 @@ function InstallUpdatePackages {
             }
         }
     }
+    function CopyUpdateFile([string]$source, [string]$destination, [string]$component, $copyProgress, [int]$maximumWaitMilliseconds = 20000) {
+        $waiting = $null
+        $lastReport = -1000L
+        try {
+            while ($true) {
+                try {
+                    Copy-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
+                    if ($null -ne $waiting) {
+                        UpdateProgress 'Update installieren' ("$component : Dateisperre aufgehoben; $([IO.Path]::GetFileName($destination)) wurde kopiert")
+                    }
+                    return
+                }
+                catch {
+                    # Only sharing/lock violations are transient here. Permission,
+                    # disk, source and path errors must retain their original failure.
+                    $exception = $_.Exception
+                    $fileLocked = $false
+                    while ($null -ne $exception) {
+                        if (($exception.HResult -band 0xffff) -in @(32,33)) { $fileLocked = $true; break }
+                        $exception = $exception.InnerException
+                    }
+                    if (-not $fileLocked) { throw }
+                    if ($null -eq $waiting) { $waiting = [Diagnostics.Stopwatch]::StartNew() }
+                    # One shared budget for the installation step, not another
+                    # full timeout for every DLL. Ordinary copies never wait.
+                    $remaining = $maximumWaitMilliseconds - $copyProgress.LockWaitMilliseconds - $waiting.ElapsedMilliseconds
+                    if ($remaining -le 0) {
+                        throw [IO.IOException]::new("$component : Datei bleibt gesperrt: $destination. Wartezeit auf Dateifreigaben von insgesamt $maximumWaitMilliseconds ms ausgeschöpft. $($_.Exception.Message)", $_.Exception)
+                    }
+                    if ($waiting.ElapsedMilliseconds - $lastReport -ge 1000) {
+                        $percent = [int][Math]::Min(99, [Math]::Floor(100.0 * $copyProgress.Completed / [Math]::Max(1, $copyProgress.Total)))
+                        UpdateProgress 'Warte auf Dateifreigabe' ("$component : $destination ist noch gesperrt; die Dateikopie wird erneut versucht") $percent
+                        $lastReport = $waiting.ElapsedMilliseconds
+                    }
+                    Start-Sleep -Milliseconds ([int][Math]::Min(200, $remaining))
+                }
+            }
+        }
+        finally {
+            if ($null -ne $waiting) { $waiting.Stop(); $copyProgress.LockWaitMilliseconds += $waiting.ElapsedMilliseconds }
+        }
+    }
     function CopyContents([string]$source, [string]$destination, [object[]]$files, [string]$component, $copyProgress, [bool]$preserveSuiteExe = $false) {
         New-Item -ItemType Directory -Path $destination -Force -ErrorAction Stop | Out-Null
         foreach ($folder in Get-ChildItem -LiteralPath $source -Directory -Recurse -Force -ErrorAction Stop) {
@@ -266,7 +308,7 @@ function InstallUpdatePackages {
             if ([IO.Directory]::Exists($destinationFile)) { throw "Eine Datei kann keinen vorhandenen Ordner ersetzen: $destinationFile" }
             if (-not ($preserveSuiteExe -and $file.Name -ilike 'nt3_server_suite*.exe' -and
                 (Test-Path -LiteralPath $destinationFile -PathType Leaf))) {
-                Copy-Item -LiteralPath $file.FullName -Destination $destinationFile -Force -ErrorAction Stop
+                CopyUpdateFile $file.FullName $destinationFile $component $copyProgress
             }
             $copyProgress.Completed++
             $percent = [int][Math]::Floor(100.0 * $copyProgress.Completed / [Math]::Max(1, $copyProgress.Total))
@@ -422,7 +464,7 @@ function InstallUpdatePackages {
     $copiedTargets = @{}
     $startedServices = @{}
     foreach ($plan in $allPlans) { $totalFiles += $plan.Files.Count }
-    $copyProgress = [pscustomobject]@{ Total=$totalFiles; Completed=0; LastPercent=-1; Timer=[Diagnostics.Stopwatch]::StartNew() }
+    $copyProgress = [pscustomobject]@{ Total=$totalFiles; Completed=0; LastPercent=-1; Timer=[Diagnostics.Stopwatch]::StartNew(); LockWaitMilliseconds=0L }
     $startEventLog = $false
     $eventLogReady = $true
     try {

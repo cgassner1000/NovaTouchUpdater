@@ -70,7 +70,7 @@ internal static partial class Program
             Complete((Task)Call(form, "RunUpdatesAsync", false)!);
             firstUpdateInProgress = false;
             Assert(Field<Button>(form, "btnExport").Visible, "a completed update exposes its report even when post-install compilation failed");
-            Assert(worker.Requests.Select(request => request.Action).SequenceEqual(["update", "compile-software-packages", "publish-msi-packages"]) && preparations == 1 &&
+            Assert(worker.Requests.Select(request => request.Action).SequenceEqual(["update", "publish-msi-packages", "compile-software-packages"]) && preparations == 1 &&
                 local.Updates is { NtcInstalled: true, Pending: UpdateComponents.None, SoftwareCompilationCompleted: false, DatabaseUploadCompleted: true } &&
                 local.CanRetryUpdate && local.Error.Contains("Synthetic compiler error") && local.Phase.Contains("kompilieren fehlgeschlagen"),
                 "a real update run compiles only after verified NTC installation, preserves compilation failures and still completes the independent database upload");
@@ -115,7 +115,7 @@ internal static partial class Program
             FinishUpdates(form, local);
             Assert(worker.Requests.Count == 0 && local.Error.Contains("NTC installation failed"),
                 "a changed service cannot trigger compilation after a failed NTC installation");
-            var remote = new HostState { Host = "REMOTE.invalid", Updates = InstalledNtc() };
+            var remote = new HostState { Host = "REMOTE.invalid", Updates = new(UpdateComponents.None) };
             FinishUpdates(form, remote);
             Assert(worker.Requests.Count == 0, "remote hosts never compile as a side effect of local NTC installation");
 

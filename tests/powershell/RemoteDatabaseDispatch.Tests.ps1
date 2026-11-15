@@ -34,7 +34,13 @@ function ReadSoftwareIrisInventory { throw 'target discovery is supplied by a mo
 function PublishRemoteSoftwarePackages($Request,$Session,$WorkerPath) {
     Assert ($Session.Id -eq 123 -and $Request.SkipLocalPackageCopy -eq $script:direct -and $Request.IrisUseTls -and $Request.RemoteInstallPath -eq 'C:\install\Novacom') 'remote database dispatch preserves direct streaming and TLS settings and supplies the default target path'
     $script:published++
-    @{Event='result';Success=$true;Changed=$true;Services=@()}
+    $outcome=[pscustomobject]@{Event='result';Success=$true;Changed=$true;Skipped=$false;Services=@();DatabaseUploadedKinds=@('ntc');
+        Message='MSI-Daten über WinRM gestreamt und in zzzSoftware geprüft/gespeichert.';PSComputerName='fixture.invalid';RunspaceId=[guid]::NewGuid();PSShowComputerName=$true}
+    # Match real WinRM transport instead of returning a local hashtable. The
+    # final Emit call must accept the deserialized result after a committed upload.
+    $transported=[Management.Automation.PSSerializer]::Deserialize([Management.Automation.PSSerializer]::Serialize($outcome))
+    Assert ($transported.PSObject.TypeNames[0].StartsWith('Deserialized.')) 'the upload fixture crosses the real PowerShell serialization boundary'
+    $transported
 }
 function Start-Process { throw 'No process actions allowed in dispatch tests' }
 function Stop-Service { throw 'No services allowed in dispatch tests' }
@@ -46,6 +52,10 @@ foreach ($script:action in @('database-inventory','publish-msi-packages')) {
         try { [Console]::SetOut($writer);& $worker } finally { [Console]::SetOut($previous) }
         $results=@($writer.ToString() -split '\r?\n' | Where-Object { $_.Trim().StartsWith('{') } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object Event -eq 'result')
         Assert ($results.Count -eq 1 -and $results[0].Success) 'remote database worker returns exactly one successful result without service or installer actions'
+        if ($script:action -eq 'publish-msi-packages') {
+            Assert ($results[0].Changed -and -not $results[0].Skipped -and @($results[0].DatabaseUploadedKinds).Count -eq 1 -and
+                $results[0].DatabaseUploadedKinds[0] -eq 'ntc' -and $results[0].Message.Contains('zzzSoftware')) 'the deserialized upload result retains success, committed product kinds and its message for both transfer modes'
+        }
         if ($script:action -eq 'database-inventory') { Assert ($results[0].IrisInstances.Count -eq 1 -and $results[0].IrisInstances[0].Name -eq 'REMOTE-IRIS') 'Database Check returns remote instance and namespace inventory through the JSON protocol' }
     }
 }
@@ -55,4 +65,4 @@ $script:requestJson=@{Action='update';LocalExecution=$false;Host='fixture.invali
 $previous=[Console]::Out;$writer=[IO.StringWriter]::new()
 try { [Console]::SetOut($writer);& $worker } finally { [Console]::SetOut($previous) }
 $results=@($writer.ToString() -split '\r?\n' | Where-Object { $_.Trim().StartsWith('{') } | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object Event -eq 'result')
-Assert ($results.Count -eq 1 -and -not $results[0].Success -and $results[0].Error.Contains('ausschließlich lokal') -and $script:sessions -eq 4) 'remote MSI installation remains rejected before opening a session even though database publication is allowed'
+Assert ($results.Count -eq 1 -and -not $results[0].Success -and $results[0].Error.Contains('einzeln') -and $script:sessions -eq 4) 'MSI installation requires an explicit individual package instead of treating a database package list as an install request'

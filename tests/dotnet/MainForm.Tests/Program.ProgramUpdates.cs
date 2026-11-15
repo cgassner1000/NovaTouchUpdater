@@ -57,7 +57,8 @@ internal static partial class Program
             Field<ComboBox>(form, "executionMode").SelectedIndex = (int)UpdateExecutionMode.Local;
             Call(form, "CaptureCredentials");
             HostState host = Targets(form).Single(); host.Scanned = true;
-            foreach (var (component, kind, column) in new[] { (UpdateComponents.Pos, "pos", "pos"), (UpdateComponents.Ntc, "ntc", "ntc"), (UpdateComponents.Ntv, "ntv", "ntv") })
+            foreach (var (component, kind, column) in new[] { (UpdateComponents.Ntc, "ntc", "ntc"), (UpdateComponents.Pos, "pos", "pos"),
+                (UpdateComponents.Ntv, "ntv", "ntv"), (UpdateComponents.Oman, "oman", "oman") })
             {
                 Field<Dictionary<UpdateComponents, MsiPackageRequest>>(form, "msiPackages")[component] = new() { Kind = kind, ProductVersion = "2.0.0", PayloadPath = "synthetic.msi" };
                 host.Updates = new(component);
@@ -103,7 +104,8 @@ internal static partial class Program
             progress(new() { Phase = "MSI installieren", Message = "Synthetic installation", ProgressPercent = 60 });
             Check?.Invoke();
             return Task.FromResult(new WorkerResult { Success = true, Changed = true, PosVersion = "2.0.0", NtcVersion = "2.0.0",
-                InstalledPrograms = [new() { Kind = "ntv", Version = "2.0.0", DisplayName = "NovaTouch Voucher" }] });
+                InstalledPrograms = [new() { Kind = "ntv", Version = "2.0.0", DisplayName = "NovaTouch Voucher" },
+                    new() { Kind = "oman", Version = "2.0.0", DisplayName = "NovaTouch Orderman SOL" }] });
         }
         public void Dispose() { }
     }

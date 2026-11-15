@@ -4,7 +4,9 @@ Set-StrictMode -Version Latest
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
 
-function Emit([hashtable]$message) {
+function Emit([object]$message) {
+    # WinRM returns deserialized PSCustomObject results as well as hashtables.
+    # Both carry the same JSON protocol; neither needs a dictionary conversion.
     [Console]::Out.WriteLine(($message | ConvertTo-Json -Compress -Depth 12))
     [Console]::Out.Flush()
 }
@@ -316,8 +318,8 @@ function ReadSoftwareInventory {
     }
 
     # Release >= 528040 means .NET Framework 4.8 or later, including 4.8.1.
-    # Cache server eligibility during the same inventory connection. A database
-    # server need not have the POS software installed to receive its MSI upload.
+    # Cache database availability during the same inventory connection. The UI
+    # releases each MSI upload only after that target's own installation step.
     $hasIris = $false
     foreach ($view in $(if ([Environment]::Is64BitOperatingSystem) { @('Registry64','Registry32') } else { @('Registry32') })) {
         $registry = $null; $configurations = $null
@@ -418,10 +420,10 @@ try {
         exit 0
     }
     if ($req.Action -eq 'publish-msi-packages' -and @($req.MsiPackages).Count -eq 0) { throw 'Keine MSI-Pakete für zzzSoftware ausgewählt.' }
-    if (-not $localExecution -and $req.Action -in @('update','check-upload-directory','clean-upload-directory') -and
-        (($null -ne $req.PSObject.Properties['MsiPackage'] -and $null -ne $req.MsiPackage) -or
-         ($null -ne $req.PSObject.Properties['MsiPackages'] -and $null -ne $req.MsiPackages -and @($req.MsiPackages).Count -gt 0))) {
-        throw 'MSI-Updates (POS, NTC, SOL, NTV) sind ausschließlich lokal erlaubt. Remote sind nur Payment, Fiscal und Server Suite zugelassen.'
+    if ($req.Action -eq 'update' -and
+        $null -ne $req.PSObject.Properties['MsiPackages'] -and @($req.MsiPackages).Count -gt 0 -and
+        ($null -eq $req.PSObject.Properties['MsiPackage'] -or $null -eq $req.MsiPackage)) {
+        throw 'MSI-Updates müssen einzeln als eigene Installationsschritte ausgeführt werden.'
     }
     if ($req.Action -eq 'stage-packages' -and -not $localExecution) { throw 'Die vollständige Paketbereitstellung ist nur für LOCALHOST vorgesehen.' }
     $requestedPath = if ($null -ne $req.PSObject.Properties['RemoteInstallPath']) { [string]$req.RemoteInstallPath } else { '' }
@@ -589,6 +591,12 @@ try {
             $software = InvokeWorkerCommand -Session $session -ScriptBlock ${function:ReadSoftwareInventory} -ErrorAction Stop
         }
         if ($req.Action -eq 'update' -and $null -ne $req.PSObject.Properties['MsiPackage'] -and $null -ne $req.MsiPackage) {
+            if ($skipRemotePackageCopy) {
+                $remotePackageStage = NewRemotePackageStage $session
+                $req.RemoteInstallPath = [string]$remotePackageStage.Path
+                $req.SkipZipTransfer = $false
+                Progress 'Pakete vorbereiten' 'Remote-MSI nur temporär für die Installation bereitstellen; Zielordner bleibt unberührt'
+            }
             Emit (InvokeMsiPackageUpdate $req $session)
             exit 0
         }

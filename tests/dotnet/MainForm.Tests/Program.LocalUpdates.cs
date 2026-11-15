@@ -272,33 +272,35 @@ internal static partial class Program
             packages[component] = new() { Kind = component.ToString().ToLowerInvariant(), ProductVersion = "2.0.0", PayloadPath = component + ".msi" };
             var localRequest = (WorkerRequest)Call(form, "Request", "update", local, component)!;
             var remoteRequest = (WorkerRequest)Call(form, "Request", "update", remote, component)!;
-            Assert(localRequest.MsiPackage == packages[component] && remoteRequest.MsiPackage is null && remoteRequest.MsiPackages.Length == 0,
-                component + " is permitted locally and stripped from remote update requests");
+            Assert(localRequest.MsiPackage == packages[component] && remoteRequest.MsiPackage == packages[component] && remoteRequest.MsiPackages.Length == 1,
+                component + " is installed as an individual step on both local and remote targets");
         }
-        Assert((UpdateComponents)Call(form, "ComponentsForUpdate", remote, false)! == UpdateComponents.ZipServices &&
+        Assert((UpdateComponents)Call(form, "ComponentsForUpdate", remote, false)! == UpdateComponents.All &&
             (UpdateComponents)Call(form, "ComponentsForUpdate", local, false)! == UpdateComponents.All,
-            "combined execution plans all seven components locally and only the three service ZIPs remotely");
+            "combined execution plans the same service and MSI installation steps on both targets");
         var preflight = (WorkerRequest)Call(form, "Request", "check-upload-directory", remote, UpdateComponents.All)!;
-        Assert(preflight.MsiPackage is null && preflight.MsiPackages.Length == 0 && preflight.PaymentZip.Length > 0 && preflight.FiscalZip.Length > 0 && preflight.ServerSuiteZip.Length > 0,
-            "remote upload preparation excludes MSIs and retains all allowed service packages");
+        Assert(preflight.MsiPackage is null && preflight.MsiPackages.Length == 4 && preflight.PaymentZip.Length > 0 && preflight.FiscalZip.Length > 0 && preflight.ServerSuiteZip.Length > 0,
+            "remote preparation checks the packages required for both service and MSI installation");
         string confirmation = (string)Call(form, "UpdateConfirmation", new[] { local, remote }, UpdateComponents.All, false)!;
-        Assert(confirmation.Contains("NovaTouch Control 2.0.0: 1 Host(s)") && confirmation.Contains("nt.payment 2.0.0: 2 Host(s)") &&
+        Assert(confirmation.Contains("NovaTouch Control 2.0.0: 2 Host(s)") && confirmation.Contains("nt.payment 2.0.0: 2 Host(s)") &&
             confirmation.TrimEnd().EndsWith("Ausgewählte Updates starten?") && !confirmation.Contains("MSIs nur LOKAL"),
             "the concise confirmation keeps component versions and host counts and ends with the start question");
         remote.Updates = new(UpdateComponents.All);
         Update(form, remote);
-        Assert(worker.Requests.Count == 3 && worker.Requests.All(r => !r.LocalExecution && r.MsiPackage is null && r.MsiPackages.Length == 0) && remote.Updates.Pending == UpdateComponents.None,
-            "even an existing mixed remote update state executes only Payment, Fiscal and Server Suite");
+        Assert(worker.Requests.Count == 7 && worker.Requests.All(r => !r.LocalExecution) &&
+            worker.Requests.Where(r => r.MsiPackage is not null).Select(r => r.MsiPackage!.Kind).SequenceEqual(["ntc", "pos", "ntv", "oman"]) && remote.Updates.Pending == UpdateComponents.None,
+            "remote execution installs services and then NTC, POS, Voucher and SOL in order");
         worker.Requests.Clear();
         remote.Updates = new(UpdateComponents.Msi);
         remote.Updates.BeginComponent(UpdateComponents.Ntc);
         remote.Updates.Fail(UpdateComponents.Ntc, "Old remote MSI failure");
         remote.UpdateFailed = true;
-        Assert((UpdateComponents)Call(form, "ComponentsForUpdate", remote, true)! == UpdateComponents.None,
-            "a stale MSI-only remote retry requires no MSI package source");
+        Assert((UpdateComponents)Call(form, "ComponentsForUpdate", remote, true)! == UpdateComponents.Msi,
+            "unfinished remote MSI installations remain eligible for a real installation retry");
         Update(form, remote);
-        Assert(worker.Requests.IsEmpty && remote.Updates.Pending == UpdateComponents.None && remote.Updates.ErrorText == "" && !remote.CanRetryUpdate,
-            "stale remote MSI failures are removed without probe, upload, installation or repeated attempts");
+        Assert(worker.Requests.Count == 4 && remote.Updates.Pending == UpdateComponents.None && remote.Updates.ErrorText == "" && !remote.CanRetryUpdate,
+            "remote MSI retries execute and verify the missing installation steps");
+        worker.Requests.Clear();
         local.Updates = new(UpdateComponents.Msi);
         Update(form, local);
         Assert(worker.Requests.Count == 4 && worker.Requests.All(r => r.LocalExecution && r.MsiPackage is not null),

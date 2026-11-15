@@ -18,6 +18,7 @@ internal static partial class Program
             if (args.Contains("--theme")) { ThemeTests(); return 0; }
             if (args.Contains("--actions")) { ActionLayoutTests(); return 0; }
             if (args.Contains("--program-updates")) { ProgramUpdateTests(); return 0; }
+            if (args.Contains("--parallel-install")) { ParallelInstallationTests(); return 0; }
             if (args.Contains("--host-log")) { HostLogTests(); return 0; }
             if (args.Contains("--user-data")) { UserDataConfigTests(); return 0; }
             if (args.Contains("--autosave")) { ConfigAutoSaveTests(); return 0; }
@@ -60,6 +61,7 @@ internal static partial class Program
                 ThemeTests();
                 ActionLayoutTests();
                 ProgramUpdateTests();
+                ParallelInstallationTests();
                 FeedbackTests();
                 AdministratorTests();
                 BetaFeatureTests();

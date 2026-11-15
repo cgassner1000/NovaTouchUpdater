@@ -11,6 +11,11 @@ public sealed partial class MainForm
     private bool activeStreamDatabasePackages;
     private bool activeUploadToZzzSoftware = true;
     private bool activeRestartPosAfterUpdate;
+    private Lazy<Task<IrisUploadTarget[]>>? installationDatabaseTargets;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<HostState, Task> installationUploads = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<HostState, UpdateComponents> scheduledInstallationUploads = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<HostState, Task> installationCompilations = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<HostState, Lazy<Task<IrisUploadTarget[]>>> remoteInstallationTargets = new();
     private Func<IWorkerRunner> createPosUpdateRunner = () => new WorkerRunner("NovaTouchUpdater.RemoteCommand.ps1");
 
     private async Task<IrisInventoryResult> ReadSelectedIrisInventoryAsync(HostState[] selected, CancellationToken ct)
@@ -68,7 +73,56 @@ public sealed partial class MainForm
         finally { preparingDatabaseUpload = false; if (!IsDisposed) UpdateButtons(); }
     }
 
+    private UpdateComponents SelectedDatabasePackages => msiPackages.Keys.Aggregate(UpdateComponents.None, (all, component) => all | component);
+
+    private static HostUpdateState UploadInstallationPrerequisite(HostState host) =>
+        host.Updates ?? throw new InvalidOperationException("zzzSoftware benötigt den bestätigten MSI-Installationsschritt auf " + host.DisplayName + ".");
+
+    private void QueueInstallationUpload(HostState host, UpdateComponents component, CancellationToken ct)
+    {
+        if (cancellation is null || !activeUploadToZzzSoftware || !msiPackages.ContainsKey(component)) return;
+        if ((host.Updates!.VerifiedMsiPackages & component) == 0) return;
+        if ((host.Updates!.CompletedDatabasePackages & component) != 0) return;
+        UpdateComponents scheduled = scheduledInstallationUploads.GetValueOrDefault(host);
+        if ((scheduled & component) != 0) return;
+        scheduledInstallationUploads[host] = scheduled | component;
+        CancellationToken runToken = cancellation?.Token ?? ct;
+        installationDatabaseTargets ??= new Lazy<Task<IrisUploadTarget[]>>(() => prepareDatabaseTargets(runToken));
+        Task previous = installationUploads.GetValueOrDefault(host) ?? Task.CompletedTask;
+        installationUploads[host] = UploadInstalledPackageAsync(previous, host, component, runToken, installationDatabaseTargets);
+    }
+
+    private async Task UploadInstalledPackageAsync(Task previous, HostState host, UpdateComponents component, CancellationToken ct,
+        Lazy<Task<IrisUploadTarget[]>> localTargets)
+    {
+        // Serialize writes to zzzSoftware on this host, independently of the MSI installer.
+        await previous;
+        ct.ThrowIfCancellationRequested();
+        await PublishDatabasePackagesAsync(host, component, ct, localTargets);
+    }
+
     private async Task<bool> PublishLocalSoftwarePackagesAsync(HostState host, CancellationToken ct, Lazy<Task<IrisUploadTarget[]>> localTargets)
+    {
+        if (installationUploads.TryGetValue(host, out Task? uploads)) await uploads;
+        HostUpdateState prerequisite = UploadInstallationPrerequisite(host);
+        if (activeUploadToZzzSoftware)
+        {
+            UpdateComponents skipped = SelectedDatabasePackages & prerequisite.SkippedMsiPackages & ~host.Updates!.CompletedDatabasePackages;
+            if (skipped != UpdateComponents.None)
+            {
+                string reason = "zzzSoftware: " + HostUpdateState.Label(skipped) + " nicht installiert – kein Upload.";
+                Mark(host, h => h.Updates!.CompleteDatabasePackages(skipped, SelectedDatabasePackages, false, reason));
+                Log(host.Host, reason);
+            }
+        }
+        UpdateComponents packages = SelectedDatabasePackages & ~host.Updates!.CompletedDatabasePackages;
+        // Failed installs must be recovered before publishing their MSI. Already
+        // attempted uploads are retried only in a later retry run.
+        packages &= ~scheduledInstallationUploads.GetValueOrDefault(host);
+        return await PublishDatabasePackagesAsync(host, packages, ct, localTargets);
+    }
+
+    private async Task<bool> PublishDatabasePackagesAsync(HostState host, UpdateComponents components, CancellationToken ct, Lazy<Task<IrisUploadTarget[]>> localTargets)
     {
         if (msiPackages.Count == 0)
         {
@@ -90,10 +144,21 @@ public sealed partial class MainForm
             Log(host.Host, "zzzSoftware: bereits in diesem Durchlauf abgeschlossen; " + host.Updates.DatabaseUploadMessage);
             return true;
         }
+        if (components == UpdateComponents.None) return host.Updates!.DatabaseUploadError.Length == 0;
+        HostUpdateState prerequisite = UploadInstallationPrerequisite(host);
+        UpdateComponents blocked = components & ~prerequisite.VerifiedMsiPackages;
+        if (blocked != UpdateComponents.None)
+        {
+            string reason = "zzzSoftware wartet auf die erfolgreiche MSI-Installation: " + HostUpdateState.Label(blocked);
+            Mark(host, h => h.Updates!.FailDatabasePackages(blocked, reason));
+            Log(host.Host, reason);
+        }
+        components &= prerequisite.VerifiedMsiPackages;
+        if (components == UpdateComponents.None) return false;
         if (!host.IsLocal && host.HasIrisInstances == false)
         {
             const string reason = "zzzSoftware: keine IRIS-Instanz auf diesem Zielrechner; kein Upload.";
-            host.Updates?.CompleteDatabaseUpload(false, reason);
+            host.Updates?.CompleteDatabasePackages(components, SelectedDatabasePackages, false, reason);
             Log(host.Host, reason);
             return true;
         }
@@ -106,15 +171,15 @@ public sealed partial class MainForm
                 h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "IRIS-Instanzen auf " + host.DisplayName + " für zzzSoftware ermitteln";
             });
             IrisUploadTarget[] targets = host.IsLocal ? await localTargets.Value : [];
-            Log(host.Host, "zzzSoftware-Vorbereitung: " + msiPackages.Count + " MSI-Paket(e); " +
+            MsiPackageRequest[] packages = msiPackages.Where(pair => (pair.Key & components) != 0).Select(pair => pair.Value).ToArray();
+            Log(host.Host, "zzzSoftware-Vorbereitung: " + string.Join(", ", packages.Select(package => package.ProductName)) + "; " +
                 (host.IsLocal ? targets.Sum(target => target.Namespaces.Length) + " lokale IRIS-Namespaces." : "IRIS-Namespaces werden auf dem Remote-Host ermittelt."));
             if (host.IsLocal && targets.Length == 0)
             {
                 Log(host.Host, "zzzSoftware: keine lokalen IRIS-Namespaces gefunden; kein Datenbank-Upload erforderlich.");
-                Mark(host, h => h.Updates!.CompleteDatabaseUpload(false, "zzzSoftware: keine lokalen IRIS-Anwendungsnamespaces gefunden; kein Upload."));
+                Mark(host, h => h.Updates!.CompleteDatabasePackages(components, SelectedDatabasePackages, false, "zzzSoftware: keine lokalen IRIS-Anwendungsnamespaces gefunden; kein Upload."));
                 return true;
             }
-            MsiPackageRequest[] packages = msiPackages.OrderBy(pair => pair.Key).Select(pair => pair.Value).ToArray();
             foreach (MsiPackageRequest package in packages)
             {
                 ct.ThrowIfCancellationRequested();
@@ -138,7 +203,7 @@ public sealed partial class MainForm
             if (!result.Success) throw new IOException(FriendlyError(result));
             Mark(host, h =>
             {
-                h.Updates!.CompleteDatabaseUpload(result.Changed,
+                h.Updates!.CompleteDatabasePackages(components, SelectedDatabasePackages, result.Changed,
                     "zzzSoftware: " + (result.Message.Length > 0 ? result.Message : result.Changed ? "MSI-Upload abgeschlossen." : "geprüft; kein MSI hochgeladen."));
                 if (h.Updates.SoftwareCompilationRunning) return;
                 h.Error = ""; h.Phase = "zzzSoftware-Upload abgeschlossen"; h.SetProgress(100);
@@ -155,7 +220,7 @@ public sealed partial class MainForm
         {
             Mark(host, h =>
             {
-                h.Updates!.DatabaseUploadError = DisplayText.DatabaseUploadError(ex.Message);
+                h.Updates!.FailDatabasePackages(components, DisplayText.DatabaseUploadError(ex.Message));
                 if (h.Updates.SoftwareCompilationRunning) return;
                 h.Result = "Fehler"; h.UpdateFailed = true; h.Phase = "zzzSoftware-Upload fehlgeschlagen"; h.Error = h.Updates.DatabaseUploadError;
             });
@@ -181,11 +246,11 @@ public sealed partial class MainForm
                 host.Updates!.PosRestartSkipMessage = "";
                 if (!activeRestartPosAfterUpdate) host.Updates.PosRestartError = "";
             }
-            // Share discovery (including failures) between the two independent
-            // workers. Await both before finishing the run or restarting POS.
-            var localTargets = new Lazy<Task<IrisUploadTarget[]>>(() => prepareDatabaseTargets(ct));
-            Task compilation = Task.WhenAll(targets.Where(host => host.IsLocal)
-                .Select(host => CompileAfterNtcInstallationAsync(host, ct, localTargets)));
+            // All selected MSI installation attempts have settled. Compilation
+            // can overlap the remaining uploads; both must settle before POS restarts.
+            var localTargets = installationDatabaseTargets ?? new Lazy<Task<IrisUploadTarget[]>>(() => prepareDatabaseTargets(ct));
+            Task compilation = Task.WhenAll(targets.Select(host => installationCompilations.TryGetValue(host, out Task? started)
+                ? started : CompileAfterNtcInstallationAsync(host, ct, host.IsLocal ? localTargets : InstallationDatabaseTargets(host, ct))));
             Task uploads = ParallelPhaseAsync(targets, activeDatabaseUploadParallelism, async (host, token) =>
             {
                 await PublishLocalSoftwarePackagesAsync(host, token, localTargets);

@@ -88,9 +88,9 @@ internal static partial class Program
         Complete((Task)Call(form, "RunUpdatesAsync", false)!);
         WorkerRequest[] installs = worker.Requests.Where(request => request.Action == "update").ToArray();
         WorkerRequest[] uploads = worker.Requests.Where(request => request.TransferFiles.Any(file => file.LocalPath == extra)).ToArray();
-        Assert(installs.Length == 3 && installs.Count(request => request.LocalExecution) == 2 &&
-            installs.Where(request => !request.LocalExecution).All(request => request.MsiPackage is null),
-            "mixed selections keep the regular local Payment/NTC and remote Payment installation rules");
+        Assert(installs.Length == 4 && installs.Count(request => request.LocalExecution) == 2 &&
+            installs.Count(request => !request.LocalExecution && request.MsiPackage?.Kind == "ntc") == 1,
+            "mixed selections execute the Payment and NTC steps on each selected local or remote target before copying additional files");
         Assert(uploads.Length == 2 && uploads.All(request => request.RemoteInstallPath == Path.Combine(root, "target") &&
             request.TransferFiles is [{ Sha256.Length: 64, RelativePath: "settings.json" }] && !request.SkipZipTransfer && !request.SkipRemotePackageCopy),
             "additional files are verified and copied to the explicit target on local and remote hosts even when package copying is disabled");

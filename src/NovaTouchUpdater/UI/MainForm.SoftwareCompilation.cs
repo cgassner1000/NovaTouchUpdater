@@ -26,21 +26,27 @@ public sealed partial class MainForm
         }, ct);
     }
 
-    private async Task CompileAfterNtcInstallationAsync(HostState host, CancellationToken ct, Lazy<Task<IrisUploadTarget[]>> localTargets)
+    private async Task CompileAfterNtcInstallationAsync(HostState host, CancellationToken ct, Lazy<Task<IrisUploadTarget[]>> databaseTargets)
     {
         HostUpdateState state = host.Updates!;
-        if (!activeCompileAfterInstallation || !host.IsLocal || !state.NtcInstalled || state.SoftwareCompilationCompleted) return;
+        if (!activeCompileAfterInstallation || !state.NtcInstalled || state.SoftwareCompilationCompleted) return;
+        if ((state.Pending & UpdateComponents.Msi) != 0)
+        {
+            Mark(host, _ => state.SoftwareCompilationError = "Softwarepakete kompilieren wartet auf erfolgreiche Installation aller ausgewählten MSI-Pakete.");
+            Log(host.Host, state.SoftwareCompilationError);
+            return;
+        }
         try
         {
             ct.ThrowIfCancellationRequested();
             Mark(host, h => { state.SoftwareCompilationRunning = true; h.Result = "Läuft"; h.Error = ""; h.Attempt = 0; h.Phase = "Softwarepakete nach NTC-Installation vorbereiten"; });
-            IrisUploadTarget[] targets = await localTargets.Value;
+            IrisUploadTarget[] targets = await databaseTargets.Value;
             ct.ThrowIfCancellationRequested();
             if (targets.Length == 0)
-                throw new InvalidDataException("Keine lokalen IRIS-Namespaces ohne %-Präfix gefunden. Check Database prüfen.");
+                throw new InvalidDataException("Keine " + (host.IsLocal ? "lokalen " : "") + "IRIS-Namespaces ohne %-Präfix gefunden. Check Database prüfen.");
             if (targets.Select(target => target.Port).Distinct().Count() != targets.Length)
                 throw new InvalidDataException("Mehrdeutige IRIS-Instanzen mit demselben SuperServer-Port. Check Database prüfen.");
-            Log(host.Host, "Softwarepakete nach NTC-Installation: " + targets.Sum(target => target.Namespaces.Length) + " lokale IRIS-Namespaces.");
+            Log(host.Host, "Softwarepakete nach NTC-Installation: " + targets.Sum(target => target.Namespaces.Length) + " IRIS-Namespaces auf " + host.DisplayName + ".");
             WorkerResult result = await RunSoftwareCompilationAsync(host, targets, ct);
             if (!result.Success) throw new IOException(FriendlyError(result));
             Mark(host, h => state.CompleteSoftwareCompilation(result));
@@ -58,6 +64,17 @@ public sealed partial class MainForm
             {
                 state.SoftwareCompilationRunning = false;
                 if (state.DatabaseUploadRunning) { h.Result = "Läuft"; h.Error = ""; h.Phase = "zzzSoftware-Upload läuft"; }
+                else
+                {
+                    foreach (var component in HostUpdateState.Each(state.Pending))
+                    {
+                        if (state.ProgressFor(component) is not { Status: ComponentUpdateStatus.Updating } progress) continue;
+                        h.Result = "Läuft"; h.Error = ""; h.Attempt = progress.Attempt;
+                        h.Phase = HostUpdateState.Label(component) + ": " + progress.Phase + " – " + DisplayText.Clean(progress.Message);
+                        h.SetProgress(progress.Percent);
+                        break;
+                    }
+                }
             });
         }
     }

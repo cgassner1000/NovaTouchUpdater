@@ -66,18 +66,20 @@ internal static partial class Program
             worker.Requests.Clear();
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", remote[0], CancellationToken.None, NoRetryDelay)!);
             FinishUpdates(form, remote[0]);
-            Assert(worker.Requests.Count == 2 && worker.Requests.Last() is { Action:"publish-msi-packages", LocalExecution:false, MsiPackages.Length:3, SkipZipTransfer:true } &&
+            Assert(worker.Requests.Count == 4 && worker.Requests.All(request => request.Action == "update") &&
                 worker.Requests.First() is { Action:"update", LocalExecution:false, SkipZipTransfer:true, ForceUpdate:true, MsiPackage:null, MsiPackages.Length:0 } && worker.Requests.First().PaymentZip == payment,
-                "remote updates install only payment and then upload all selected MSIs to zzzSoftware");
+                "remote updates run each MSI step and skip database upload for absent products");
             Field<CheckBox>(form, "chkSkipLocalPackageCopy").Checked = true;
             Field<CheckBox>(form, "chkIrisTls").Checked = true;
             Call(form, "CaptureCredentials");
-            remote[0].Updates = new(UpdateComponents.None);
+            remote[0].Updates = new(components & UpdateComponents.Msi);
+            worker.Installed = true;
             worker.Requests.Clear();
             Complete((Task)Call(form, "ExecuteHostUpdateAsync", remote[0], CancellationToken.None, NoRetryDelay)!);
             FinishUpdates(form, remote[0]);
-            Assert(worker.Requests.Single() is { Action:"publish-msi-packages", SkipLocalPackageCopy:true, IrisUseTls:true } && remote[0].Updates!.DatabaseUploadCompleted,
-                "remote MSI-only updates can stream without target copies and carry the independent IRIS TLS option");
+            Assert(worker.Requests.Count == 4 && worker.Requests.Take(3).All(request => request.Action == "update" && request.MsiPackage is not null) &&
+                worker.Requests.Last() is { Action:"publish-msi-packages", SkipLocalPackageCopy:true, IrisUseTls:true } && remote[0].Updates!.DatabaseUploadCompleted,
+                "remote uploads retain streaming and TLS flags after all respective MSI steps are verified");
             Field<CheckBox>(form, "chkIrisTls").Checked = false;
 
             Field<CheckBox>(form, "chkSkipLocalPackageCopy").Checked = true;

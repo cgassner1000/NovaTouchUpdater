@@ -342,6 +342,10 @@ public sealed partial class MainForm
         host.NtvVersion = !softwareRead ? "–" : vouchers.Length == 0 ? "Nicht installiert" : string.Join(", ", vouchers
             .Select(program => string.IsNullOrWhiteSpace(program.Version) ? "Version unbekannt" : DisplayText.Clean(program.Version))
             .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase));
+        InstalledProgramInfo[] sol = result.InstalledPrograms.Where(program => program.Kind.Equals("oman", StringComparison.OrdinalIgnoreCase)).ToArray();
+        host.OmanVersion = !softwareRead ? "–" : sol.Length == 0 ? "Nicht installiert" : string.Join(", ", sol
+            .Select(program => string.IsNullOrWhiteSpace(program.Version) ? "Version unbekannt" : DisplayText.Clean(program.Version))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase));
         host.RebootRequired |= result.RebootRequired;
     }
 

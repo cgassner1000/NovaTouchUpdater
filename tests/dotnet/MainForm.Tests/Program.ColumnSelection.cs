@@ -41,8 +41,9 @@ internal static partial class Program
                 Choice("dotnet48").PerformClick();
                 Choice("ksm").PerformClick();
                 Choice("ntv").PerformClick();
+                Choice("oman").PerformClick();
                 Settle();
-                Assert(!table.Columns["dotnet48"].Visible && table.Columns["ksm"].Visible && table.Columns["ntv"].Visible &&
+                Assert(!table.Columns["dotnet48"].Visible && table.Columns["ksm"].Visible && table.Columns["ntv"].Visible && table.Columns["oman"].Visible &&
                     AppConfigStore.Load(paths.ConfigFile).Settings.VisibleHostColumns!.SequenceEqual(Visible()),
                     "right-click choices immediately save hidden .NET and visible optional columns without the configuration button");
                 using (var document = JsonDocument.Parse(File.ReadAllText(paths.ConfigFile)))
@@ -54,13 +55,17 @@ internal static partial class Program
                     Services = [new ServiceInfo { Kind = "payment", ProductVersion = "2026.4.9785.14868" },
                         new ServiceInfo { Kind = "serversuite", Name = "nt3_server_suite_USER", ProductVersion = "2026.4.9809.25670",
                             KsmVersion = "2026.4.9785.14868", KsmInstallDir = @"C:\Suite\apps\nt3-kitchen-display" }],
-                    InstalledPrograms = [new InstalledProgramInfo { Kind = "ntv", DisplayName = "NovaTouch Voucher", Version = "2026.4.9785.14868" }] };
+                    InstalledPrograms = [new InstalledProgramInfo { Kind = "ntv", DisplayName = "NovaTouch Voucher", Version = "2026.4.9785.14868" },
+                        new InstalledProgramInfo { Kind = "oman", DisplayName = "NovaTouch Orderman SOL", Version = "2026.4.9800.12345" }] };
                 Call(form, "ReadScanInventory", host, JsonSerializer.Deserialize<WorkerResult>(JsonSerializer.Serialize(inventory))!);
                 Call(form, "PaintRow", host); Settle();
                 Assert(host.NtvVersion == "2026.4.9785.14868" && host.KsmVersion == "2026.4.9785.14868" &&
                     host.Row!.Cells["ntv"].Value?.ToString() == host.NtvVersion && host.Row.Cells["ksm"].Value?.ToString() == host.KsmVersion &&
                     host.Row.Cells["ksm"].ToolTipText.Contains("nt3_server_suite_USER") && host.Row.Cells["ntv"].ToolTipText.Contains("NovaTouch Voucher"),
                     "optional columns show complete KSM metadata and Windows Voucher versions with instance/product details");
+                Assert(host.OmanVersion == "2026.4.9800.12345" && host.Row!.Cells["oman"].Value?.ToString() == host.OmanVersion &&
+                    host.Row.Cells["oman"].ToolTipText.Contains("NovaTouch Orderman SOL") && table.Columns["oman"].DisplayIndex == table.Columns["ntv"].DisplayIndex + 1,
+                    "SOL reads the installed Windows version and follows Voucher with saved column visibility");
                 Assert(table.Columns["ksm"].Width >= table.Columns["payment"].Width &&
                     table.Columns["ksm"].Width >= table.Columns["ksm"].GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true) &&
                     table.Columns["ntv"].Width >= table.Columns["ntv"].GetPreferredWidth(DataGridViewAutoSizeColumnMode.ColumnHeader, true),
