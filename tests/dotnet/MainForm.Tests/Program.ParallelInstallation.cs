@@ -126,7 +126,7 @@ internal static partial class Program
                 "compilation starts after the final MSI while uploads and independent service installations are still running");
             runner.InstallProgress["serversuite"](new() { Phase = "Installieren", Message = "Synthetic Suite update", ProgressPercent = 65 });
             Assert(host.ProgressPercent == 33 && host.Phase.Contains("Novacom-NT-BOH.xml") &&
-                host.Updates!.ProgressFor(UpdateComponents.ServerSuite)?.Percent == 65,
+                host.Updates!.ProgressFor(UpdateComponents.ServerSuite)?.Percent == 72,
                 "concurrent service progress updates its own column without replacing active XML compilation progress");
             foreach (string kind in new[] { "ntc", "pos", "ntv", "oman" })
             {

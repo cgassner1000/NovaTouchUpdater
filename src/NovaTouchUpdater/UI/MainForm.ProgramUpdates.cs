@@ -39,11 +39,13 @@ public sealed partial class MainForm
             };
             cell.Value = progress is { Status: not ComponentUpdateStatus.Succeeded } ? status : version;
             if (progress is not { } current) continue;
-            string percent = current.Status == ComponentUpdateStatus.Updating && current.Percent is int value ? " · " + value + " % (aktueller Schritt)" : "";
+            string percent = current.Status == ComponentUpdateStatus.Updating && current.Percent is int value ? " · " + value + " % (Gesamtfortschritt)" : "";
+            string step = current.Status == ComponentUpdateStatus.Updating && current.StepPercent is int stepValue && stepValue != current.Percent
+                ? "Aktueller Schritt: " + stepValue + " %" : "";
             cell.ToolTipText = string.Join(Environment.NewLine, new[]
             {
                 cell.ToolTipText.Length > 0 ? cell.ToolTipText : version,
-                DisplayText.WithAttempt(status + percent, current.Attempt), current.Phase, DisplayText.Clean(current.Message)
+                DisplayText.WithAttempt(status + percent, current.Attempt), current.Phase, step, DisplayText.Clean(current.Message)
             }.Where(line => line.Length > 0));
         }
     }

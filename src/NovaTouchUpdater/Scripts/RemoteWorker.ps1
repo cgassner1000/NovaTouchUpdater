@@ -11,8 +11,8 @@ function Emit([object]$message) {
     [Console]::Out.Flush()
 }
 
-function Progress([string]$phase, [string]$message, [Nullable[int]]$percent = $null) {
-    Emit @{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent }
+function Progress([string]$phase, [string]$message, [Nullable[int]]$percent = $null, [Nullable[int]]$componentPercent = $null) {
+    Emit @{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent; ComponentProgressPercent=$componentPercent }
 }
 
 function TestLocalSession($session) {
@@ -799,7 +799,7 @@ try {
                     $mistakes += "Dienst läuft nicht: $($oldSvc.Name)"
                 }
                 if ($oldSvc.Kind -eq 'serversuite' -and $mistakes.Count -eq $previousErrors) {
-                    Progress 'Instanz geprüft' ("$($oldSvc.Name): Registry-Version=$($current[0].ProductVersion); Status=$($current[0].State); Suite=$($current[0].InstallDir)")
+                    Progress 'Instanz geprüft' ("$($oldSvc.Name): Registry-Version=$($current[0].ProductVersion); Status=$($current[0].State); Suite=$($current[0].InstallDir)") ([int][Math]::Floor(100.0 * ($completedServiceNames.Count + 1) / [Math]::Max(1, $pending.Count)))
                 }
                 if ($mistakes.Count -eq $previousErrors) { $completedServiceNames += [string]$oldSvc.Name }
             }

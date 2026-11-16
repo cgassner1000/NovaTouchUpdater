@@ -18,13 +18,13 @@ internal static partial class Program
                 HostState host = hosts.Single(host => host.Host == request.Host);
                 string column = worker.Kind(request) switch { UpdateComponents.Payment => "payment", UpdateComponents.Fiscal => "fiscal", _ => "serversuite" };
                 Call(form, "PaintRow", host);
-                Assert(host.Row!.Cells[column].Value is "Update …" && host.Row.Cells[column].Tag is ComponentUpdateProgress { Status: ComponentUpdateStatus.Updating, Percent: null },
+                Assert(host.Row!.Cells[column].Value is "Update …" && host.Row.Cells[column].Tag is ComponentUpdateProgress { Status: ComponentUpdateStatus.Updating, Percent: 0 },
                     "an active component replaces only its own version and clears any earlier failure");
                 report(new() { Phase = "Dateien kopieren", Message = "Synthetic files", ProgressPercent = 45 });
                 Call(form, "PaintRow", host);
-                Assert(host.Row.Cells[column].Tag is ComponentUpdateProgress { Percent: 45 } &&
-                    host.Row.Cells["information"].Value!.ToString()!.StartsWith("45 % · Dateien kopieren") && host.Row.Cells[column].ToolTipText.Contains("45 %"),
-                    "real worker percentages drive the component bar while the information column keeps its existing detail");
+                Assert(host.Row.Cells[column].Tag is ComponentUpdateProgress { Percent: 65, StepPercent: 45 } &&
+                    host.Row.Cells["information"].Value!.ToString()!.StartsWith("45 % · Dateien kopieren") && host.Row.Cells[column].ToolTipText.Contains("65 % (Gesamtfortschritt)"),
+                    "the program bar shows weighted total progress while Information keeps the worker's step progress");
                 if (request.Host == first.Host && column == "fiscal")
                 {
                     Assert(first.Row!.Cells["payment"].Value is "Fehlgeschlagen" && second.Row!.Cells["payment"].Tag is null,
@@ -33,7 +33,7 @@ internal static partial class Program
                 }
                 report(new() { Phase = "Dienst starten", Message = "Synthetic service" });
                 Call(form, "PaintRow", host);
-                Assert(host.Row.Cells[column].Tag is ComponentUpdateProgress { Percent: null }, "steps without measured progress never retain a misleading completed bar");
+                Assert(host.Row.Cells[column].Tag is ComponentUpdateProgress { Percent: 85 }, "service startup advances the overall bar without filling it before verification");
             };
             worker.Outcome = request => worker.Kind(request) == UpdateComponents.Payment
                 ? new() { Success = false, Error = "Synthetic payment failure", AutomaticRetriesExhausted = true } : worker.Success(request);
@@ -65,7 +65,7 @@ internal static partial class Program
                 msi.Check = () =>
                 {
                     Call(form, "PaintRow", host);
-                    Assert(host.Row!.Cells[column].Value is "Update …" && host.Row.Cells[column].Tag is ComponentUpdateProgress { Percent: 60 },
+                    Assert(host.Row!.Cells[column].Value is "Update …" && host.Row.Cells[column].Tag is ComponentUpdateProgress { Percent: 71, StepPercent: 60 },
                         kind + " routes its installation progress into its own program column");
                 };
                 Update(form, host);
@@ -77,6 +77,22 @@ internal static partial class Program
             Call(form, "PaintRow", host);
             Assert(host.Row!.Cells["ntc"].Value is "Abgebrochen" && host.Row.Cells["ntc"].Tag is ComponentUpdateProgress { Status: ComponentUpdateStatus.Cancelled },
                 "cancellation cannot leave a program stuck in Update status");
+
+            host.Updates = new(UpdateComponents.All);
+            host.Updates.BeginComponent(UpdateComponents.All);
+            host.Updates.ReportProgress(UpdateComponents.Payment, new() { Phase = "Übertragung", ProgressPercent = 100 });
+            host.Updates.ReportProgress(UpdateComponents.Fiscal, new() { Phase = "Archive entpacken", ProgressPercent = 100 });
+            host.Updates.ReportProgress(UpdateComponents.ServerSuite, new() { Phase = "Setup installieren", ComponentProgressPercent = 39 });
+            host.Updates.ReportProgress(UpdateComponents.Ntc, new() { Phase = "MSI installieren", ProgressPercent = 0 });
+            host.Updates.ReportProgress(UpdateComponents.Pos, new() { Phase = "MSI-Version bestätigen" });
+            host.Updates.ReportProgress(UpdateComponents.Ntv, new() { Phase = "MSI verifiziert", ProgressPercent = 100 });
+            host.OmanVersion = "2.0.0";
+            host.Updates.Complete(UpdateComponents.Oman, new() { Success = true, Changed = true });
+            Call(form, "ApplyVisibleHostColumns", (object)HostColumnSettings.Defaults.Concat(new[] { "ntv", "oman" }).ToArray());
+            Call(form, "PaintRow", host);
+            var table = Field<DataGridView>(form, "table");
+            table.Dock = DockStyle.None; table.Size = new Size(2200, 180);
+            DrawProgramTable(form, "weighted");
         }
     }
 
@@ -86,6 +102,7 @@ internal static partial class Program
         foreach (string mode in new[] { "Light", "Dark" })
         {
             UiTheme.SetMode(mode);
+            UiTheme.StyleGrid(table);
             for (int pass = 0; pass < 3; pass++) Layout(table);
             Call(form, "ApplyColumnWidths");
             using var bitmap = new Bitmap(table.Width, table.Height);

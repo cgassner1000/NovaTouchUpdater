@@ -161,6 +161,7 @@ public sealed class WorkerEvent
     public string Host { get; set; } = "";
     public bool? Connected { get; set; }
     public int? ProgressPercent { get; set; }
+    public int? ComponentProgressPercent { get; set; }
 }
 
 public sealed class WorkerResult

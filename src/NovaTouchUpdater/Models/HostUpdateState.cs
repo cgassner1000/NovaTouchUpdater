@@ -8,7 +8,7 @@ internal enum UpdateComponents
 }
 
 internal enum ComponentUpdateStatus { Updating, Succeeded, Failed, Cancelled }
-internal readonly record struct ComponentUpdateProgress(ComponentUpdateStatus Status, int? Percent = null, string Phase = "", string Message = "", int Attempt = 0);
+internal readonly record struct ComponentUpdateProgress(ComponentUpdateStatus Status, int? Percent = null, string Phase = "", string Message = "", int Attempt = 0, int? StepPercent = null);
 
 // One update run, including automatic attempts and later manual retries.
 // Only verified successes leave Pending; scans and commands do not reset it.
@@ -115,7 +115,8 @@ internal sealed class HostUpdateState(UpdateComponents components)
         foreach (var part in Each(component))
             if (componentProgress.TryGetValue(part, out var current) && current.Status == ComponentUpdateStatus.Updating)
                 componentProgress[part] = new(ComponentUpdateStatus.Updating,
-                    progress.ProgressPercent is int percent ? Math.Clamp(percent, 0, 100) : null, progress.Phase, progress.Message, current.Attempt);
+                    InstallationProgress.Advance(current.Percent ?? 0, progress), progress.Phase, progress.Message, current.Attempt,
+                    progress.ProgressPercent is int percent ? Math.Clamp(percent, 0, 100) : null);
     }
 
     internal void StopActiveComponents(string error = "")
@@ -150,7 +151,7 @@ internal sealed class HostUpdateState(UpdateComponents components)
         foreach (var part in Each(component))
         {
             errors.Remove(part);
-            componentProgress[part] = new(ComponentUpdateStatus.Updating, Attempt: attempt);
+            componentProgress[part] = new(ComponentUpdateStatus.Updating, 0, Attempt: attempt);
         }
     }
     internal void RestrictTo(UpdateComponents allowed)

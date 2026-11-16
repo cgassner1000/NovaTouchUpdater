@@ -9,6 +9,8 @@ static void Assert(bool condition, string message)
     Console.WriteLine("PASS " + message);
 }
 
+InstallationProgressTests.Run(Assert);
+
 var now = DateTimeOffset.Now.AddMinutes(1);
 var restarted = new HostState { Result = "Fehler", Error = "earlier scan error", Attempt = 3 };
 restarted.SetProgress(100);

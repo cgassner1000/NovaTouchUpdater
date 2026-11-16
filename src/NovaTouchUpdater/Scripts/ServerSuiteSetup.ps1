@@ -20,7 +20,11 @@ function InstallServerSuiteSetup {
     param([string]$Setup, [string]$Hash, [string]$Version, [string]$PendingJson, [string]$AllJson, [int]$Parallelism = 1)
     $ErrorActionPreference = 'Stop'
     Set-StrictMode -Version Latest
-    function Status([string]$phase, [string]$message) { [pscustomobject]@{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$null } }
+    function Status([string]$phase, [string]$message) {
+        $sum = ($plans | Measure-Object -Property Progress -Sum).Sum
+        $percent = 25 + [int][Math]::Floor(70.0 * $sum / (100 * [Math]::Max(1, $plans.Count)))
+        [pscustomobject]@{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$null; ComponentProgressPercent=$percent }
+    }
     function SafePath([string]$path) {
         if ($path -notmatch '^[A-Za-z]:\\' -or $path -match '["\r\n]') { throw "Ungültiger Instanzpfad: $path" }
         $full = [IO.Path]::GetFullPath($path).TrimEnd('\')
@@ -67,7 +71,7 @@ function InstallServerSuiteSetup {
         foreach ($target in @($python, $app)) {
             if ($Setup.StartsWith($target + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Setup liegt innerhalb eines zu ersetzenden Installationsordners.' }
         }
-        $plans += [pscustomobject]@{ Name=[string]$svc.Name; Root=$root; Attempt=0; RequireRunning=($svc.StartType -ne 'Disabled') }
+        $plans += [pscustomobject]@{ Name=[string]$svc.Name; Root=$root; Attempt=0; Progress=0; RequireRunning=($svc.StartType -ne 'Disabled') }
     }
     if ($plans.Count -eq 0) { throw 'Keine Server-Suite-Instanz für Setup ausgewählt.' }
     $logRoot = Join-Path ([IO.Path]::GetTempPath()) 'NovaTouchUpdater\SetupLogs'
@@ -104,6 +108,7 @@ function InstallServerSuiteSetup {
                 $plan.Attempt++
                 $log = Join-Path $logRoot (($plan.Name -replace '[^a-zA-Z0-9_.-]', '_') + '-' + [guid]::NewGuid().ToString('N') + '.log')
                 try {
+                    $plan.Progress = [Math]::Max($plan.Progress, 20)
                     Status 'Setup installieren' ("$($plan.Name) · Version $Version installieren")
                     # Supported setups select the exact service and run their normal update.
                     $arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /NOCANCEL /RESTARTEXITCODE=3010 /SERVICENAME="' + $plan.Name + '" /DIR="' + $plan.Root + '" /LOG="' + $log + '"'
@@ -123,6 +128,8 @@ function InstallServerSuiteSetup {
                     if ($code -eq 3010) { $reboot = $true }
                     elseif ($code -ne 0) { throw "Setup-Exitcode $code" }
                     $changed = $true
+                    $plan.Progress = [Math]::Max($plan.Progress, 85)
+                    Status 'Setup prüfen' ("$($plan.Name): Instanzdateien und Dienststatus prüfen")
                     foreach ($relative in @('portable_python\python.exe','apps\nt3-server-suite\src\apps\pos_service\script\pos_service_winservice.py')) {
                         $required = Join-Path $plan.Root $relative
                         if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Startdatei fehlt für $($plan.Name): $required" }
@@ -135,6 +142,7 @@ function InstallServerSuiteSetup {
                         catch { throw "Dienst läuft nicht: $($plan.Name); $($_.Exception.Message)" }
                     }
                     $installed.Add($plan.Name)
+                    $plan.Progress = 100
                     Status 'Setup abgeschlossen' ("$($plan.Name) · $($installed.Count) von $($plans.Count) Instanzen installiert")
                 } catch { FailedSetup $plan "$($plan.Name): $($_.Exception.Message); Setup-Log: $($job.Log)" }
                 finally { $job.Process.Dispose(); [void]$active.Remove($job) }
@@ -180,7 +188,10 @@ function InvokeServerSuiteSetupUpdate($request, $session, $pending, $services) {
     $script = 'param($setup,$hash,$version,$pendingJson,$allJson,$parallelism); function ReadInventory {' + ${function:ReadInventory}.ToString() + '}; function AssertServerSuiteSetup {' + ${function:AssertServerSuiteSetup}.ToString() + '}; function InstallServerSuiteSetup {' + ${function:InstallServerSuiteSetup}.ToString() + '}; InstallServerSuiteSetup $setup $hash $version $pendingJson $allJson $parallelism'
     $argsList = @($target, $hash, $version, (ConvertTo-Json -InputObject @($pending) -Depth 12 -Compress), (ConvertTo-Json -InputObject @($services) -Depth 12 -Compress), $parallelism)
     $outcome = InvokeWorkerCommand -Session $session -ArgumentList $argsList -ScriptBlock ([scriptblock]::Create($script)) -ErrorAction Stop | ForEach-Object {
-        if ($_.Event -eq 'progress') { Progress ([string]$_.Phase) ([string]$_.Message) } else { $_ }
+        if ($_.Event -eq 'progress') {
+            $componentPercent = if ($null -ne $_.PSObject.Properties['ComponentProgressPercent']) { $_.ComponentProgressPercent } else { $null }
+            Progress ([string]$_.Phase) ([string]$_.Message) $_.ProgressPercent $componentPercent
+        } else { $_ }
     }
     $errors = @($outcome.Errors); $completed = @(); $after = @()
     try {
@@ -192,7 +203,7 @@ function InvokeServerSuiteSetupUpdate($request, $session, $pending, $services) {
             if ($current.Count -ne 1 -or -not (IsTargetVersion $current[0] $version)) { $errors += "Instanzversion nicht bestätigt: $($old.Name)"; continue }
             if (($old.StartType -ne 'Disabled' -or $current[0].StartType -ne 'Disabled') -and $current[0].State -ne 'Running') { $errors += "Dienst läuft nicht: $($old.Name)"; continue }
             $completed += [string]$old.Name
-            Progress 'Instanz geprüft' ("$($old.Name): $version; $($current[0].State)")
+            Progress 'Instanz geprüft' ("$($old.Name): $version; $($current[0].State)") ([int][Math]::Floor(100.0 * $completed.Count / [Math]::Max(1, @($pending).Count)))
         }
     } catch { $errors += $_.Exception.Message }
     if ($completed.Count -ne @($pending).Count -and $errors.Count -eq 0) { $errors += 'Nicht alle Server-Suite-Instanzen konnten verifiziert werden.' }

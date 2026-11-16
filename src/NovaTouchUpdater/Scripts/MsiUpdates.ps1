@@ -96,6 +96,8 @@ function InstallMsiUpdatePackage {
     $decision = & ([scriptblock]::Create($DecisionSource)) @($software.InstalledPrograms) $package
     if (-not $decision.Install) { return [pscustomobject]@{ Changed=$false; Skipped=$decision.Skipped; RebootRequired=$false; Software=$software; Message=$decision.Message } }
 
+    [pscustomobject]@{ Event='progress'; Phase='MSI prüfen'; Message=($package.ProductName + ': Installationspaket prüfen'); ProgressPercent=0 }
+
     # Validate the actual client MSI again after transfer/extraction.
     $installer = New-Object -ComObject WindowsInstaller.Installer
     $database = $null
@@ -165,6 +167,7 @@ function InstallMsiUpdatePackage {
         $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') -ArgumentList $arguments -PassThru -Wait -WindowStyle Hidden
         $exitCode = $process.ExitCode
         if ($exitCode -notin @(0,3010,1641)) { throw "MSI-Installation fehlgeschlagen (ExitCode $exitCode). Protokoll: $LogPath" }
+        [pscustomobject]@{ Event='progress'; Phase='MSI installieren'; Message=($package.ProductName + ': Installer abgeschlossen'); ProgressPercent=100 }
     }
     catch { $operationError = $_.Exception.Message }
     finally {
@@ -181,6 +184,7 @@ function InstallMsiUpdatePackage {
     }
     $errors = @($operationError) + @($restartErrors) | Where-Object { $_ }
     if (@($errors).Count -gt 0) { throw ($errors -join ' | ') }
+    [pscustomobject]@{ Event='progress'; Phase='MSI-Version bestätigen'; Message=($package.ProductName + ': installierte Version prüfen'); ProgressPercent=0 }
     $after = & ([scriptblock]::Create($InventorySource))
     $verified = & ([scriptblock]::Create($DecisionSource)) @($after.InstalledPrograms) $package
     if ($verified.Install -or $verified.Skipped) { throw ('Installierte MSI-Version wurde nicht bestätigt. Protokoll: ' + $LogPath) }
@@ -198,6 +202,7 @@ function RemoveMsiUpdateStage {
 function InvokeMsiPackageUpdate {
     param($Request, $Session)
     $package = $Request.MsiPackage
+    Progress 'MSI-Version prüfen' ([string]$package.ProductName)
     $software = InvokeWorkerCommand -Session $Session -ScriptBlock ${function:ReadSoftwareInventory} -ErrorAction Stop
     $decision = GetMsiUpdateDecision @($software.InstalledPrograms) $package
     $outcome = $null
