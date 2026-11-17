@@ -19,6 +19,7 @@ internal static partial class Program
             if (args.Contains("--actions")) { ActionLayoutTests(); return 0; }
             if (args.Contains("--host-actions")) { HostActionsTests(); return 0; }
             if (args.Contains("--host-console")) { HostConsoleTests(); return 0; }
+            if (args.Contains("--package-loading")) { PackageLoadingTests(); return 0; }
             if (args.Contains("--program-updates")) { ProgramUpdateTests(); return 0; }
             if (args.Contains("--parallel-install")) { ParallelInstallationTests(); return 0; }
             if (args.Contains("--host-log")) { HostLogTests(); return 0; }

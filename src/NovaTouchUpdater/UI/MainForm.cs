@@ -148,6 +148,7 @@ public sealed partial class MainForm : Form
         startupConfigPath = migration?.ConfigLoadPath;
         logFile = preview ? "" : Path.Combine(userDataPaths.LogsDirectory, "Update-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff") + ".log");
         ConstructUi();
+        ConfigurePackageLoadingSpinner();
         WindowLayout.CompleteInitialization(this);
         executionMode.SelectedIndexChanged += (_, _) => UpdateExecutionSelection();
         if (!preview)
@@ -2227,6 +2228,7 @@ public sealed partial class MainForm : Form
 
     private void UpdateButtons()
     {
+        UpdatePackageLoadingSpinner();
         bool idle = !busy && !selfUpdating && !loadingPackages && !preparingDatabaseUpload && !restartingAsAdministrator;
         HostState[] selected = SelectedHosts();
         btnAdministrator.Visible = !isProcessElevated();
