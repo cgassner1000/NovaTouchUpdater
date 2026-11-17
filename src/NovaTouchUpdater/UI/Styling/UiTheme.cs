@@ -38,6 +38,7 @@ internal static partial class UiTheme
 
     private static void UseSystemColors(Control control)
     {
+        if (control is HostTable hostTable) hostTable.RefreshContextMenus();
         if (control.ContextMenuStrip is { } menu) StyleMenu(menu);
         if (control is TextBoxBase or ComboBox or TreeView or ListBox or ScrollBar or ScrollableControl { AutoScroll: true }) StyleNativeControl(control);
         if (control is AppTabs tabs) tabs.RefreshTheme();
@@ -146,6 +147,7 @@ internal static partial class UiTheme
 
     internal static void StyleGrid(DataGridView grid)
     {
+        if (grid is HostTable hostTable) hostTable.RefreshContextMenus();
         if (SystemInformation.HighContrast) return;
         grid.BackgroundColor = Surface;
         grid.BorderStyle = BorderStyle.None;

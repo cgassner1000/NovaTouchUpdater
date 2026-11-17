@@ -48,6 +48,7 @@ public sealed class WorkerRequest
     public bool RestartPayment { get; set; }
     public bool RestartFiscal { get; set; }
     public bool StartServerSuite { get; set; }
+    public string CommandText { get; set; } = "";
 }
 
 public sealed class ServicePackFile

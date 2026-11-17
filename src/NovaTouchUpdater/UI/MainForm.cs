@@ -52,7 +52,7 @@ public sealed partial class MainForm : Form
     private string? winRmCertificatePath;
     private string? winRmPrivateKeyPath;
 
-    private readonly DataGridView table = new();
+    private readonly DataGridView table = new HostTable();
     private readonly ComboBox statusFilter = new AppComboBox();
     private readonly FlowLayoutPanel hostSelectionBar = FlowRow();
     private readonly Label lblFile = new();
@@ -212,6 +212,7 @@ public sealed partial class MainForm : Form
             feedbackHttp.Dispose();
             updateToolTip.Dispose();
             hostColumnsMenu.Dispose();
+            hostActionsMenu.Dispose();
             betaFeatures?.Dispose();
             connectionCancellation?.Cancel();
             connectionRunner.Dispose();
@@ -1066,7 +1067,9 @@ public sealed partial class MainForm : Form
 
     private HostState[] SelectedHosts() => ExecutionHosts().Where(host => host.IsSelected).ToArray();
 
-    private HostState[] UpdateTargets(bool onlyFailed) => SelectedHosts()
+    private HostState[] UpdateTargets(bool onlyFailed) => EligibleUpdateHosts(SelectedHosts(), onlyFailed);
+
+    private HostState[] EligibleUpdateHosts(IEnumerable<HostState> targets, bool onlyFailed) => targets
         .Where(host => MatchesSelectedSoftware(host) || IsDatabaseUploadServer(host)).Where(host => onlyFailed ? host.CanRetryUpdate : host.Scanned).ToArray();
 
     private void SetAllHostsSelected(bool selected)
@@ -1282,23 +1285,29 @@ public sealed partial class MainForm : Form
         bool restartPayment = dialog.RestartPayment;
         bool restartFiscal = dialog.RestartFiscal;
         bool startServerSuite = dialog.StartServerSuite;
+        await RunHostActionsAsync(targets, restartTerminals, restartPos, restartPayment, restartFiscal, startServerSuite);
+    }
+
+    private async Task RunHostActionsAsync(HostState[] targets, bool restartTerminals, bool restartPos, bool restartPayment, bool restartFiscal, bool startServerSuite)
+    {
+        if (!CanStartHostScan || targets.Length == 0 || !ValidateTargetCredentials(targets)) return;
         if (!restartTerminals && !restartPos && !restartPayment && !restartFiscal && !startServerSuite)
         {
             AppMessageBox.Show(this, "Bitte eine Aktion auswählen.", "Befehl senden", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (restartTerminals && AppMessageBox.Show(this,
+        if (restartTerminals && !ConfirmHostCommand(
             $"Windows-Neustart für die ausgewählten Hosts ({targets.Length}) anfordern?\n\n" +
             "Der Neustart wird je Host mit 30 Sekunden Vorlauf angefordert. Geöffnete Programme werden geschlossen; nicht gespeicherte Daten können verloren gehen.\n\n" +
             "Abbrechen im Updater stoppt weitere Aufträge. Bereits übermittelte Neustartaufträge bleiben bestehen.",
-            "Terminal neu starten", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-        if (restartPos && AppMessageBox.Show(this,
+            "Terminal neu starten")) return;
+        if (restartPos && !ConfirmHostCommand(
             $"KassaPreh auf den ausgewählten Hosts ({targets.Length}) starten / neu starten?\n\n" +
             "Läuft KassaPreh bereits, wird sie sofort per taskkill beendet und im selben Benutzerkonto neu gestartet. Nicht gespeicherte Eingaben können verloren gehen. Läuft sie nicht, wird sie als angemeldeter Benutzer aus dem Standardverzeichnis gestartet. Windows wird dabei nicht neu gestartet.\n\n" +
             "Pfad: C:\\Program Files (x86)\\novatouch\\bin\\KassaPreh.exe\n" +
             "Fehlt die Datei oder lässt sich keine eindeutige Benutzersitzung ermitteln, wird der Host übersprungen. Die temporäre Windows-Aufgabe wird nach der Startprüfung wieder gelöscht.\n\n" +
             "Abbrechen stoppt weitere Aufträge. Bereits gestartete POS-Neustarts werden einschließlich Bereinigung abgeschlossen.",
-            "POS neustart", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            "NovaTouch POS neu starten – " + string.Join(", ", targets.Select(host => host.DisplayName)))) return;
         CaptureCredentials();
         int parallelism = (int)nUpdate.Value;
         string action = restartTerminals ? "restart-terminal" : restartPos ? "restart-pos" : "restart-services";
@@ -1323,10 +1332,10 @@ public sealed partial class MainForm : Form
                             h.BeginCommand(restartTerminals, restartPos);
                         });
                         commandStarted = true;
-                        using var commandRunner = new WorkerRunner("NovaTouchUpdater.RemoteCommand.ps1");
+                        using var commandRunner = createCommandRunner();
                         WorkerResult result = await commandRunner.RunAsync(new WorkerRequest
                         {
-                            Action = action, Host = host.Host,
+                            Action = action, Host = host.Host, LocalExecution = host.IsLocal,
                             Username = activeUser, Password = activePassword, UseSsl = activeSsl, HttpsPort = activeHttpsPort,
                             RestartPayment = restartPayment, RestartFiscal = restartFiscal,
                             StartServerSuite = startServerSuite
@@ -1384,7 +1393,8 @@ public sealed partial class MainForm : Form
         if (!failures.IsEmpty) report += Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, failures);
         if (succeeded + skipped.Count + failures.Count < targets.Length) report += Environment.NewLine + "Der Vorgang wurde abgebrochen, bevor alle Hosts bearbeitet wurden.";
         if (restartTerminals && !completedRestart) report += Environment.NewLine + "Bereits bestätigte Neustartaufträge bleiben bestehen.";
-        AppMessageBox.Show(this, report, title, MessageBoxButtons.OK,
+        if (showHostCommandReport is { } showReport) showReport(report, title);
+        else AppMessageBox.Show(this, report, title, MessageBoxButtons.OK,
             failures.IsEmpty && succeeded + skipped.Count == targets.Length ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
@@ -1531,14 +1541,16 @@ public sealed partial class MainForm : Form
         });
     }
 
-    private async Task RunUpdatesAsync(bool onlyFailed)
+    private Task RunUpdatesAsync(bool onlyFailed) => RunUpdatesForHostsAsync(onlyFailed, SelectedHosts());
+
+    private async Task RunUpdatesForHostsAsync(bool onlyFailed, HostState[] targets)
     {
-        if (busy || selfUpdating || loadingPackages || preparingDatabaseUpload || restartingAsAdministrator || SelectedHosts().Length == 0) return;
+        if (!CanStartHostScan || targets.Length == 0) return;
         if (SelectedUpdateComponents() == UpdateComponents.None && additionalFiles.Count == 0)
         {
             AppMessageBox.Show(this, "Mindestens ein Update-Paket auswählen oder den Softwareordner einlesen."); return;
         }
-        var selected = UpdateTargets(onlyFailed);
+        var selected = EligibleUpdateHosts(targets, onlyFailed);
         if (selected.Length > 0)
         {
             selected = selected.Where(host => NeedsAdditionalFiles(host, onlyFailed) || ComponentsForUpdate(host, onlyFailed) != UpdateComponents.None ||
@@ -1553,7 +1565,7 @@ public sealed partial class MainForm : Form
                 return;
             }
         }
-        if (selected.Any(host => !host.IsLocal) && !ValidateCredentials()) return;
+        if (!ValidateTargetCredentials(selected)) return;
         if (!EnsureLocalInstallationAccess(selected, onlyFailed)) return;
         if (!IsUpdatePathValid(selected))
         {

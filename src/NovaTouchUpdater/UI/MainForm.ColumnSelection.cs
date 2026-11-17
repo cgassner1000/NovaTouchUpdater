@@ -28,7 +28,13 @@ public sealed partial class MainForm
         reset.Click += (_, _) => { ApplyVisibleHostColumns(null); SaveHostColumnSelection(); };
         hostColumnsMenu.Items.Add(reset);
         hostColumnsMenu.Opening += (_, _) => UpdateHostColumnsMenu();
-        table.ContextMenuStrip = hostColumnsMenu;
+        ConfigureHostActionsMenu();
+        ((HostTable)table).ContextMenus = [hostColumnsMenu, hostActionsMenu];
+        ((HostTable)table).ContextMenuForCell = (row, column) =>
+        {
+            if (row == -1 && column >= 0) { UpdateHostColumnsMenu(); UiTheme.StyleMenu(hostColumnsMenu); return hostColumnsMenu; }
+            return row >= 0 && row < table.Rows.Count && table.Rows[row].Tag is HostState host ? PrepareHostActionsMenu(host) : null;
+        };
         table.ColumnStateChanged += (_, e) => { if ((e.StateChanged & DataGridViewElementStates.Visible) != 0) QueueColumnSizing(); };
         ApplyVisibleHostColumns(null);
     }

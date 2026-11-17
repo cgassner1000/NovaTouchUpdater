@@ -12,6 +12,22 @@ function Progress([string]$phase, [string]$message, [Nullable[int]]$percent = $n
 	Emit @{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent }
 }
 
+function InvokeClientCommandTarget {
+	param($Session, [scriptblock]$ScriptBlock, [object[]]$ArgumentList = @())
+	if ($null -eq $Session) { & $ScriptBlock @ArgumentList }
+	else { Invoke-Command -Session $Session -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction Stop }
+}
+
+function ExecuteClientCommand {
+	param([string]$CommandText)
+	$cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
+	$ErrorActionPreference = 'Continue' # Native stderr is part of the command output; the exit code decides success.
+	$output = (& $cmd /d /s /c $CommandText 2>&1 | ForEach-Object { [string]$_ } | Out-String -Width 4096).TrimEnd()
+	$code = $LASTEXITCODE
+	[pscustomobject]@{ Results=@($(if ($output) { $output } else { "Befehl abgeschlossen (Exitcode $code)." }));
+		Failures=@($(if ($code -ne 0) { "Befehl fehlgeschlagen (Exitcode $code)." })); Changed=($code -eq 0) }
+}
+
 function RequestTerminalRestart {
 	$shutdown = Join-Path $env:SystemRoot 'System32\shutdown.exe'
 	$output = @(& $shutdown /r /t 30 /d 'p:4:1' /c 'Terminal-Neustart durch NovaTouch Updater' 2>&1)
@@ -257,7 +273,10 @@ try {
 	$requestLine = [Console]::In.ReadLine()
 	if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
 	$req = $requestLine | ConvertFrom-Json
-	if ($req.Action -notin @('restart-services', 'restart-terminal', 'restart-pos')) { throw "Unbekannte Aktion: $($req.Action)" }
+	if ($req.Action -notin @('restart-services', 'restart-terminal', 'restart-pos', 'command')) { throw "Unbekannte Aktion: $($req.Action)" }
+	$local = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
+	if ($local -and $req.Host -ine 'LOCALHOST') { throw 'Lokale Befehle benötigen das Ziel LOCALHOST.' }
+	if ($req.Action -eq 'command' -and [string]::IsNullOrWhiteSpace([string]$req.CommandText)) { throw 'Kein Befehl angegeben.' }
 
 	$restartPayment = $false
 	$restartFiscal = $false
@@ -271,38 +290,45 @@ try {
 		}
 	}
 
-	$sessionOptions = New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 180000
-	$sessionArgs = @{
-		ComputerName = [string]$req.Host
-		Port = 5985
-		SessionOption = $sessionOptions
-		ErrorAction = 'Stop'
-	}
-	if ([bool]$req.UseSsl) {
-		$httpsPort = 5986
-		if ($null -ne $req.PSObject.Properties['HttpsPort']) { $httpsPort = [int]$req.HttpsPort }
-		if ($httpsPort -lt 1 -or $httpsPort -gt 65535) { throw 'HTTPS-Port muss zwischen 1 und 65535 liegen.' }
-		$sessionArgs.UseSSL = $true
-		$sessionArgs.Port = $httpsPort
-	}
-	if (-not [string]::IsNullOrWhiteSpace([string]$req.Username)) {
-		$secure = ConvertTo-SecureString -String ([string]$req.Password) -AsPlainText -Force
-		$sessionArgs.Credential = New-Object System.Management.Automation.PSCredential([string]$req.Username, $secure)
-	}
+	$session = $null
+	if (-not $local) {
+		$sessionOptions = New-PSSessionOption -OpenTimeout 15000 -OperationTimeout 180000
+		$sessionArgs = @{
+			ComputerName = [string]$req.Host
+			Port = 5985
+			SessionOption = $sessionOptions
+			ErrorAction = 'Stop'
+		}
+		if ([bool]$req.UseSsl) {
+			$httpsPort = 5986
+			if ($null -ne $req.PSObject.Properties['HttpsPort']) { $httpsPort = [int]$req.HttpsPort }
+			if ($httpsPort -lt 1 -or $httpsPort -gt 65535) { throw 'HTTPS-Port muss zwischen 1 und 65535 liegen.' }
+			$sessionArgs.UseSSL = $true
+			$sessionArgs.Port = $httpsPort
+		}
+		if (-not [string]::IsNullOrWhiteSpace([string]$req.Username)) {
+			$secure = ConvertTo-SecureString -String ([string]$req.Password) -AsPlainText -Force
+			$sessionArgs.Credential = New-Object System.Management.Automation.PSCredential([string]$req.Username, $secure)
+		}
 
-	Progress 'Verbindung' 'WinRM-Verbindung wird aufgebaut'
-	$session = New-PSSession @sessionArgs
+		Progress 'Verbindung' 'WinRM-Verbindung wird aufgebaut'
+		$session = New-PSSession @sessionArgs
+	} else { Progress 'Lokal' 'Befehl wird direkt auf dem lokalen Rechner ausgeführt' }
 	try {
-		if ($req.Action -eq 'restart-terminal') {
+		if ($req.Action -eq 'command') {
+			Progress 'Eingabeaufforderung' 'Befehl wird ausgeführt'
+			$restartResult = InvokeClientCommandTarget -Session $session -ScriptBlock ${function:ExecuteClientCommand} -ArgumentList ([string]$req.CommandText)
+		}
+		elseif ($req.Action -eq 'restart-terminal') {
 			Progress 'Windows-Neustart' 'Windows-Neustart in 30 Sekunden wird angefordert'
-			$restartResult = Invoke-Command -Session $session -ScriptBlock ${function:RequestTerminalRestart} -ErrorAction Stop
+			$restartResult = InvokeClientCommandTarget -Session $session -ScriptBlock ${function:RequestTerminalRestart}
 		}
 		elseif ($req.Action -eq 'restart-pos') {
 			Progress 'POS-Neustart' 'KassaPreh wird in der angemeldeten Benutzersitzung gestartet / neu gestartet; die temporäre Aufgabe wird anschließend gelöscht'
-			$restartResult = Invoke-Command -Session $session -ScriptBlock ${function:RequestPosRestart} -ErrorAction Stop
+			$restartResult = InvokeClientCommandTarget -Session $session -ScriptBlock ${function:RequestPosRestart}
 		}
 		else {
-			$restartResult = Invoke-Command -Session $session -ArgumentList $restartPayment, $restartFiscal, $startServerSuite -ErrorAction Stop -ScriptBlock {
+			$restartResult = InvokeClientCommandTarget -Session $session -ArgumentList $restartPayment, $restartFiscal, $startServerSuite -ScriptBlock {
 			param([bool]$restartPayment, [bool]$restartFiscal, [bool]$startServerSuite)
 			function ServiceProgress([string]$phase, [string]$message, [int]$percent) {
 				[pscustomobject]@{ Event='progress'; Phase=$phase; Message=$message; ProgressPercent=$percent }
@@ -356,7 +382,7 @@ try {
 		}
 	}
 	finally {
-		Remove-PSSession -Session $session -ErrorAction SilentlyContinue
+		if ($null -ne $session) { Remove-PSSession -Session $session -ErrorAction SilentlyContinue }
 	}
 
 	$successMessages = @($restartResult.Results)
@@ -365,6 +391,7 @@ try {
 	$changed = $successMessages.Count -gt 0
 	if ($restartResult.PSObject.Properties['Changed']) { $changed = [bool]$restartResult.Changed }
 	$message = (@($successMessages) + @($failureMessages | ForEach-Object { "FEHLER: $_" }) -join '; ')
+	if ($req.Action -eq 'command') { $message = $successMessages -join [Environment]::NewLine }
 	Emit @{
 		Event = 'result'
 		Success = ($failureMessages.Count -eq 0)

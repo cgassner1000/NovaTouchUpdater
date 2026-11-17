@@ -32,7 +32,7 @@ internal static partial class Program
             {
                 string[] Visible() => table.Columns.Cast<DataGridViewColumn>().Where(column => column.Visible).OrderBy(column => column.DisplayIndex).Select(column => column.Name).ToArray();
                 void Settle() { canvas.PerformLayout(); Application.DoEvents(); Call(form, "ApplyColumnWidths"); Application.DoEvents(); }
-                ContextMenuStrip menu = table.ContextMenuStrip!;
+                ContextMenuStrip menu = Field<ContextMenuStrip>(form, "hostColumnsMenu");
                 ToolStripMenuItem Choice(string name) => (ToolStripMenuItem)menu.Items[name]!;
                 Settle();
                 Assert(Visible().SequenceEqual(HostColumnSettings.Defaults) && !table.Columns["ksm"].Visible && !table.Columns["ntv"].Visible &&
