@@ -11,11 +11,13 @@ internal static partial class Program
         {
             var updates = new UpdateRunner();
             var commands = new HostActionRunner();
+            var consoles = new List<HostConsoleOptions>();
             using var form = new MainForm(preview: true, updates, new FakeRunner(), dataPaths: paths);
             _ = form.Handle;
             HostState[] remote = Populate(form);
             Field<ComboBox>(form, "executionMode").SelectedIndex = (int)UpdateExecutionMode.LocalAndRemote;
             SetField(form, "createCommandRunner", new Func<IWorkerRunner>(() => commands));
+            SetField(form, "openHostConsole", new Func<HostConsoleOptions, CancellationToken, Task<bool>>((options, ct) => { ct.ThrowIfCancellationRequested(); consoles.Add(options); return Task.FromResult(true); }));
             SetField(form, "confirmHostAction", new Func<string, string, bool>((_, _) => true));
             SetField(form, "showHostCommandReport", new Action<string, string>((_, _) => { }));
             SetField(form, "isProcessElevated", new Func<bool>(() => true));
@@ -81,7 +83,7 @@ internal static partial class Program
                 Call(form, "PrepareHostActionsMenu", remote[0]);
                 rowMenu.Items["hostUpdate"]!.PerformClick(); rowMenu.Items["hostCommand"]!.PerformClick();
                 Assert(!rowMenu.Items["hostUpdate"]!.Enabled && !rowMenu.Items["hostCommand"]!.Enabled && rowMenu.Items["hostRemove"]!.Enabled &&
-                    updates.Requests.Count == 0 && commands.Requests.Count == 0,
+                    updates.Requests.Count == 0 && commands.Requests.Count == 0 && consoles.Count == 0,
                     "an unreachable remote disables update and command without starting workers or preventing removal");
                 remote[0].Connection = "Verbunden";
                 Call(form, "PrepareHostActionsMenu", remote[0]);
@@ -106,12 +108,17 @@ internal static partial class Program
                             request.StartServerSuite == (action == "hostRestartServerSuite") && request.Action == (action == "hostRestartPos" ? "restart-pos" : "restart-services"),
                             action + " targets only the clicked host and service; local=" + host.IsLocal);
                     }
-                    commands.Requests.Clear();
-                    const string command = "echo \"A&B\" & whoami";
-                    Complete((Task<WorkerResult>)Call(form, "RunHostCommandAsync", host, command, CancellationToken.None)!);
-                    WorkerRequest cmd = commands.Requests.Single();
-                    Assert(cmd.Host == host.Host && cmd.LocalExecution == host.IsLocal && cmd.Action == "command" && cmd.CommandText == command,
-                        "the command preserves text and targets exactly one host; local=" + host.IsLocal);
+                    commands.Requests.Clear(); consoles.Clear();
+                    Field<TextBox>(form, "txtUser").Text = "SYNTHETIC\\admin";
+                    Field<TextBox>(form, "txtPassword").Text = "Synthetic pipe-only password";
+                    Field<CheckBox>(form, "chkSsl").Checked = true;
+                    Field<NumericUpDown>(form, "nHttpsPort").Value = 443;
+                    string before = host.Result;
+                    rowMenu.Items["hostCommand"]!.PerformClick(); WaitIdle();
+                    HostConsoleOptions console = consoles.Single();
+                    Assert(console.Host == host.Host && console.LocalExecution == host.IsLocal && commands.Requests.Count == 0 && host.Result == before &&
+                        (host.IsLocal ? console.Username.Length == 0 && console.Password.Length == 0 : console.UseSsl && console.HttpsPort == 443 && console.Username == "SYNTHETIC\\admin" && console.Password == "Synthetic pipe-only password"),
+                        "the row opens one independent console with the correct target and credentials; local=" + host.IsLocal);
                 }
 
                 string zip = Path.Combine(root, "nt.payment_2.0.0.zip"); File.WriteAllText(zip, "Synthetic package, never installed");
@@ -128,19 +135,6 @@ internal static partial class Program
                 }
                 Assert(selected.SequenceEqual(Field<List<HostState>>(form, "hosts").Select(host => host.IsSelected)), "commands and updates preserve the complete checkbox selection");
 
-                commands.Requests.Clear(); commands.Fail = true;
-                SynchronizationContext.SetSynchronizationContext(context);
-                Complete((Task<WorkerResult>)Call(form, "RunHostCommandAsync", remote[0], "exit /b 5", CancellationToken.None)!);
-                Assert(remote[0].Result == "Fehler" && remote[0].Error.Contains("Exitcode 5") && commands.Requests.Count == 1, "command failures remain on their own host with output and error details");
-                commands.Fail = false; commands.WaitForCancellation = true;
-                using (var cancel = new CancellationTokenSource())
-                {
-                    SynchronizationContext.SetSynchronizationContext(context);
-                    var task = (Task<WorkerResult>)Call(form, "RunHostCommandAsync", remote[0], "synthetic wait", cancel.Token)!;
-                    cancel.Cancel(); Complete(task);
-                    Assert(commands.Cancelled && !Field<bool>(form, "busy") && remote[0].Result == "Abgebrochen", "cancelling a command stops its worker and releases the operation state");
-                }
-
                 foreach (string mode in new[] { "Light", "Dark" })
                 {
                     UiTheme.SetMode(mode);
@@ -150,20 +144,6 @@ internal static partial class Program
                     rowMenu.DrawToBitmap(bitmap, rowMenu.ClientRectangle);
                     bitmap.Save(Path.Combine(TestWorkspace.Artifacts, "host-actions-" + mode.ToLowerInvariant() + ".png"));
                     rowMenu.Close();
-                    using var dialog = new HostCommandDialog("PC-A.invalid", false, (_, _) => Task.FromResult(new WorkerResult { Success = true, Message = "Synthetic output" }));
-                    dialog.Show(); Application.DoEvents();
-                    var input = (TextBox)dialog.Controls.Find("command", true).Single();
-                    var execute = (Button)dialog.Controls.Find("execute", true).Single();
-                    var close = (Button)dialog.Controls.Find("close", true).Single();
-                    Assert(!execute.Enabled, "an empty command cannot be sent; theme=" + mode);
-                    input.Text = "synthetic echo"; execute.PerformClick(); Application.DoEvents();
-                    Assert(((TextBox)dialog.Controls.Find("output", true).Single()).Text == "Synthetic output" && input.Enabled && execute.Enabled,
-                        "the command dialog displays output and permits the next command; theme=" + mode);
-                    Assert(dialog.RectangleToScreen(dialog.ClientRectangle).Contains(close.RectangleToScreen(close.ClientRectangle)), "command dialog buttons fit inside the window; theme=" + mode);
-                    using var preview = new Bitmap(dialog.Width, dialog.Height);
-                    dialog.DrawToBitmap(preview, new Rectangle(Point.Empty, dialog.Size));
-                    preview.Save(Path.Combine(TestWorkspace.Artifacts, "host-command-" + mode.ToLowerInvariant() + ".png"));
-                    dialog.Close();
                 }
                 UiTheme.SetMode("System");
                 Call(form, "PrepareHostActionsMenu", remote[0]);
@@ -202,15 +182,11 @@ internal static partial class Program
     private sealed class HostActionRunner : IWorkerRunner
     {
         internal List<WorkerRequest> Requests { get; } = [];
-        internal bool Fail, WaitForCancellation, Cancelled;
-        public async Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> progress, CancellationToken ct)
+        public Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> progress, CancellationToken ct)
         {
+            ct.ThrowIfCancellationRequested();
             Requests.Add(request);
-            if (WaitForCancellation)
-            {
-                try { await Task.Delay(Timeout.Infinite, ct); } catch (OperationCanceledException) { Cancelled = true; throw; }
-            }
-            return new() { Success = !Fail, Changed = !Fail, Message = "Synthetic output", Error = Fail ? "Exitcode 5" : "" };
+            return Task.FromResult(new WorkerResult { Success = true, Changed = true, Message = "Synthetic output" });
         }
         public void Dispose() { }
     }

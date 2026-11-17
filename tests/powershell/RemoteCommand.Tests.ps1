@@ -11,9 +11,6 @@ $nativeCall = '& $shutdown '
 Assert ([regex]::Matches($source, [regex]::Escape($nativeCall)).Count -eq 1) 'Expected exactly one replaceable native shutdown call'
 $source = $source.Replace($nativeCall, 'Invoke-TestShutdown ')
 $source = $source.Replace('& $taskkill ', 'Invoke-UnexpectedTaskkill ')
-$nativeCommand = '& $cmd /d /s /c $CommandText'
-Assert ([regex]::Matches($source, [regex]::Escape($nativeCommand)).Count -eq 1) 'Expected exactly one replaceable cmd invocation'
-$source = $source.Replace($nativeCommand, 'Invoke-TestCmd $CommandText')
 $source = $source.Replace('${function:RequestPosRestart}', '${function:TestPosRestart}')
 $source = $source.Replace('$requestLine = [Console]::In.ReadLine()', '$requestLine = $script:requestJson').Replace('exit 1', 'return')
 Assert (-not $source.Contains($nativeCall)) 'Native shutdown must be removed before tests run'
@@ -39,13 +36,6 @@ function Invoke-Command {
     param($Session, $ScriptBlock, $ArgumentList, $ErrorAction)
     if ($script:remoteError) { throw 'Simulated remoting failure' }
     & $ScriptBlock @ArgumentList
-}
-function Invoke-TestCmd {
-    param([string]$CommandText)
-    $script:commandCalls++
-    Assert ($CommandText -ceq $script:request.CommandText) 'The command must reach only its target without interpolation or quote changes'
-    $global:LASTEXITCODE=$script:commandExitCode
-    Write-Output 'Simulated command output'
 }
 function Remove-PSSession { param($Session, $ErrorAction) $script:removed++ }
 function Invoke-TestShutdown {
@@ -95,7 +85,7 @@ function Service([string]$name, [string]$status='Running') {
 function CommandCase {
     param([string]$Name, [hashtable]$Request=@{}, [scriptblock]$Setup={}, [bool]$Success=$true,
         [int]$Shutdowns=0, [string[]]$Actions=@(), [string]$ErrorPattern='',
-        [int]$Connections=1, [int]$Cleanup=1, [int]$PosCalls=0, [bool]$Skipped=$false, [int]$Commands=0)
+        [int]$Connections=1, [int]$Cleanup=1, [int]$PosCalls=0, [bool]$Skipped=$false)
     $script:request = @{ Action='restart-services'; Host='example.invalid'; UseSsl=$false; Username=''; Password=''; RestartPayment=$false; RestartFiscal=$false; StartServerSuite=$false }
     foreach ($key in $Request.Keys) { $script:request[$key] = $Request[$key] }
     $script:connections=0; $script:removed=0; $script:shutdownCalls=0; $script:serviceReads=0
@@ -103,7 +93,6 @@ function CommandCase {
     $script:services=@{}; $script:serviceActions=[Collections.Generic.List[string]]::new()
     $script:connectionError=$false; $script:remoteError=$false; $script:failedService=''
     $script:posCalls=0; $script:posSkipped=$false; $script:posFailure=$false
-    $script:commandCalls=0; $script:commandExitCode=0
     & $Setup
     $script:requestJson = $script:request | ConvertTo-Json -Compress
     $writer = [IO.StringWriter]::new()
@@ -121,8 +110,6 @@ function CommandCase {
     Assert ($script:connections -eq $Connections) "$Name unexpected session count"
     Assert ($script:removed -eq $Cleanup) "$Name must clean up its session"
     Assert ($script:posCalls -eq $PosCalls -and [bool]$result.Skipped -eq $Skipped) "$Name unexpected POS routing/skip state"
-    Assert ($script:commandCalls -eq $Commands) "$Name unexpected command execution count"
-    if ($Commands -gt 0) { Assert ($result.Message -eq 'Simulated command output' -and $script:serviceReads -eq 0) "$Name must return command output without accessing services" }
     if ($Shutdowns) {
         Assert ((($script:shutdownArgs | ForEach-Object { [string]$_ }) -join '|') -ceq '/r|/t|30|/d|p:4:1|/c|Terminal-Neustart durch NovaTouch Updater') "$Name must request a restart with 30 seconds delay"
     }
@@ -176,10 +163,5 @@ CommandCase 'local payment restart without WinRM' -Request @{ Host='LOCALHOST'; 
 CommandCase 'local fiscal restart without WinRM' -Request @{ Host='LOCALHOST'; LocalExecution=$true; RestartFiscal=$true } -Connections 0 -Cleanup 0 -Setup { Service 'nt.payment'; Service 'nt.fiscal' } -Actions @('stop:nt.fiscal','start:nt.fiscal')
 CommandCase 'local suite restart without WinRM' -Request @{ Host='LOCALHOST'; LocalExecution=$true; StartServerSuite=$true } -Connections 0 -Cleanup 0 -Setup { Service 'nt3_server_suite' } -Actions @('stop:nt3_server_suite','start:nt3_server_suite')
 CommandCase 'local POS restart without WinRM' -Request @{ Action='restart-pos'; Host='LOCALHOST'; LocalExecution=$true } -Connections 0 -Cleanup 0 -PosCalls 1
-CommandCase 'remote command preserves quotes and operators' -Request @{ Action='command'; CommandText='echo "A&B" & whoami' } -Commands 1
-CommandCase 'remote command uses HTTPS and credentials' -Request @{ Action='command'; CommandText='whoami'; UseSsl=$true; HttpsPort=443; Username='DOMAIN\test'; Password='test-only' } -Commands 1
-CommandCase 'local command never needs a WinRM listener' -Request @{ Action='command'; CommandText='whoami'; Host='LOCALHOST'; LocalExecution=$true; UseSsl=$true; HttpsPort=0 } -Commands 1 -Connections 0 -Cleanup 0
-CommandCase 'failed command retains output and exit code' -Request @{ Action='command'; CommandText='exit /b 5' } -Commands 1 -Success $false -Setup { $script:commandExitCode=5 } -ErrorPattern 'Exitcode 5'
-CommandCase 'blank command is rejected before connecting' -Request @{ Action='command'; CommandText='  ' } -Success $false -Connections 0 -Cleanup 0 -ErrorPattern 'Kein Befehl'
-CommandCase 'local execution cannot silently target a remote hostname' -Request @{ Action='command'; CommandText='whoami'; LocalExecution=$true } -Success $false -Connections 0 -Cleanup 0 -ErrorPattern 'LOCALHOST'
-CommandCase 'remote failure never falls back to local execution' -Request @{ Action='command'; CommandText='whoami' } -Success $false -Setup { $script:remoteError=$true } -ErrorPattern 'Simulated remoting failure'
+CommandCase 'local execution cannot silently target a remote hostname' -Request @{ RestartPayment=$true; LocalExecution=$true } -Success $false -Connections 0 -Cleanup 0 -ErrorPattern 'LOCALHOST'
+CommandCase 'remote failure never falls back to local execution' -Request @{ RestartPayment=$true } -Success $false -Setup { $script:remoteError=$true } -ErrorPattern 'Simulated remoting failure'

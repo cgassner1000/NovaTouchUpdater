@@ -8,12 +8,13 @@ public sealed partial class MainForm
     private Func<IWorkerRunner> createCommandRunner = () => new WorkerRunner("NovaTouchUpdater.RemoteCommand.ps1");
     private Func<string, string, bool>? confirmHostAction = null;
     private Action<string, string>? showHostCommandReport = null;
+    private Func<HostConsoleOptions, CancellationToken, Task<bool>> openHostConsole = (options, ct) => HostConsole.OpenAsync(options, ct);
 
     private void ConfigureHostActionsMenu()
     {
         hostActionsMenu.Font = Font;
         Add("hostUpdate", "Update", async host => await UpdateSingleHostAsync(host));
-        Add("hostCommand", "Eingabeaufforderung", host => { ShowHostCommand(host); return Task.CompletedTask; });
+        Add("hostCommand", "Eingabeaufforderung", ShowHostCommandAsync);
         hostActionsMenu.Items.Add(new ToolStripSeparator());
         Add("hostRestartPos", "NovaTouch POS neustarten", host => RunHostActionsAsync([host], false, true, false, false, false));
         Add("hostRestartPayment", "Nt.Payment neustarten", host => RestartHostServiceAsync(host, UpdateComponents.Payment));
@@ -43,6 +44,7 @@ public sealed partial class MainForm
         bool idle = CanStartHostScan && hostActionTask.IsCompleted && hosts.Contains(host);
         foreach (ToolStripItem item in hostActionsMenu.Items) item.Enabled = idle;
         hostActionsMenu.Items["hostUpdate"]!.Enabled = hostActionsMenu.Items["hostCommand"]!.Enabled = idle && !IsUnreachableRemoteHost(host);
+        hostActionsMenu.Items["hostCommand"]!.ToolTipText = host.IsLocal ? "Eingabeaufforderung als Administrator öffnen." : "Interaktive PowerShell mit Administratorrechten über die eingestellte WinRM-Verbindung öffnen.";
         hostActionsMenu.Items["hostRestartPos"]!.Enabled = idle && (host.InstalledPrograms.Any(program => program.Kind == "pos") || HasInstalledVersion(host.PosVersion));
         hostActionsMenu.Items["hostRestartPayment"]!.Enabled = idle && HasService(host, "payment");
         hostActionsMenu.Items["hostRestartFiscal"]!.Enabled = idle && HasService(host, "fiscal");
@@ -85,49 +87,21 @@ public sealed partial class MainForm
         ApplyRemoteHosts(hosts.Where(candidate => !candidate.IsLocal && candidate != host).Select(candidate => candidate.Host).ToArray(), "Hostliste");
     }
 
-    private void ShowHostCommand(HostState host)
+    private async Task ShowHostCommandAsync(HostState host)
     {
-        if (!ValidateTargetCredentials([host])) return;
-        using var dialog = new HostCommandDialog(host.DisplayName, host.IsLocal, (command, ct) => RunHostCommandAsync(host, command, ct));
-        dialog.ShowDialog(this);
-    }
-
-    private async Task<WorkerResult> RunHostCommandAsync(HostState host, string command, CancellationToken ct)
-    {
-        if (!CanStartHostScan || !hosts.Contains(host) || !ValidateTargetCredentials([host]))
-            return new() { Error = "Der Host ist gerade nicht verfügbar." };
-        if (string.IsNullOrWhiteSpace(command)) return new() { Error = "Bitte einen Befehl eingeben." };
-        CaptureCredentials();
-        WorkerResult result = new() { Error = "Befehl wurde abgebrochen." };
-        await InBatchAsync([host], async batchToken =>
+        if (!CanStartHostScan || !hosts.Contains(host) || IsUnreachableRemoteHost(host) || !ValidateTargetCredentials([host])) return;
+        var options = host.IsLocal ? new HostConsoleOptions(host.Host, true)
+            : new HostConsoleOptions(host.Host, false, txtUser.Text.Trim(), txtPassword.Text, chkSsl.Checked, (int)nHttpsPort.Value);
+        try
         {
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, batchToken);
-            using var worker = createCommandRunner();
-            Mark(host, h => h.Phase = "Befehl wird ausgeführt");
-            try
-            {
-                result = await worker.RunAsync(new()
-                {
-                    Action = "command", Host = host.Host, LocalExecution = host.IsLocal, CommandText = command,
-                    Username = activeUser, Password = activePassword, UseSsl = activeSsl, HttpsPort = activeHttpsPort
-                }, ev => { Log(host.Host, ev.Phase + ": " + ev.Message); Mark(host, h => h.ApplyProgress(ev)); }, linked.Token);
-                Mark(host, h =>
-                {
-                    if (result.Success) h.CompleteCommand(false, DateTimeOffset.Now);
-                    else h.FailCommand(false, FriendlyError(result));
-                    h.Phase = result.Success ? "Befehl abgeschlossen" : "Befehl fehlgeschlagen";
-                });
-                Log(host.Host, "COMMAND => " + (result.Success ? "OK " + result.Message : "FEHLER " + FriendlyError(result)));
-            }
-            catch (OperationCanceledException) { Mark(host, h => h.CancelCommand()); throw; }
-            catch (Exception ex)
-            {
-                result = new() { Error = ex.Message };
-                Mark(host, h => { h.FailCommand(false, ex.Message); h.Phase = "Befehl fehlgeschlagen"; });
-                Log(host.Host, "COMMAND => FEHLER " + ex.Message);
-            }
-            finally { CountCompleted(); }
-        });
-        return result;
+            bool opened = await openHostConsole(options, appLifetime.Token);
+            Log(host.Host, opened ? "Interaktive Konsole geöffnet: " + (host.IsLocal ? "CMD als Administrator" : "PowerShell / WinRM") : "Start der Eingabeaufforderung abgebrochen.");
+        }
+        catch (OperationCanceledException) when (appLifetime.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            Log(host.Host, "Konsole öffnen fehlgeschlagen: " + ex.Message);
+            if (!IsDisposed) AppMessageBox.Show(this, ex.Message, "Eingabeaufforderung", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 }

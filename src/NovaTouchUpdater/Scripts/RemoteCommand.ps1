@@ -18,16 +18,6 @@ function InvokeClientCommandTarget {
 	else { Invoke-Command -Session $Session -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -ErrorAction Stop }
 }
 
-function ExecuteClientCommand {
-	param([string]$CommandText)
-	$cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
-	$ErrorActionPreference = 'Continue' # Native stderr is part of the command output; the exit code decides success.
-	$output = (& $cmd /d /s /c $CommandText 2>&1 | ForEach-Object { [string]$_ } | Out-String -Width 4096).TrimEnd()
-	$code = $LASTEXITCODE
-	[pscustomobject]@{ Results=@($(if ($output) { $output } else { "Befehl abgeschlossen (Exitcode $code)." }));
-		Failures=@($(if ($code -ne 0) { "Befehl fehlgeschlagen (Exitcode $code)." })); Changed=($code -eq 0) }
-}
-
 function RequestTerminalRestart {
 	$shutdown = Join-Path $env:SystemRoot 'System32\shutdown.exe'
 	$output = @(& $shutdown /r /t 30 /d 'p:4:1' /c 'Terminal-Neustart durch NovaTouch Updater' 2>&1)
@@ -273,10 +263,9 @@ try {
 	$requestLine = [Console]::In.ReadLine()
 	if ([string]::IsNullOrWhiteSpace($requestLine)) { throw 'Keine Anforderung erhalten.' }
 	$req = $requestLine | ConvertFrom-Json
-	if ($req.Action -notin @('restart-services', 'restart-terminal', 'restart-pos', 'command')) { throw "Unbekannte Aktion: $($req.Action)" }
+	if ($req.Action -notin @('restart-services', 'restart-terminal', 'restart-pos')) { throw "Unbekannte Aktion: $($req.Action)" }
 	$local = $null -ne $req.PSObject.Properties['LocalExecution'] -and [bool]$req.LocalExecution
 	if ($local -and $req.Host -ine 'LOCALHOST') { throw 'Lokale Befehle benötigen das Ziel LOCALHOST.' }
-	if ($req.Action -eq 'command' -and [string]::IsNullOrWhiteSpace([string]$req.CommandText)) { throw 'Kein Befehl angegeben.' }
 
 	$restartPayment = $false
 	$restartFiscal = $false
@@ -315,11 +304,7 @@ try {
 		$session = New-PSSession @sessionArgs
 	} else { Progress 'Lokal' 'Befehl wird direkt auf dem lokalen Rechner ausgeführt' }
 	try {
-		if ($req.Action -eq 'command') {
-			Progress 'Eingabeaufforderung' 'Befehl wird ausgeführt'
-			$restartResult = InvokeClientCommandTarget -Session $session -ScriptBlock ${function:ExecuteClientCommand} -ArgumentList ([string]$req.CommandText)
-		}
-		elseif ($req.Action -eq 'restart-terminal') {
+		if ($req.Action -eq 'restart-terminal') {
 			Progress 'Windows-Neustart' 'Windows-Neustart in 30 Sekunden wird angefordert'
 			$restartResult = InvokeClientCommandTarget -Session $session -ScriptBlock ${function:RequestTerminalRestart}
 		}
@@ -391,7 +376,6 @@ try {
 	$changed = $successMessages.Count -gt 0
 	if ($restartResult.PSObject.Properties['Changed']) { $changed = [bool]$restartResult.Changed }
 	$message = (@($successMessages) + @($failureMessages | ForEach-Object { "FEHLER: $_" }) -join '; ')
-	if ($req.Action -eq 'command') { $message = $successMessages -join [Environment]::NewLine }
 	Emit @{
 		Event = 'result'
 		Success = ($failureMessages.Count -eq 0)
