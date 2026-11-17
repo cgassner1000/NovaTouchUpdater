@@ -31,6 +31,7 @@ internal static partial class Program
             remote[0].IsSelected = false; // Context actions must ignore the checkbox selection.
             foreach (HostState host in new[] { remote[0], local })
             {
+                host.Connection = host.IsLocal ? "Lokal" : "Verbunden";
                 host.Scanned = true;
                 host.InstalledComponents = UpdateComponents.ZipServices;
                 host.Services = [new() { Kind = "payment", Name = "nt.payment.1", ProductVersion = "1.0.0" },
@@ -61,12 +62,15 @@ internal static partial class Program
                     rowMenu.Close();
                 }
                 Assert(selected.SequenceEqual(Field<List<HostState>>(form, "hosts").Select(host => host.IsSelected)), "right-clicking the selection cell does not change any checkbox");
-                Assert(rowMenu.Items.OfType<ToolStripMenuItem>().Select(item => item.Text).SequenceEqual(new[]
+                Assert(rowMenu.Items.OfType<ToolStripMenuItem>().Where(item => item.Available).Select(item => item.Text).SequenceEqual(new[]
                     { "Update", "Eingabeaufforderung", "NovaTouch POS neustarten", "Nt.Payment neustarten", "Nt.Fiskal neustarten", "NT3.Server.Suite neustarten", "Client entfernen" }) &&
                     rowMenu.Items.OfType<ToolStripSeparator>().Count() == 2, "host actions have the requested order and separators");
                 Rectangle last = table.GetRowDisplayRectangle(table.Rows.Count - 1, false);
                 ShowContext(new Point(20, last.Bottom + 30));
-                Assert(!rowMenu.Visible && !columnMenu.Visible, "empty table space opens neither the columns nor a stale host menu");
+                var backgroundMenu = Field<ContextMenuStrip>(form, "hostBackgroundMenu");
+                Assert(backgroundMenu.Visible && !rowMenu.Visible && !columnMenu.Visible && backgroundMenu.Items[0].Text == "Remote Client hinzufügen",
+                    "empty table space offers adding a remote client instead of columns or stale host actions");
+                backgroundMenu.Close();
 
                 Call(form, "PrepareHostActionsMenu", remote[1]);
                 Assert(new[] { "hostRestartPos", "hostRestartPayment", "hostRestartFiscal", "hostRestartServerSuite" }.All(name => !rowMenu.Items[name]!.Enabled),

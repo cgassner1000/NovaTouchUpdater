@@ -3,6 +3,7 @@ namespace NovaTouchUpdater;
 internal sealed class HostTable : DataGridView
 {
     internal Func<int, int, ContextMenuStrip?>? ContextMenuForCell { get; set; }
+    internal Func<ContextMenuStrip?>? BackgroundContextMenu { get; set; }
     internal ContextMenuStrip[] ContextMenus { get; set; } = [];
 
     internal void RefreshContextMenus() { foreach (var menu in ContextMenus) UiTheme.StyleMenu(menu); }
@@ -23,7 +24,8 @@ internal sealed class HostTable : DataGridView
             point = PointToClient(new Point((short)(position & 0xffff), (short)((position >> 16) & 0xffff)));
         }
         HitTestInfo hit = HitTest(point.X, point.Y);
-        ContextMenuForCell?.Invoke(hit.RowIndex, hit.ColumnIndex)?.Show(this, point);
+        var menu = hit.Type == DataGridViewHitTestType.None ? BackgroundContextMenu?.Invoke() : ContextMenuForCell?.Invoke(hit.RowIndex, hit.ColumnIndex);
+        menu?.Show(this, point);
         m.Result = IntPtr.Zero;
     }
 }

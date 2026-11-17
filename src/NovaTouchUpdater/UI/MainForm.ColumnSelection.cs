@@ -29,7 +29,8 @@ public sealed partial class MainForm
         hostColumnsMenu.Items.Add(reset);
         hostColumnsMenu.Opening += (_, _) => UpdateHostColumnsMenu();
         ConfigureHostActionsMenu();
-        ((HostTable)table).ContextMenus = [hostColumnsMenu, hostActionsMenu];
+        ((HostTable)table).ContextMenus = [hostColumnsMenu, hostActionsMenu, hostBackgroundMenu];
+        ((HostTable)table).BackgroundContextMenu = PrepareHostBackgroundMenu;
         ((HostTable)table).ContextMenuForCell = (row, column) =>
         {
             if (row == -1 && column >= 0) { UpdateHostColumnsMenu(); UiTheme.StyleMenu(hostColumnsMenu); return hostColumnsMenu; }

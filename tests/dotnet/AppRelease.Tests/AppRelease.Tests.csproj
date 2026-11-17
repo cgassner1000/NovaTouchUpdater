@@ -15,6 +15,7 @@
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Models/ThemeModes.cs" Link="ThemeModes.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Controls/AdministratorButton.cs" Link="AdministratorButton.cs" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Controls/AppComboBox.cs" Link="AppComboBox.cs" />
+    <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/UI/Controls/HostTable.cs" Link="HostTable.cs" />
     <EmbeddedResource Include="$(RepositoryRoot)src/NovaTouchUpdater/Assets/NovaTouchUpdater.ico" LogicalName="NovaTouchUpdater.AppIcon.ico" />
     <EmbeddedResource Include="$(RepositoryRoot)src/NovaTouchUpdater/Assets/NovaTouchUpdater.png" LogicalName="NovaTouchUpdater.AppIcon.png" />
     <Compile Include="$(RepositoryRoot)src/NovaTouchUpdater/Updates/AppReleaseClient.cs" Link="AppReleaseClient.cs" />

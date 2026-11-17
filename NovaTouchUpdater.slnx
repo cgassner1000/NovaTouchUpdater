@@ -18,6 +18,7 @@
     <File Path="version.txt" />
     <File Path="Build-win64.cmd" />
     <File Path="Directory.Build.props" />
+    <File Path="global.json" />
     <File Path="tests/README.md" />
   </Folder>
 </Solution>

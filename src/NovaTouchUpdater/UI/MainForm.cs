@@ -214,6 +214,7 @@ public sealed partial class MainForm : Form
             updateToolTip.Dispose();
             hostColumnsMenu.Dispose();
             hostActionsMenu.Dispose();
+            hostBackgroundMenu.Dispose();
             betaFeatures?.Dispose();
             connectionCancellation?.Cancel();
             connectionRunner.Dispose();
@@ -863,26 +864,7 @@ public sealed partial class MainForm : Form
 
         btnImport.Click += (_, _) => LoadHosts();
         btnEditHosts.Click += (_, _) => EditHosts();
-        btnWinRm.Click += (_, _) =>
-        {
-            HostState[] targets = SelectedRemoteHosts();
-            if (busy || selfUpdating || !ValidateCredentials()) return;
-            using var dialog = new WinRmTestForm(targets.Select(h => h.Host).ToArray(),
-                txtUser.Text.Trim(), txtPassword.Text, (int)nScan.Value, chkSsl.Checked, (int)nHttpsPort.Value,
-                hosts.Where(h => !h.IsLocal).Select(h => h.Host).ToArray(), winRmCertificatePath, winRmPrivateKeyPath,
-                (certificate, key) =>
-                {
-                    winRmCertificatePath = certificate; winRmPrivateKeyPath = key;
-                    try
-                    {
-                        Directory.CreateDirectory(userDataPaths.RootDirectory);
-                        AppConfigStore.SaveWinRmCertificatePaths(userDataPaths.ConfigFile, certificate, key, startupConfigPath);
-                    }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-                    { AppMessageBox.Show(this, "Die PEM-Dateipfade konnten nicht gespeichert werden.\n" + ex.Message, "WinRM Konfiguration", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
-                });
-            dialog.ShowDialog(this);
-        };
+        btnWinRm.Click += (_, _) => ShowWinRmConfiguration(SelectedRemoteHosts(), hosts.Where(host => !host.IsLocal).Select(host => host.Host).ToArray());
         btnDatabaseCheck.Name = "databaseCheck";
         btnDatabaseCheck.Click += (_, _) =>
         {

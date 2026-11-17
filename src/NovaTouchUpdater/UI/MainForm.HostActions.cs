@@ -15,6 +15,8 @@ public sealed partial class MainForm
         hostActionsMenu.Font = Font;
         Add("hostUpdate", "Update", async host => await UpdateSingleHostAsync(host));
         Add("hostCommand", "Eingabeaufforderung", ShowHostCommandAsync);
+        Add("hostConnect", "Connect", CheckRemoteHostConnectionAsync);
+        Add("hostWinRm", "WinRM konfigurieren", host => { ShowWinRmConfiguration([host], [host.Host], allowUnconfirmedClientSetup: true); return Task.CompletedTask; });
         hostActionsMenu.Items.Add(new ToolStripSeparator());
         Add("hostRestartPos", "NovaTouch POS neustarten", host => RunHostActionsAsync([host], false, true, false, false, false));
         Add("hostRestartPayment", "Nt.Payment neustarten", host => RestartHostServiceAsync(host, UpdateComponents.Payment));
@@ -43,6 +45,9 @@ public sealed partial class MainForm
         contextHost = host;
         bool idle = CanStartHostScan && hostActionTask.IsCompleted && hosts.Contains(host);
         foreach (ToolStripItem item in hostActionsMenu.Items) item.Enabled = idle;
+        bool connectionActions = !host.IsLocal && host.Connection != "Verbunden";
+        hostActionsMenu.Items["hostConnect"]!.Visible = hostActionsMenu.Items["hostWinRm"]!.Visible = connectionActions;
+        hostActionsMenu.Items["hostConnect"]!.ToolTipText = "Nur die WinRM-Verbindung dieses Clients erneut prüfen.";
         hostActionsMenu.Items["hostUpdate"]!.Enabled = hostActionsMenu.Items["hostCommand"]!.Enabled = idle && !IsUnreachableRemoteHost(host);
         hostActionsMenu.Items["hostCommand"]!.ToolTipText = host.IsLocal ? "Eingabeaufforderung als Administrator öffnen." : "Interaktive PowerShell mit Administratorrechten über die eingestellte WinRM-Verbindung öffnen.";
         hostActionsMenu.Items["hostRestartPos"]!.Enabled = idle && (host.InstalledPrograms.Any(program => program.Kind == "pos") || HasInstalledVersion(host.PosVersion));

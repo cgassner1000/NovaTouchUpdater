@@ -19,6 +19,7 @@ internal sealed class WinRmTestForm : Form
     private CancellationTokenSource cancellation = new();
     private readonly SecureString diagnosticPassword = new();
     private readonly bool useHttps;
+    private readonly bool allowUnconfirmedClientSetup;
     private readonly int httpsPort;
     private readonly Action<string, string>? certificatePathsChanged;
     private WinRmCertificateAuthority? authority;
@@ -44,10 +45,11 @@ internal sealed class WinRmTestForm : Form
 
     public WinRmTestForm(string[] hosts, string username, string password, int parallelism, bool useSsl, int httpsPort = 5986,
         string[]? trustedHosts = null, string? certificatePath = null, string? privateKeyPath = null,
-        Action<string, string>? certificatePathsChanged = null)
+        Action<string, string>? certificatePathsChanged = null, bool allowUnconfirmedClientSetup = false)
     {
         SuspendLayout();
         useHttps = useSsl;
+        this.allowUnconfirmedClientSetup = allowUnconfirmedClientSetup;
         this.httpsPort = httpsPort;
         this.certificatePathsChanged = certificatePathsChanged;
         foreach (char character in password) diagnosticPassword.AppendChar(character);
@@ -123,7 +125,7 @@ internal sealed class WinRmTestForm : Form
             grid.Rows[grid.Rows.Add(host, protocol, "Wartet", "Wartet", WinRmSetupState.None)]).ToArray();
         grid.SelectionChanged += (_, _) => ShowDetails();
         grid.CellContentClick += async (_, e) => { if (e.ColumnIndex == grid.Columns["clientSetup"].Index && e.RowIndex >= 0) await CopyClientSetupAsync(e.RowIndex); };
-        grid.CellMouseEnter += (_, e) => grid.Cursor = e.ColumnIndex == grid.Columns["clientSetup"].Index && e.RowIndex >= 0 && rows[e.RowIndex].Cells["result"].Value is "Fehler" ? Cursors.Hand : Cursors.Default;
+        grid.CellMouseEnter += (_, e) => grid.Cursor = e.ColumnIndex == grid.Columns["clientSetup"].Index && CanCopyClientSetup(e.RowIndex) ? Cursors.Hand : Cursors.Default;
         grid.CellMouseLeave += (_, _) => grid.Cursor = Cursors.Default;
         retry.Click += async (_, _) => await RunDiagnosticsAsync();
         chooseCertificate.Click += (_, _) => ChooseCertificateFiles();
@@ -218,6 +220,12 @@ internal sealed class WinRmTestForm : Form
                         : preparationFailed ? "Nicht gestartet" : "Nicht abgeschlossen";
                     row.Tag = $"{row.Cells[0].Value} – {row.Cells[1].Value}\r\n{row.Cells["result"].Value}. Es liegt kein vollständiges Testergebnis vor.";
                     row.Cells["tcp"].Value = "Nicht bestätigt";
+                }
+            if (allowUnconfirmedClientSetup)
+                foreach (var row in rows.Where(row => row.Cells["result"].Value is not "OK" && row.Cells["clientSetup"].Value is WinRmSetupState.None))
+                {
+                    row.Cells["clientSetup"].Value = WinRmSetupState.Ready;
+                    row.Cells["clientSetup"].ToolTipText = "Client-Einrichtung kopieren; die Verbindung ist noch nicht bestätigt. Auf dem Client als Administrator ausführen.";
                 }
             summary.Text = (diagnostics.Length == 0 ? "Lokale WinRM-Vorbereitung beendet" : $"{completed} von {diagnostics.Length} Hosttests abgeschlossen") +
                 (cancellation.IsCancellationRequested ? " – abgebrochen." : ".") +
@@ -339,9 +347,13 @@ internal sealed class WinRmTestForm : Form
         clientCertificates.Clear();
     }
 
+    private bool CanCopyClientSetup(int rowIndex) => rowIndex >= 0 && rowIndex < rows.Length &&
+        (rows[rowIndex].Cells["result"].Value is "Fehler" ||
+            (allowUnconfirmedClientSetup && !running && rows[rowIndex].Cells["result"].Value is not ("OK" or "Wartet" or "Läuft")));
+
     internal async Task CopyClientSetupAsync(int rowIndex)
     {
-        if (generatingCode || rowIndex < 0 || rowIndex >= rows.Length || rows[rowIndex].Cells["result"].Value is not "Fehler") return;
+        if (generatingCode || !CanCopyClientSetup(rowIndex)) return;
         if (useHttps && authority is null)
         {
             LoadDefaultCertificate();
