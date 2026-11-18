@@ -6,9 +6,9 @@ internal static partial class Program
     private static void WinRmPreparationTests()
     {
         SettingsAvailabilityTests();
-        foreach (bool success in new[] { true, false })
+        foreach ((bool success, bool throws) in new[] { (true, false), (false, false), (false, true) })
         {
-            var worker = new DiagnosticRunner { PreparationSucceeds = success };
+            var worker = new DiagnosticRunner { PreparationSucceeds = success, PreparationThrows = throws, FailedHost = success ? "" : "POS02.invalid" };
             using var dialog = new WinRmTestForm(["POS01.invalid", "POS02.invalid"], "test-user", "test-only", 2, true, 443,
                 ["POS01.invalid", "POS02.invalid", "UNSELECTED.invalid"]);
             _ = dialog.Handle;
@@ -20,19 +20,26 @@ internal static partial class Program
                 "local preparation receives all loaded remote hosts once, including unselected hosts");
             Assert(worker.Requests.Single().Password.Length == 0 && worker.Requests.Single().Username.Length == 0,
                 "local preparation does not receive remote credentials");
+            Assert(worker.Requests.Single().UseSsl && worker.Requests.Single().HttpsPort == 443,
+                "local preparation receives the selected transport so HTTPS does not configure HTTP TrustedHosts");
             Assert(!test.IsCompleted, "remote diagnostics wait for local WinRM and TrustedHosts preparation");
             worker.Prepared.SetResult(true);
             Complete(test);
             var grid = (DataGridView)All(dialog).Single(c => c.Name == "winRmResults");
             var details = (TextBox)All(dialog).Single(c => c.Name == "winRmDetails");
-            Assert(success ? worker.Requests.Count == 3 && grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells["result"].Value is "OK")
-                : worker.Requests.Count == 1 && grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells["result"].Value is "Nicht gestartet"),
-                "remote diagnostics start only after successful preparation and otherwise remain explicitly untested");
+            Assert(worker.Requests.Count == 3 && grid.Rows[0].Cells["result"].Value is "OK" &&
+                (success ? grid.Rows[1].Cells["result"].Value is "OK" : grid.Rows[1].Cells["result"].Value is "Fehler"),
+                "every selected host gets its own real diagnostic result even when preparation fails or throws");
+            Assert(WinRmField<Label>(dialog, "summary").Text.Contains("2 von 2") &&
+                WinRmField<Label>(dialog, "summary").Text.Contains("Hinweis") == !success,
+                "completed remote tests and local preparation warnings are reported independently");
+            if (!success) Assert(grid.Rows[1].Cells["clientSetup"].Value is WinRmSetupState.Ready && grid.Rows[0].Cells["clientSetup"].Value is WinRmSetupState.None,
+                "actual failed hosts offer the setup-copy icon after a local preparation warning");
             Assert(details.Text.Contains(success ? "TrustedHosts" : "Administrator"),
                 "local preparation results and actionable failures remain visible in the details");
             Assert(worker.Requests.Where(r => r.Action == "winrm-test").All(r => r.Host != "UNSELECTED.invalid"),
                 "only selected hosts receive remote diagnostics");
-            if (success)
+            if (!throws)
             {
                 foreach (Control control in All(dialog)) _ = control.Handle;
                 for (int pass = 0; pass < 3; pass++) Layout(dialog);
@@ -41,7 +48,7 @@ internal static partial class Program
                     "local preparation status has its own row above the remote diagnostics");
                 using var preview = new Bitmap(dialog.Width, dialog.Height);
                 dialog.DrawToBitmap(preview, new Rectangle(Point.Empty, preview.Size));
-                preview.Save(Path.Combine(TestWorkspace.Artifacts, "winrm-preparation.png"));
+                preview.Save(Path.Combine(TestWorkspace.Artifacts, success ? "winrm-preparation.png" : "winrm-preparation-warning.png"));
             }
         }
 
@@ -132,19 +139,23 @@ internal static partial class Program
         internal ConcurrentQueue<WorkerRequest> Requests { get; } = new();
         internal TaskCompletionSource<bool> Prepared { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool PreparationSucceeds { get; init; }
+        internal bool PreparationThrows { get; init; }
+        internal string FailedHost { get; init; } = "";
         public async Task<WorkerResult> RunAsync(WorkerRequest request, Action<WorkerEvent> onProgress, CancellationToken ct)
         {
             Requests.Enqueue(request);
             if (request.Action == "winrm-prepare")
             {
                 await Prepared.Task.WaitAsync(ct);
+                if (PreparationThrows) throw new InvalidOperationException("Lokale Vorbereitung: Administratorrechte fehlen.");
                 return new() { Success = PreparationSucceeds, Message = "Lokales WinRM und TrustedHosts geprüft.",
                     Error = PreparationSucceeds ? "" : "TrustedHosts: Bitte als Administrator ausführen." };
             }
-            Assert(Prepared.Task.IsCompletedSuccessfully && PreparationSucceeds, "remote requests follow successful local preparation");
+            Assert(Prepared.Task.IsCompletedSuccessfully, "remote requests wait for preparation to finish, without requiring a local listener");
             Assert(request.UseSsl && request.HttpsPort == 443 && request.Username == "test-user" && request.Password == "test-only",
                 "remote diagnostics preserve the selected transport, custom port and credentials");
-            return new() { Success = true, Tcp = "OK", Session = "OK", Command = "OK" };
+            bool connected = request.Host != FailedHost;
+            return new() { Success = connected, Tcp = connected ? "OK" : "Fehler", Session = connected ? "OK" : "Fehler", Command = connected ? "OK" : "Übersprungen (keine Sitzung)", Error = connected ? "" : "Synthetischer Remote-Verbindungsfehler." };
         }
         public void Dispose() { }
     }

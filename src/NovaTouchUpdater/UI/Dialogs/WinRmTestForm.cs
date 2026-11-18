@@ -56,7 +56,7 @@ internal sealed class WinRmTestForm : Form
         diagnosticPassword.MakeReadOnly();
         protocol = useSsl ? $"HTTPS / {httpsPort}" : "HTTP / 5985";
         this.parallelism = Math.Clamp(parallelism, 1, 150);
-        preparation = new WorkerRequest { Action = "winrm-prepare", Hosts = (trustedHosts ?? hosts).ToArray() };
+        preparation = new WorkerRequest { Action = "winrm-prepare", Hosts = (trustedHosts ?? hosts).ToArray(), UseSsl = useSsl, HttpsPort = httpsPort };
         diagnostics = hosts.Select(host => new WorkerRequest
         {
             Action = "winrm-test", Host = host, Username = username, UseSsl = useSsl, HttpsPort = httpsPort
@@ -162,8 +162,9 @@ internal sealed class WinRmTestForm : Form
         if (running || generatingCode) return;
         cancellation.Dispose(); cancellation = new();
         running = true; completed = 0; preparationFailed = false; preparationDetails = "";
+        bool preparationWarning = false;
         retry.Enabled = false; cancel.Enabled = true; cancel.Text = "Abbrechen";
-        localStatus.Text = "Lokales WinRM vorbereiten und bei Bedarf starten …";
+        localStatus.Text = useHttps ? "Lokalen WinRM-Client für HTTPS prüfen …" : "WinRM-Client und TrustedHosts vorbereiten …";
         localStatus.ForeColor = UiTheme.Muted;
         summary.Text = $"WinRM prüfen · {protocol} · {diagnostics.Length} Host(s)";
         foreach (var row in rows)
@@ -180,12 +181,16 @@ internal sealed class WinRmTestForm : Form
             preparationDetails = certificateDetails;
             ShowDetails();
             using var runner = worker ?? createRunner();
-            WorkerResult ready = await RunWithTimeoutAsync(runner, preparation, cancellation.Token);
+            WorkerResult ready;
+            try { ready = await RunWithTimeoutAsync(runner, preparation, cancellation.Token); }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
+            catch (Exception ex) { ready = new() { Success = false, Message = "Lokale WinRM-Vorbereitung fehlgeschlagen.", Error = ex.Message }; }
+            cancellation.Token.ThrowIfCancellationRequested();
+            preparationWarning = !ready.Success;
             preparationDetails = certificateDetails + $"Lokale WinRM-Vorbereitung\r\n{ready.Message}\r\n{ready.Error}";
-            localStatus.Text = ready.Success ? ready.Message : "Lokale WinRM-Vorbereitung fehlgeschlagen – siehe Details.";
+            localStatus.Text = ready.Success ? ready.Message : "Hinweis: Lokale Vorbereitung fehlgeschlagen; Remote-Hosts werden trotzdem geprüft.";
             localStatus.ForeColor = ready.Success ? UiTheme.Success : UiTheme.Danger;
             ShowDetails();
-            if (!ready.Success) { preparationFailed = true; return; }
             await Parallel.ForEachAsync(Enumerable.Range(0, diagnostics.Length),
                 new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = cancellation.Token },
                 async (index, token) =>
@@ -229,9 +234,10 @@ internal sealed class WinRmTestForm : Form
                 }
             summary.Text = (diagnostics.Length == 0 ? "Lokale WinRM-Vorbereitung beendet" : $"{completed} von {diagnostics.Length} Hosttests abgeschlossen") +
                 (cancellation.IsCancellationRequested ? " – abgebrochen." : ".") +
-                (preparationFailed ? "\nWinRM-Vorbereitung fehlgeschlagen – siehe Details."
+                (preparationFailed ? "\nWinRM-Prüfung fehlgeschlagen – siehe Details."
                     : diagnostics.Length == 0 ? "\nKeine Remote-Hosts zum Testen ausgewählt."
-                    : $"\nRemote-Protokoll: {protocol}. Zeile auswählen für vollständige Details.");
+                    : $"\nRemote-Protokoll: {protocol}. Zeile auswählen für vollständige Details.") +
+                (preparationWarning ? "\nHinweis zur lokalen Vorbereitung – siehe Details." : "");
             cancel.Enabled = true;
             cancel.Text = "Schließen";
             retry.Enabled = true;

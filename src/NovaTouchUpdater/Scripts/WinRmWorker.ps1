@@ -1,5 +1,6 @@
 ﻿# WinRM preparation and diagnostics; executed locally by WorkerRunner.
-# Preparation starts local WinRM when needed and updates local TrustedHosts.
+# HTTP preparation starts local WinRM when needed for TrustedHosts configuration.
+# Outgoing HTTPS needs neither a local listener nor TrustedHosts changes.
 # Remote diagnostics remain read-only.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -36,7 +37,7 @@ function Error-Details($record) {
     return $text
 }
 
-function Initialize-LocalWinRm([string[]]$remoteHosts) {
+function Initialize-LocalWinRm([string[]]$remoteHosts, [bool]$useSsl = $false) {
     $requested = [Collections.Generic.List[string]]::new()
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($computer in $remoteHosts) {
@@ -46,6 +47,12 @@ function Initialize-LocalWinRm([string[]]$remoteHosts) {
             throw "Ungültiger Remote-Hostname für TrustedHosts: $computer"
         }
         if ($seen.Add($computer)) { $requested.Add($computer) }
+    }
+    foreach ($command in @('New-PSSession', 'New-PSSessionOption', 'Invoke-Command')) {
+        $null = Get-Command -Name $command -ErrorAction Stop
+    }
+    if ($useSsl) {
+        return 'WinRM-Client für HTTPS bereit. Kein lokaler Listener und keine TrustedHosts-Änderung erforderlich.'
     }
     try { $service = Get-Service -Name WinRM -ErrorAction Stop }
     catch { throw "Der lokale WinRM-Dienst ist nicht installiert oder kann nicht abgefragt werden: $($_.Exception.Message)" }
@@ -59,12 +66,6 @@ function Initialize-LocalWinRm([string[]]$remoteHosts) {
         }
         catch { throw "Der lokale WinRM-Dienst konnte nicht gestartet werden. Den Updater als Administrator ausführen und gegebenenfalls die Gruppenrichtlinie prüfen. $($_.Exception.Message)" }
     }
-    try {
-        $null = Get-Command -Name Test-WSMan -ErrorAction Stop
-        $null = Test-WSMan -ComputerName localhost -ErrorAction Stop
-    }
-    catch { throw "Der lokale WinRM-Dienst läuft, aber der lokale WSMan-Endpunkt ist nicht funktionsfähig: $($_.Exception.Message)" }
-
     $path = 'WSMan:\localhost\Client\TrustedHosts'
     try {
         $existing = @(([string](Get-Item -LiteralPath $path -ErrorAction Stop).Value) -split ',' |
@@ -86,7 +87,7 @@ function Initialize-LocalWinRm([string[]]$remoteHosts) {
         }
     }
     catch { throw "TrustedHosts konnten nicht vorbereitet werden. Den Updater als Administrator ausführen und gegebenenfalls die Gruppenrichtlinie prüfen. $($_.Exception.Message)" }
-    return "WinRM lokal installiert und funktionsfähig. TrustedHosts: $($requested.Count) Remote-Hosts eingetragen, davon $added neu ergänzt."
+    return "WinRM-Client für HTTP bereit. TrustedHosts: $($requested.Count) Remote-Hosts eingetragen, davon $added neu ergänzt."
 }
 
 $result = @{ Event='result'; Success=$false; Tcp='Nicht getestet'; Session='Nicht getestet'; Command='Nicht getestet'; Error=''; Message=''; Services=@() }
@@ -98,11 +99,12 @@ try {
     $req = [Console]::In.ReadLine() | ConvertFrom-Json
     if ($null -ne $req.PSObject.Properties['Action'] -and $req.Action -eq 'winrm-prepare') {
         try {
-            $result.Message = Initialize-LocalWinRm ([string[]]$req.Hosts)
+            $useSsl = $null -ne $req.PSObject.Properties['UseSsl'] -and [bool]$req.UseSsl
+            $result.Message = Initialize-LocalWinRm ([string[]]$req.Hosts) $useSsl
             $result.Success = $true
         }
         catch {
-            $result.Message = 'Lokale WinRM-Vorbereitung fehlgeschlagen. Remote-Tests wurden nicht gestartet.'
+            $result.Message = 'Lokale WinRM-Client-Vorbereitung fehlgeschlagen; siehe Details.'
             $result.Error = Error-Details $_
         }
         [Console]::Out.WriteLine(($result | ConvertTo-Json -Compress -Depth 6))

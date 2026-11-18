@@ -7,6 +7,12 @@ $null = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$token
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 $source = $source.Replace('$req = [Console]::In.ReadLine() | ConvertFrom-Json', '$req = $script:request')
 function Assert($condition, [string]$message) { if (-not $condition) { throw $message } }
+function Get-Command {
+    param($Name, $ErrorAction)
+    Assert ($Name -in @('New-PSSession', 'New-PSSessionOption', 'Invoke-Command')) 'Only the outgoing remoting cmdlets must be checked'
+    if ($script:scenario -eq 'missing-client') { throw 'WinRM client command unavailable' }
+    [pscustomobject]@{ Name = $Name }
+}
 function Get-Service {
     param($Name, $ErrorAction)
     $script:order.Add('service')
@@ -18,8 +24,7 @@ function Test-WSMan {
     param($ComputerName, $ErrorAction)
     $script:order.Add('wsman')
     Assert ($ComputerName -eq 'localhost') 'Preparation must only probe the local WSMan endpoint'
-    if ($script:scenario -eq 'broken-wsman') { throw 'No local listener' }
-    [pscustomobject]@{ ProductVersion = 'Test-only WSMan' }
+    throw 'Outgoing remoting must not require a local listener'
 }
 function Get-Item {
     param($LiteralPath, $ErrorAction)
@@ -60,7 +65,7 @@ function Set-Service {
 }
 foreach ($scenario in @('success', 'already-trusted', 'empty-list', 'existing-wildcard', 'missing-service', 'stopped-service',
     'disabled-service', 'starting-service', 'stopping-service', 'paused-service', 'start-denied', 'start-timeout', 'activation-denied',
-    'local-only', 'broken-wsman', 'read-denied', 'write-denied', 'policy-override', 'invalid-host')) {
+    'local-only', 'broken-wsman', 'read-denied', 'write-denied', 'policy-override', 'invalid-host', 'missing-client')) {
     $script:scenario = $scenario
     $script:order = [Collections.Generic.List[string]]::new()
     $script:writes = 0
@@ -95,7 +100,7 @@ foreach ($scenario in @('success', 'already-trusted', 'empty-list', 'existing-wi
     finally { [Console]::SetOut($original) }
     $result = $writer.ToString() | ConvertFrom-Json
     $succeeds = $scenario -in @('success', 'already-trusted', 'empty-list', 'existing-wildcard', 'stopped-service',
-        'disabled-service', 'starting-service', 'stopping-service', 'paused-service', 'local-only')
+        'disabled-service', 'starting-service', 'stopping-service', 'paused-service', 'local-only', 'broken-wsman')
     Assert ($result.Success -eq $succeeds) "Unexpected preparation result ($scenario): $($result.Error)"
     Assert ($result.Tcp -eq 'Nicht getestet' -and $result.Session -eq 'Nicht getestet') 'Preparation must not run remote diagnostics'
     if ($succeeds) {
@@ -104,12 +109,12 @@ foreach ($scenario in @('success', 'already-trusted', 'empty-list', 'existing-wi
             Assert ($script:stored -split ',' -icontains 'POS02') 'Second requested host missing'
             Assert (@($script:stored -split ',' | Where-Object { $_ -ieq 'pos02' }).Count -eq 1) 'Hosts must not be duplicated'
         }
-        Assert ($result.Message -match 'installiert und funktionsfähig') 'Missing local health result'
+        Assert ($result.Message -match 'WinRM-Client für HTTP bereit') 'Missing client preparation result'
         Assert ($script:service.Status -eq 'Running' -and $script:order[0] -eq 'service' -and
-            $script:order.IndexOf('wsman') -lt $script:order.IndexOf('read')) 'Running service and local health must precede TrustedHosts changes'
+            'wsman' -notin $script:order) 'Client configuration never requires a listening WSMan endpoint on the updater'
     }
     if ($scenario -in @('stopped-service','disabled-service','stopping-service')) {
-        Assert ('start' -in $script:order -and $script:order.IndexOf('wait:Running') -lt $script:order.IndexOf('wsman')) 'WinRM must be started and confirmed before WSMan is tested'
+        Assert ('start' -in $script:order -and $script:order.IndexOf('wait:Running') -lt $script:order.IndexOf('read')) 'WinRM must be started and confirmed before client settings are changed'
     }
     if ($scenario -eq 'disabled-service') { Assert ($script:order.IndexOf('enable') -lt $script:order.IndexOf('start')) 'Disabled WinRM must be enabled before starting' }
     if ($scenario -eq 'starting-service') { Assert ('start' -notin $script:order -and 'wait:Running' -in $script:order) 'Already starting WinRM must be awaited without another start' }
@@ -122,7 +127,7 @@ foreach ($scenario in @('success', 'already-trusted', 'empty-list', 'existing-wi
     }
     if ($scenario -eq 'already-trusted') { Assert ($script:writes -eq 0) 'Already trusted hosts must not require another write' }
     if ($scenario -eq 'existing-wildcard') { Assert ($script:stored.StartsWith('*.existing.invalid,')) 'Existing wildcard entries must be preserved' }
-    if ($scenario -in @('missing-service', 'start-denied', 'start-timeout', 'activation-denied', 'broken-wsman', 'read-denied', 'invalid-host')) {
+    if ($scenario -in @('missing-service', 'start-denied', 'start-timeout', 'activation-denied', 'read-denied', 'invalid-host', 'missing-client')) {
         Assert ($script:writes -eq 0) 'Failed prerequisites must not change TrustedHosts'
     }
     if ($scenario -in @('start-denied', 'start-timeout', 'activation-denied')) {
@@ -133,4 +138,16 @@ foreach ($scenario in @('success', 'already-trusted', 'empty-list', 'existing-wi
     }
     if (-not $succeeds) { Assert ($result.Error.Length -gt 0) 'Failed preparation must explain its cause' }
     Write-Output "PASS local WinRM preparation: $scenario"
+}
+foreach ($scenario in @('success', 'broken-wsman', 'missing-service', 'activation-denied', 'read-denied', 'write-denied', 'missing-client')) {
+    $script:scenario = $scenario
+    $script:order = [Collections.Generic.List[string]]::new(); $script:writes = 0; $script:stored = 'keep.invalid'
+    $script:request = [pscustomobject]@{ Action='winrm-prepare'; Hosts=@('POS01', '10.1.80.11'); UseSsl=$true; HttpsPort=443 }
+    $writer = [IO.StringWriter]::new(); $original = [Console]::Out
+    try { [Console]::SetOut($writer); & ([scriptblock]::Create($source)) } finally { [Console]::SetOut($original) }
+    $result = $writer.ToString() | ConvertFrom-Json
+    Assert ($result.Success -eq ($scenario -ne 'missing-client')) "Unexpected HTTPS client result: $scenario"
+    Assert ($script:order.Count -eq 0 -and $script:writes -eq 0 -and $script:stored -eq 'keep.invalid') 'HTTPS must neither depend on local server configuration nor change services or TrustedHosts'
+    if ($result.Success) { Assert ($result.Message -match 'HTTPS bereit' -and $result.Message -match 'Kein lokaler Listener') 'HTTPS client status must describe outgoing readiness' }
+    Write-Output "PASS outgoing HTTPS without local listener/TrustedHosts: $scenario"
 }
