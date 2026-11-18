@@ -9,7 +9,11 @@ internal static class LogCollectionFolder
     {
         string root = Path.Combine(executableDirectory, "logs");
         Directory.CreateDirectory(root);
-        string timestamp = "NovaTouch LOG " + collectedAt.ToString("yyyy-MM-dd HH-mm", CultureInfo.InvariantCulture);
+        char[] invalid = Path.GetInvalidFileNameChars();
+        string hostName = new(host.Trim().Select(character => character == ':' ? '-' : invalid.Contains(character) ? '_' : character).Take(200).ToArray());
+        hostName = hostName.TrimEnd(' ', '.');
+        if (hostName.Length == 0) throw new ArgumentException("Ein Hostname für die Logsammlung ist erforderlich.", nameof(host));
+        string timestamp = "NovaTouch LOG " + hostName + " " + collectedAt.ToString("yyyy-MM-dd HH-mm", CultureInfo.InvariantCulture);
         for (int attempt = 0; ; attempt++)
         {
             string directory = Path.Combine(root, timestamp + (attempt == 0 ? "" : " (" + (attempt + 1) + ")"));

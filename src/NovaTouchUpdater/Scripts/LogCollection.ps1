@@ -31,9 +31,9 @@ function GetLogCollectionPlan([string]$servicesJson, [string]$systemProfile = ''
                     if ($excludedDirectory -and ($entry.FullName.Equals($excludedDirectory, [StringComparison]::OrdinalIgnoreCase) -or
                         $entry.FullName.StartsWith($excludedDirectory.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase))) { continue }
                     if ($excludedDirectory -and [IO.Path]::GetDirectoryName($entry.FullName).Equals([IO.Path]::GetDirectoryName($excludedDirectory), [StringComparison]::OrdinalIgnoreCase)) {
-                        if ($entry.PSIsContainer -and $entry.Name -match '^(?:NovaTouch LOG )?\d{4}-\d{2}-\d{2} \d{2}-\d{2}(?: \(\d+\))?$' -and
+                        if ($entry.PSIsContainer -and $entry.Name -match '^(?:NovaTouch LOG (?:.+ )?)?\d{4}-\d{2}-\d{2} \d{2}-\d{2}(?: \(\d+\))?$' -and
                             (Test-Path -LiteralPath (Join-Path $entry.FullName 'Sammlung.txt') -PathType Leaf)) { continue }
-                        if (-not $entry.PSIsContainer -and $entry.Name -match '^NovaTouch LOG \d{4}-\d{2}-\d{2} \d{2}-\d{2}(?: \(\d+\))?\.zip(?:\.partial)?$') { continue }
+                        if (-not $entry.PSIsContainer -and $entry.Name -match '^NovaTouch LOG (?:.+ )?\d{4}-\d{2}-\d{2} \d{2}-\d{2}(?: \(\d+\))?\.zip(?:\.partial)?$') { continue }
                     }
                     if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
                         $warnings.Add("Verknüpfung übersprungen: $($entry.FullName)"); continue

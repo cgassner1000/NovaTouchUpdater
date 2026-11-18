@@ -107,15 +107,29 @@ internal static partial class Program
                     updates.Requests.Count == 0 && commands.Requests.Count == 0 && consoles.Count == 0,
                     "an unreachable remote disables update and command without starting workers or preventing removal");
                 rowMenu.Items["hostExplorer"]!.PerformClick(); WaitIdle();
-                Assert(rowMenu.Items["hostExplorer"]!.Enabled && explorers.Single().ArgumentList.Single() == @"\\PC-A.invalid\C$",
-                    "SMB Explorer access remains available independently of a failed WinRM connection");
-                explorers.Clear();
+                Assert(!rowMenu.Items["hostExplorer"]!.Enabled && explorers.Count == 0 && rowMenu.Items["hostConnect"]!.Available,
+                    "an unreachable remote disables Explorer and offers Connect without launching a window");
+                foreach (string connection in new[] { "Nicht geprüft", "Unbekannt", "Prüfung läuft", "Neustart angefordert" })
+                {
+                    remote[0].Connection = connection;
+                    Call(form, "PrepareHostActionsMenu", remote[0]);
+                    Call(form, "OpenHostExplorer", remote[0]);
+                    Assert(!rowMenu.Items["hostExplorer"]!.Enabled && rowMenu.Items["hostConnect"]!.Available && explorers.Count == 0,
+                        "Explorer requires a confirmed connection, including when invoked directly: " + connection);
+                }
                 remote[0].Connection = "Verbunden";
                 Call(form, "PrepareHostActionsMenu", remote[0]);
                 Assert(rowMenu.Items["hostUpdate"]!.Enabled && rowMenu.Items["hostCommand"]!.Enabled, "a reachable remote regains update and command actions");
+                Assert(rowMenu.Items["hostExplorer"]!.Enabled && !rowMenu.Items["hostConnect"]!.Available, "connected hosts enable Explorer and hide Connect");
+                rowMenu.Show(table, new Point(80, 60)); Application.DoEvents();
+                remote[0].Connection = "Nicht erreichbar"; Call(form, "PaintRow", remote[0]);
+                Assert(!rowMenu.Items["hostExplorer"]!.Enabled && rowMenu.Items["hostConnect"]!.Available, "an open host menu follows a lost connection immediately");
+                remote[0].Connection = "Verbunden"; Call(form, "PaintRow", remote[0]);
+                Assert(rowMenu.Items["hostExplorer"]!.Enabled && !rowMenu.Items["hostConnect"]!.Available, "an open host menu hides Connect immediately after reconnection");
+                rowMenu.Close();
                 local.Connection = "Nicht erreichbar";
                 Call(form, "PrepareHostActionsMenu", local);
-                Assert(rowMenu.Items["hostUpdate"]!.Enabled && rowMenu.Items["hostCommand"]!.Enabled, "local actions do not depend on a WinRM connection");
+                Assert(rowMenu.Items["hostUpdate"]!.Enabled && rowMenu.Items["hostCommand"]!.Enabled && rowMenu.Items["hostExplorer"]!.Enabled && !rowMenu.Items["hostConnect"]!.Available, "local actions do not depend on a WinRM connection");
                 local.Connection = "Lokal";
 
                 foreach (HostState host in new[] { remote[0], local })

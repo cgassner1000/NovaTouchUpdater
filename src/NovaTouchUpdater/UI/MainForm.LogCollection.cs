@@ -18,7 +18,7 @@ public sealed partial class MainForm
         try
         {
             string executableDirectory = logCollectionBaseDirectory();
-            directory = LogCollectionFolder.Create(executableDirectory, host.IsLocal ? Environment.MachineName + " (LOKAL)" : host.Host, DateTimeOffset.Now);
+            directory = LogCollectionFolder.Create(executableDirectory, host.IsLocal ? Environment.MachineName : host.Host, DateTimeOffset.Now);
             Mark(host, h => { h.Phase = "Logs werden gesammelt"; h.SetProgress(0); });
             Log(host.Host, "COLLECT LOGS gestartet: " + directory);
             using var worker = createLogCollectionRunner();

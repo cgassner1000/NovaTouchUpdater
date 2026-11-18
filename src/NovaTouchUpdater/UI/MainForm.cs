@@ -2060,6 +2060,7 @@ public sealed partial class MainForm : Form
         cells["result"].Value = h.Result == "Bereits aktuell / übersprungen" ? "Aktuell" : h.Result;
         cells["result"].ToolTipText = h.Result;
         PaintProgramUpdates(h);
+        if (hostActionsMenu.Visible && ReferenceEquals(contextHost, h)) PrepareHostActionsMenu(h);
     }
 
     private void UpdateSummary()

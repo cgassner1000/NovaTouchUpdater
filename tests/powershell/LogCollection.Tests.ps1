@@ -172,6 +172,8 @@ try {
         @(Get-ChildItem -LiteralPath $overlap -Filter Sammlung.txt -Recurse).Count -eq 1) 'a collector beside the suite does not collect its own output recursively'
     $null = FixtureFile 'suite-C4U1\logs\NovaTouch LOG 2026-11-18 14-59.zip' 'owned archive, must not collect itself'
     $null = FixtureFile 'suite-C4U1\logs\NovaTouch LOG 2026-11-18 14-58.zip.partial' 'owned partial archive'
+    $null = FixtureFile 'suite-C4U1\logs\NovaTouch LOG fixture.invalid 2026-11-18 14-57.zip' 'owned archive with hostname'
+    $null = FixtureFile 'suite-C4U1\logs\NovaTouch LOG 10.20.30.40 2026-11-18 14-56.zip.partial' 'owned partial archive with IP'
     $overlapAgain = Join-Path $suiteRoot 'logs\NovaTouch LOG 2026-11-18 15-00 (2)'
     [void][IO.Directory]::CreateDirectory($overlapAgain)
     [IO.File]::WriteAllText((Join-Path $overlapAgain 'Sammlung.txt'), 'reserved fixture')

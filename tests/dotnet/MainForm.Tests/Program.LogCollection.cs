@@ -16,8 +16,14 @@ internal static partial class Program
             string first = LogCollectionFolder.Create(root, "host-one.invalid", when);
             File.WriteAllText(Path.Combine(first, "existing.log"), "preserve");
             string second = LogCollectionFolder.Create(root, "host-two.invalid", when);
-            Assert(Path.GetFileName(first) == "NovaTouch LOG 2026-11-18 14-32" && Path.GetFileName(second) == "NovaTouch LOG 2026-11-18 14-32 (2)" &&
+            Assert(Path.GetFileName(first) == "NovaTouch LOG host-one.invalid 2026-11-18 14-32" && Path.GetFileName(second) == "NovaTouch LOG host-two.invalid 2026-11-18 14-32" &&
                 File.ReadAllText(Path.Combine(first, "existing.log")) == "preserve", "same-minute collections never overwrite earlier logs");
+            string repeated = LogCollectionFolder.Create(root, "host-one.invalid", when);
+            Assert(Path.GetFileName(repeated) == "NovaTouch LOG host-one.invalid 2026-11-18 14-32 (2)", "same-host collections within one minute receive a unique suffix");
+            string ipv4 = LogCollectionFolder.Create(root, "10.20.30.40", when);
+            Assert(Path.GetFileName(ipv4) == "NovaTouch LOG 10.20.30.40 2026-11-18 14-32", "IP-based hosts retain their IP in the ZIP name");
+            string ipv6 = LogCollectionFolder.Create(root, "fe80::1%12", when);
+            Assert(Path.GetDirectoryName(ipv6) == Path.Combine(root, "logs") && Path.GetFileName(ipv6).Contains("fe80--1%12"), "IPv6 hosts are encoded safely for Windows filenames");
             Assert(File.ReadAllText(Path.Combine(second, "Sammlung.txt")).Contains("host-two.invalid") &&
                 File.ReadAllText(Path.Combine(second, "Sammlung.txt")).Contains("14:32:45 +01:00"), "collection metadata identifies the host and actual collection time");
             LogCollectionArchiveTests(root, when.AddHours(1));
@@ -56,6 +62,8 @@ internal static partial class Program
                     "successful collection produces only a ZIP beside the EXE, preserves update results and shows no success popup; local=" + host.IsLocal);
                 Assert(explorers.Last().UseShellExecute && explorers.Last().ArgumentList.Single() == Path.Combine(root, "logs"),
                     "successful collection opens the logs directory in Explorer; local=" + host.IsLocal);
+                Assert(Path.GetFileName(request.LogCollectionDirectory).StartsWith("NovaTouch LOG " + (host.IsLocal ? Environment.MachineName : host.Host) + " ", StringComparison.Ordinal),
+                    "ZIP names use the actual local machine name or the remote host identifier; local=" + host.IsLocal);
             }
             Assert(selected.SequenceEqual(Field<List<HostState>>(form, "hosts").Select(host => host.IsSelected)), "collecting logs preserves checkbox selection");
             Assert(runner.Requests.Select(request => request.LogCollectionDirectory).Distinct().Count() == 2, "each host gets its own collection directory");
@@ -141,7 +149,7 @@ internal static partial class Program
                 zip.Entries.All(item => !item.FullName.StartsWith("NovaTouch LOG ", StringComparison.Ordinal) && !item.FullName.Contains("NovaTouch POS.")),
                 "ZIP contains the collected files and folders directly, retaining binary content without a timestamp wrapper");
         }
-        string next = LogCollectionFolder.Create(root, "next.invalid", when);
+        string next = LogCollectionFolder.Create(root, "archive.invalid", when);
         Assert(Path.GetFileName(next).EndsWith(" (2)"), "existing ZIP files also reserve their timestamp name");
 
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();

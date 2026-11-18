@@ -39,6 +39,8 @@ public sealed partial class MainForm
                 HostState? host = contextHost;
                 if (host is null || !hosts.Contains(host) || !CanStartHostScan || !hostActionTask.IsCompleted) return;
                 if (name is "hostUpdate" or "hostCommand" or "hostCollectLogs" && IsUnreachableRemoteHost(host)) return;
+                if (name == "hostExplorer" && !HasHostConnection(host)) return;
+                if (name == "hostConnect" && HasHostConnection(host)) return;
                 hostActionTask = action(host);
                 await hostActionTask;
             };
@@ -51,13 +53,16 @@ public sealed partial class MainForm
         contextHost = host;
         bool idle = CanStartHostScan && hostActionTask.IsCompleted && hosts.Contains(host);
         foreach (ToolStripItem item in hostActionsMenu.Items) item.Enabled = idle;
-        bool connectionActions = !host.IsLocal && host.Connection != "Verbunden";
+        bool connectionActions = !HasHostConnection(host);
         hostActionsMenu.Items["hostConnect"]!.Visible = hostActionsMenu.Items["hostWinRm"]!.Visible = connectionActions;
         hostActionsMenu.Items["hostConnect"]!.ToolTipText = "Nur die WinRM-Verbindung dieses Clients erneut prüfen.";
         hostActionsMenu.Items["hostUpdate"]!.Enabled = hostActionsMenu.Items["hostCommand"]!.Enabled = idle && !IsUnreachableRemoteHost(host);
         hostActionsMenu.Items["hostCollectLogs"]!.Enabled = idle && !IsUnreachableRemoteHost(host);
         hostActionsMenu.Items["hostCollectLogs"]!.ToolTipText = "Payment-, Fiskal-, Server.suite- und POS-Logs dieses Hosts neben der Updater-EXE sammeln.";
-        hostActionsMenu.Items["hostExplorer"]!.ToolTipText = host.IsLocal ? "Windows-Explorer auf dem lokalen Systemlaufwerk öffnen." : "Explorer über die administrative Freigabe C$ öffnen. Anmeldung über Windows, unabhängig von WinRM.";
+        hostActionsMenu.Items["hostExplorer"]!.Enabled = idle && HasHostConnection(host);
+        hostActionsMenu.Items["hostExplorer"]!.ToolTipText = host.IsLocal ? "Windows-Explorer auf dem lokalen Systemlaufwerk öffnen."
+            : HasHostConnection(host) ? "Explorer über die administrative Freigabe C$ öffnen. Anmeldung über Windows."
+            : "Erst nach erfolgreicher Verbindungsprüfung verfügbar.";
         hostActionsMenu.Items["hostCommand"]!.ToolTipText = host.IsLocal ? "Eingabeaufforderung als Administrator öffnen." : "Interaktive PowerShell mit Administratorrechten über die eingestellte WinRM-Verbindung öffnen.";
         hostActionsMenu.Items["hostRestartPos"]!.Enabled = idle && (host.InstalledPrograms.Any(program => program.Kind == "pos") || HasInstalledVersion(host.PosVersion));
         hostActionsMenu.Items["hostRestartPayment"]!.Enabled = idle && HasService(host, "payment");
@@ -71,6 +76,7 @@ public sealed partial class MainForm
 
     private static bool HasService(HostState host, string kind) => host.Services.Any(service => service.Kind == kind && service.ServiceExists);
     private static bool IsUnreachableRemoteHost(HostState host) => !host.IsLocal && host.Connection == "Nicht erreichbar";
+    private static bool HasHostConnection(HostState host) => host.IsLocal || host.Connection == "Verbunden";
     private static bool HasInstalledVersion(string version) => Version.TryParse(version, out _);
 
     private async Task UpdateSingleHostAsync(HostState host)
@@ -103,7 +109,7 @@ public sealed partial class MainForm
 
     private void OpenHostExplorer(HostState host)
     {
-        if (IsDisposed || !CanStartHostScan || !hosts.Contains(host)) return;
+        if (IsDisposed || !CanStartHostScan || !hosts.Contains(host) || !HasHostConnection(host)) return;
         try
         {
             ProcessStartInfo start = HostExplorer.CreateStartInfo(host);

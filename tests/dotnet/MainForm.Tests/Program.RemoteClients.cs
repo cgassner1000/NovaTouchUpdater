@@ -35,7 +35,7 @@ internal static partial class Program
                 added.Connection == "Nicht erreichbar" && !added.Scanned && first.Error == "Keep previous update failure",
                 "adding performs exactly one connection-only check and leaves existing host results and installations alone");
             var menu = (ContextMenuStrip)Call(form, "PrepareHostActionsMenu", added)!;
-            Assert(menu.Items["hostConnect"]!.Available && menu.Items["hostWinRm"]!.Available && !menu.Items["hostUpdate"]!.Enabled && !menu.Items["hostCommand"]!.Enabled,
+            Assert(menu.Items["hostConnect"]!.Available && menu.Items["hostWinRm"]!.Available && !menu.Items["hostUpdate"]!.Enabled && !menu.Items["hostCommand"]!.Enabled && !menu.Items["hostExplorer"]!.Enabled,
                 "an unreachable remote exposes Connect and WinRM configuration while update and console remain disabled");
 
             Field<TextBox>(form, "txtUser").Text = "SYNTHETIC\\admin";
@@ -49,7 +49,7 @@ internal static partial class Program
                 monitor.Requests[0].Hosts.SequenceEqual([added.Host]) && added.Connection == "Verbunden" && added.ConnectionState.UsesHttps == true && !added.Scanned,
                 "Connect retries only its own host with the configured transport and credentials, without reading versions");
             Call(form, "PrepareHostActionsMenu", added);
-            Assert(!menu.Items["hostConnect"]!.Available && !menu.Items["hostWinRm"]!.Available && menu.Items["hostUpdate"]!.Enabled,
+            Assert(!menu.Items["hostConnect"]!.Available && !menu.Items["hostWinRm"]!.Available && menu.Items["hostUpdate"]!.Enabled && menu.Items["hostExplorer"]!.Enabled,
                 "a successful connection restores host actions and removes the failure repair section");
 
             monitor.Requests.Clear();
