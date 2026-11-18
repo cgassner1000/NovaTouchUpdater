@@ -161,6 +161,31 @@ function InstallMsiUpdatePackage {
             }
             $stopped++
         }
+        if ([string]$package.Kind -ieq 'ntc') {
+            $controlNames = @('Nov.WaWi', 'Nov.WaWi.ReportingService', 'Nov.WaWi.UpdateService')
+            [pscustomobject]@{ Event='progress'; Phase='NTC-Prozesse beenden'; Message='Laufende NovaTouch-Control-Prozesse beenden'; ProgressPercent=0 }
+            $controlProcesses = @(Get-Process -Name $controlNames -ErrorAction SilentlyContinue)
+            try {
+                $closed = 0
+                foreach ($controlProcess in $controlProcesses) {
+                    try {
+                        if (-not $controlProcess.HasExited) {
+                            try { Stop-Process -InputObject $controlProcess -Force -ErrorAction Stop }
+                            catch { if (-not $controlProcess.HasExited) { throw } } # Another actor may have stopped it already.
+                        }
+                        if (-not $controlProcess.WaitForExit(10000)) { throw 'Prozess nach 10 Sekunden noch nicht beendet.' }
+                    } catch { throw "NovaTouch-Control-Prozess $($controlProcess.ProcessName).exe konnte nicht beendet werden: $($_.Exception.Message)" }
+                    $closed++
+                    [pscustomobject]@{ Event='progress'; Phase='NTC-Prozesse beenden'; Message=($controlProcess.ProcessName + '.exe beendet'); ProgressPercent=[int][Math]::Floor(100.0 * $closed / [Math]::Max(1, $controlProcesses.Count)) }
+                }
+            } finally { foreach ($controlProcess in $controlProcesses) { $controlProcess.Dispose() } }
+            $remainingControl = @(Get-Process -Name $controlNames -ErrorAction SilentlyContinue)
+            try {
+                $runningControl = @($remainingControl | Where-Object { -not $_.HasExited })
+                if ($runningControl.Count -gt 0) { throw ('NovaTouch-Control-Prozesse weiterhin oder erneut aktiv: ' + (($runningControl | ForEach-Object { $_.ProcessName + '.exe' }) -join ', ')) }
+            } finally { foreach ($controlProcess in $remainingControl) { $controlProcess.Dispose() } }
+            [pscustomobject]@{ Event='progress'; Phase='NTC-Prozesse beenden'; Message='NovaTouch-Control-Prozesse sind beendet'; ProgressPercent=100 }
+        }
         [pscustomobject]@{ Event='progress'; Phase='MSI installieren'; Message=($package.ProductName + ' ' + $package.ProductVersion + ' wird installiert'); ProgressPercent=0 }
         $arguments = '/i "' + $MsiPath + '" /qn /norestart REBOOT=ReallySuppress /L*v "' + $LogPath + '"'
         if (@($decision.Programs | Where-Object { $_.ProductCode -ieq $package.ProductCode }).Count -gt 0) { $arguments += ' REINSTALL=ALL REINSTALLMODE=vomus' }

@@ -20,6 +20,7 @@ internal static class InstallationProgress
             "archive entpacken" or "msi entpacken" => (25, 40, 0, 100),
             "update vorbereiten" or "msi prüfen" => (40, 40, 0, 100),
             "dienste stoppen" or "dienst stoppen" => (40, 50, 0, 50),
+            "ntc-prozesse beenden" => (45, 50, 0, 100),
             "server-suite-prozesse beenden" or "windows eventlog stoppen" or "python bereinigen" => (50, 50, 0, 100),
             "update installieren" or "dateien kopieren" or "installieren" or "msi installieren" or "setup installieren" or "warte auf dateifreigabe" => (50, 85, 0, 100),
             "windows eventlog starten" => (85, 85, 0, 100),

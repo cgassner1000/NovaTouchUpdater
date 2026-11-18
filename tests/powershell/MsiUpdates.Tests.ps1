@@ -80,6 +80,32 @@ $worker = [scriptblock]::Create($source)
 $global:fixtureProductCode = $code
 $global:fixtureServices = @{}
 $global:serviceEvents = [Collections.Generic.List[string]]::new()
+$global:operationEvents = [Collections.Generic.List[string]]::new()
+$global:fixtureProcesses = @{}
+$global:processReads = 0
+$global:stopFailure = ''; $global:stopRace = ''; $global:stopTimeout = ''; $global:respawnProcess = ''
+function FixtureProcess([string]$name) {
+    $item = [pscustomobject]@{ ProcessName=$name; Exited=$false; Disposed=$false }
+    $item | Add-Member ScriptProperty HasExited { $this.Exited }
+    $item | Add-Member ScriptMethod WaitForExit { param($milliseconds) Assert ($milliseconds -eq 10000) 'process exit wait is bounded'; $this.Exited }
+    $item | Add-Member ScriptMethod Dispose { $this.Disposed=$true }
+    $global:fixtureProcesses[$name]=$item
+}
+function Get-Process {
+    [CmdletBinding()]param([string[]]$Name)
+    Assert ($Name.Count -eq 3 -and @($Name | Where-Object { $_ -notin @('Nov.WaWi','Nov.WaWi.ReportingService','Nov.WaWi.UpdateService') }).Count -eq 0) 'only the three exact Control image names are queried'
+    $global:processReads++
+    if ($global:respawnProcess -and $global:processReads -eq 2) { FixtureProcess $global:respawnProcess }
+    @($global:fixtureProcesses.Values | Where-Object { $_.ProcessName -in $Name -and -not $_.Exited })
+}
+function Stop-Process {
+    [CmdletBinding()]param($InputObject,[switch]$Force)
+    Assert ($Force -and $InputObject.ProcessName -in @('Nov.WaWi','Nov.WaWi.ReportingService','Nov.WaWi.UpdateService')) 'only an explicitly selected Control process is force-stopped'
+    $global:operationEvents.Add('kill:' + $InputObject.ProcessName)
+    if ($InputObject.ProcessName -eq $global:stopFailure) { throw 'Synthetic access denied' }
+    if ($InputObject.ProcessName -ne $global:stopTimeout) { $InputObject.Exited=$true }
+    if ($InputObject.ProcessName -eq $global:stopRace) { throw 'Synthetic process exited concurrently' }
+}
 function Get-Service {
     [CmdletBinding()] param([string]$Name)
     if (-not $global:fixtureServices.ContainsKey($Name)) { throw "Unexpected service access: $Name" }
@@ -88,10 +114,12 @@ function Get-Service {
 function Stop-Service {
     [CmdletBinding()] param([string]$Name, [switch]$Force)
     (Get-Service $Name).Status='Stopped'; $global:serviceEvents.Add('stop:' + $Name)
+    $global:operationEvents.Add('stop:' + $Name)
 }
 function Start-Service {
     [CmdletBinding()] param([string]$Name)
     (Get-Service $Name).Status='Running'; $global:serviceEvents.Add('start:' + $Name)
+    $global:operationEvents.Add('start:' + $Name)
 }
 function Set-Service {
     [CmdletBinding()] param([string]$Name, [string]$StartupType)
@@ -106,6 +134,10 @@ function Start-Process {
     Assert ($FilePath.EndsWith('\msiexec.exe') -and $ArgumentList.Contains('/qn /norestart REBOOT=ReallySuppress') -and $WindowStyle -eq 'Hidden' -and $Wait -and $PassThru) 'MSI execution waits for installer exit, remains silent and suppresses automatic Windows restarts'
     Assert ($ArgumentList.Contains('REINSTALL=ALL REINSTALLMODE=vomus')) 'same-product-code minor upgrades use MSI reinstall properties'
     if ($global:fixtureServices.Count -gt 0) { Assert (@($global:fixtureServices.Values | Where-Object Status -ne 'Stopped').Count -eq 0) 'all MSI-associated services stop before installation' }
+    if ($global:fixtureKind -eq 'ntc') {
+        Assert ($global:processReads -eq 2 -and @($global:fixtureProcesses.Values | Where-Object { $_.ProcessName -in @('Nov.WaWi','Nov.WaWi.ReportingService','Nov.WaWi.UpdateService') -and -not $_.Exited }).Count -eq 0) 'NTC msiexec starts only after all targeted processes have exited and a fresh check confirms their absence'
+    } else { Assert ($global:processReads -eq 0) 'other MSI products do not query or stop Control processes' }
+    $global:operationEvents.Add('msi')
     if ($global:expectCab) {
         $msiArgument = [regex]::Match($ArgumentList, '^/i "([^"]+)"').Groups[1].Value
         $cabArgument = Join-Path ([IO.Path]::GetDirectoryName($msiArgument)) 'data.cab'
@@ -127,6 +159,7 @@ function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, 
     $global:installedVersion=$version; $global:installerExit=$exitCode
     $global:installedAfter=$installedAfter
     $global:installerCalls=0; $global:copies=0; $global:sessions=0; $global:closed=0; $global:adminChecks=0
+    $global:processReads=0; $global:operationEvents.Clear()
     $global:directSource=$local -and ($direct -or $emptyPath)
     $base = Join-Path $fixture $name
     $global:currentBase=$base
@@ -150,6 +183,7 @@ function RunCase([string]$name, [string]$version, [bool]$local, [int]$exitCode, 
     Assert ($result.Success -eq $expectedSuccess) ("$name reports expected outcome: " + ($result | ConvertTo-Json -Depth 4 -Compress))
     if ($expectedError) { Assert ($result.Error -like ('*' + $expectedError + '*')) "$name reports the source validation error" }
     Assert ($global:installerCalls -eq [int]$expectedInstall) "$name starts an installer only for an older installed product"
+    if ($package.Kind -ne 'ntc') { Assert ($global:processReads -eq 0) "$name leaves Control processes alone" }
     if (-not $expectedInstall -and -not $preparedFailure) { Assert ($global:copies -eq 0 -and ($reuse -or -not (Test-Path -LiteralPath $base))) "$name performs no transfer or extraction" }
     if ($preparedFailure) { Assert ($result.Error -like '*MSI-ProductName*' -and $global:copies -gt 0) "$name rejects inconsistent client MSI metadata before installation" }
     if ($action -eq 'check-upload-directory') { Assert (-not $result.UploadRequired -and @($messages | Where-Object { $_.Event -eq 'progress' -and $_.Phase -eq 'MSI-Vorprüfung' }).Count -eq 1) "$name defers an unreadable MSI version to its component without blocking unrelated updates" }
@@ -241,6 +275,35 @@ try {
     RunCase 'local-msi-services' '1.0.0' $true 0 $true $true
     Assert ($global:serviceEvents.Contains('stop:NTUFixtureRunning') -and $global:serviceEvents.Contains('start:NTUFixtureRunning') -and
         $global:fixtureServices.NTUFixtureDisabled.StartType -eq 'Disabled' -and $global:fixtureServices.NTUFixtureDisabled.Status -eq 'Stopped') 'MSI service restarts preserve disabled services'
+    foreach ($local in @($true,$false)) {
+        $suffix = if ($local) { 'local' } else { 'remote' }
+        $global:fixtureProcesses.Clear()
+        foreach ($name in @('Nov.WaWi','nOv.WaWi.rEpOrTiNgSeRvIcE','Nov.WaWi.UpdateService','Nov.WaWi.Other','KassaPreh','nt.payment')) { FixtureProcess $name }
+        RunCase -name ("ntc-processes-skipped-$suffix") -version '2.0.0' -local $local -exitCode 0 -expectedSuccess $true -expectedInstall $false
+        Assert ($global:processReads -eq 0 -and @($global:fixtureProcesses.Values | Where-Object Exited).Count -eq 0) 'an already-current Control installation never touches running processes'
+        RunCase -name ("ntc-processes-absent-$suffix") -version '' -local $local -exitCode 0 -expectedSuccess $true -expectedInstall $false
+        Assert ($global:processReads -eq 0) 'an absent Control installation never touches running processes'
+        RunCase -name ("ntc-processes-stop-$suffix") -version '1.0.0' -local $local -exitCode 0 -expectedSuccess $true -expectedInstall $true
+        Assert (@($global:operationEvents | Where-Object { $_ -like 'kill:*' }).Count -eq 3 -and
+            $global:operationEvents.IndexOf('stop:NTUFixtureRunning') -lt $global:operationEvents.IndexOf('kill:Nov.WaWi') -and
+            $global:operationEvents.IndexOf('kill:Nov.WaWi.UpdateService') -lt $global:operationEvents.IndexOf('msi') -and
+            $global:operationEvents.IndexOf('msi') -lt $global:operationEvents.IndexOf('start:NTUFixtureRunning') -and
+            -not $global:fixtureProcesses['Nov.WaWi.Other'].Exited -and -not $global:fixtureProcesses.KassaPreh.Exited -and -not $global:fixtureProcesses['nt.payment'].Exited) 'only Control images stop between service shutdown and MSI launch; unrelated products remain running'
+        foreach ($failure in @('denied','timeout','respawn','race')) {
+            $global:fixtureProcesses.Clear(); FixtureProcess 'Nov.WaWi'
+            switch ($failure) {
+                'denied' { $global:stopFailure='Nov.WaWi' }
+                'timeout' { $global:stopTimeout='Nov.WaWi' }
+                'respawn' { $global:respawnProcess='Nov.WaWi' }
+                'race' { $global:stopRace='Nov.WaWi' }
+            }
+            try {
+                RunCase -name ("ntc-processes-$failure-$suffix") -version '1.0.0' -local $local -exitCode 0 -expectedSuccess ($failure -eq 'race') -expectedInstall ($failure -eq 'race') -reuse $true -expectedError $(if($failure -eq 'race'){''}elseif($failure -eq 'respawn'){'erneut aktiv'}else{'konnte nicht beendet'})
+                Assert ($global:fixtureServices.NTUFixtureRunning.Status -eq 'Running' -and $global:fixtureServices.NTUFixtureDisabled.Status -eq 'Stopped') 'a failed process stop restores associated service states without starting msiexec'
+            } finally { $global:stopFailure='';$global:stopTimeout='';$global:respawnProcess='';$global:stopRace='' }
+        }
+        $global:fixtureProcesses.Clear()
+    }
     $global:fixtureServices.Clear()
     $package = [pscustomobject]@{ Kind='ntc'; ProductName='NovaTouch Control'; ProductVersion='2026.4.9800.12345'; ProductCode=(FixtureProductCode ([string]$msis.ntcFourPart)); UpgradeCode='';
         PayloadPath=[string]$msis.ntcFourPart; RelativeMsiPath='control-four-part.msi'; Sha256=(Get-FileHash -LiteralPath $msis.ntcFourPart -Algorithm SHA256).Hash; CompanionFiles=@() }
