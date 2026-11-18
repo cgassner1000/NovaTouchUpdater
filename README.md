@@ -475,7 +475,7 @@ Die **höchste veröffentlichte stabile Versionsreihe** behält ihre **letzten d
 Release-Läufe werden über eine gemeinsame [GitHub-Concurrency-Gruppe mit Warteschlange](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) nacheinander ausgeführt, damit parallele Pushes keine identischen Buildnummern erhalten. Schlägt die GitHub-Abfrage fehl, wird keine Nummer vergeben und keine Bereinigung durchgeführt. Erst nach erfolgreicher Veröffentlichung und erneuter Prüfung der Release-Liste werden veraltete Releases und ihre Tags entfernt. Die Logik liegt in `build/ReleasePolicy.ps1` und `build/Release.ps1`.
 
 `Build-win64.cmd` im Projektordner ausführen (Visual Studio / .NET-8-SDK notwendig).
-Damit wird eine eigenständige `win-x64`-EXE veröffentlicht.
+Die eigenständige `win-x64`-EXE bündelt die .NET-8-Desktop-Runtime und die nativen Bibliotheken komprimiert. Sie enthält die deutschen Framework-Sprachressourcen. Die englischen Texte sind bereits in den Framework-Assemblies enthalten.
 
 Lokaler Test der Versionsübernahme und Release-Benennung (isolierte Testdateien unter `artifacts/test-results`, keine Veröffentlichung):
 
@@ -486,8 +486,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests\powershell\Release
 
 ### Single EXE Build
 
-Im Projektordner 
-dotnet publish .\src\NovaTouchUpdater\NovaTouchUpdater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -o ".\artifacts\publish\win-x64"
+```powershell
+dotnet publish .\src\NovaTouchUpdater\NovaTouchUpdater.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ".\artifacts\publish\win-x64"
+```
+
 ### WinRM separat testen
 
 In der Haupttabelle zeigt **Verbindung** nach einer erfolgreichen Prüfung **WinRM - OK**. Ein Schlosssymbol daneben kennzeichnet die zuletzt bestätigte HTTPS-/TLS-Verbindung. Der Tooltip nennt den Prüfzeitpunkt und den bestätigten Transport. Das Symbol folgt dem tatsächlichen Prüfergebnis; die HTTPS-Einstellung allein setzt es nicht. Die dynamische Spaltenbreite berücksichtigt auch das Schloss.

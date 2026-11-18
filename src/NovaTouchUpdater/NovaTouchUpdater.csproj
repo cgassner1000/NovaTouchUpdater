@@ -17,6 +17,12 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <FeedbackTokenFile>$(NOVATOUCHUPDATER_FEEDBACK_TOKEN_FILE)</FeedbackTokenFile>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true' and '$(SelfContained)' == 'true'">
+    <SatelliteResourceLanguages>de;en</SatelliteResourceLanguages>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+  </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(RepositoryRoot)src\Shared\FeedbackContracts.cs" Link="Feedback\FeedbackContracts.cs" />
     <EmbeddedResource Include="$(FeedbackTokenFile)" LogicalName="NovaTouchUpdater.Feedback.Token" Condition="'$(FeedbackTokenFile)' != '' and Exists('$(FeedbackTokenFile)')" />
