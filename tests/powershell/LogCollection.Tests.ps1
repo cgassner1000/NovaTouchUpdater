@@ -55,6 +55,8 @@ try {
         $null = FixtureFile ('Users\' + $user + '\AppData\Local\VirtualStore\Program Files (x86)\novatouch\bin\KassaPreh.ept') $user
         $null = FixtureFile ('Users\' + $user + '\AppData\Local\VirtualStore\Program Files (x86)\novatouch\bin\private.ini') 'must not be collected'
     }
+    [IO.File]::SetLastWriteTimeUtc((Join-Path $root 'Users\operator-one\AppData\Local\VirtualStore\Program Files (x86)\novatouch\bin\KassaPreh.ept'), [datetime]'2026-11-18T10:00:00Z')
+    [IO.File]::SetLastWriteTimeUtc((Join-Path $root 'Users\operator-two\AppData\Local\VirtualStore\Program Files (x86)\novatouch\bin\KassaPreh.ept'), [datetime]'2026-11-18T11:00:00Z')
     $script:services = @(
         [pscustomobject]@{ Name='nt.payment.A'; Kind='payment'; RegistryInstallDir=''; InstallDir='' }
         [pscustomobject]@{ Name='nt.payment.B'; Kind='payment'; RegistryInstallDir=''; InstallDir='' }
@@ -71,16 +73,16 @@ try {
         $session = [pscustomobject]@{ Local=$local }
         $request = [pscustomobject]@{ Host='fixture.invalid'; LogCollectionDirectory=$destination }
         $result = CollectHostLogs $request $session
-        Assert ($result.Success -and $result.LogFileCount -eq 7 -and $result.LogCollectionWarnings.Count -eq 0) "all service and POS logs collected; local=$local"
-        Assert ($script:invocations -eq $(if ($local) { 2 } else { 9 }) -and $script:remoteCopies -eq $(if ($local) { 0 } else { 7 })) 'discovery and transfer use only the selected execution mode'
+        Assert ($result.Success -and $result.LogFileCount -eq 6 -and $result.LogCollectionWarnings.Count -eq 0) "all service and POS logs collected; local=$local"
+        Assert ($script:invocations -eq $(if ($local) { 2 } else { 8 }) -and $script:remoteCopies -eq $(if ($local) { 0 } else { 6 })) 'discovery and transfer use only the selected execution mode'
         Assert ([IO.File]::ReadAllText((Join-Path $destination 'Nt.Payment.nt.payment.A\same.log')) -eq 'payment A' -and
             [IO.File]::ReadAllText((Join-Path $destination 'Nt.Payment.nt.payment.B\same.log')) -eq 'payment B' -and
             [IO.File]::ReadAllText((Join-Path $destination 'Nt.Payment.nt.payment.A\archive\same.log')) -eq 'archived payment A') 'identical names remain unchanged and isolated by service and subdirectory'
         Assert ([IO.File]::ReadAllText((Join-Path $destination 'Server.suite.nt3_server_suite_C4U1\suite.log')) -eq 'suite root log' -and
             @(Get-ChildItem -LiteralPath $destination -Filter wrong.log -Recurse).Count -eq 0) 'suite logs come from the instance root and service names exclude unrelated logs'
-        foreach ($user in @('operator-one', 'operator-two')) {
-            Assert ([IO.File]::ReadAllText((Join-Path $destination ('NovaTouch POS.' + $user + '\KassaPreh.ept'))) -eq $user) 'POS logs belong to their actual user profile, not the remoting account'
-        }
+        Assert ([IO.File]::ReadAllText((Join-Path $destination 'NovaTouch POS\KassaPreh.ept')) -eq 'operator-two' -and
+            @(Get-ChildItem -LiteralPath $destination -Directory | Where-Object Name -like 'NovaTouch POS.*').Count -eq 0 -and
+            -not (Test-Path -LiteralPath (Join-Path $destination 'NovaTouch POS\logs'))) 'POS has a single shared folder and keeps the newest original filename when profiles overlap'
         Assert (@(Get-ChildItem -LiteralPath $destination -Filter private.ini -Recurse).Count -eq 0 -and ($script:progress | Measure-Object -Maximum).Maximum -lt 100) 'only EPT files are copied from POS and progress stays below completion until the result'
     }
     foreach ($sourcePath in $sourceHashes.Keys) { Assert ((Get-FileHash -LiteralPath $sourcePath).Hash -eq $sourceHashes[$sourcePath]) 'source logs remain unchanged' }
@@ -118,7 +120,7 @@ try {
     $locked = [IO.FileStream]::new($script:firstSource, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     try { $lockedResult = CollectHostLogs ([pscustomobject]@{ Host='fixture.invalid'; LogCollectionDirectory=$lockedDestination }) ([pscustomobject]@{ Local=$true }) }
     finally { $locked.Dispose() }
-    Assert (-not $lockedResult.Success -and $lockedResult.LogFileCount -eq 6 -and $lockedResult.LogCollectionWarnings.Count -gt 0) 'a genuinely locked local file is reported while other files are collected'
+    Assert (-not $lockedResult.Success -and $lockedResult.LogFileCount -eq 5 -and $lockedResult.LogCollectionWarnings.Count -gt 0) 'a genuinely locked local file is reported while other files are collected'
 
     $null = FixtureFile 'unrelated\secret.txt' 'must not follow a junction'
     $junction = Join-Path (Split-Path -Parent $script:firstSource) 'linked'
@@ -148,7 +150,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $request.LogCollectionDirectory 'Sammlung.txt'), 'reserved fixture')
     $script:failRemoteCopy = $true
     $result = CollectHostLogs $request ([pscustomobject]@{ Local=$false })
-    Assert (-not $result.Success -and $result.LogFileCount -eq 6 -and $result.LogCollectionWarnings.Count -ge 2 -and
+    Assert (-not $result.Success -and $result.LogFileCount -eq 5 -and $result.LogCollectionWarnings.Count -ge 2 -and
         -not (Test-Path -LiteralPath (Join-Path $request.LogCollectionDirectory 'Nt.Payment.nt.payment.A\same.log'))) 'missing sources and locked remote files are reported; partial files are removed and other logs survive'
 
     foreach ($bad in @('..\escape.log', 'safe\..\escape.log', 'C:\escape.log', '\\server\share', 'safe\file:stream', '', 'safe\\file')) {
@@ -162,17 +164,76 @@ try {
     try { $null = GetLogCollectionDestination $request.LogCollectionDirectory 'existing.log' } catch { $rejected = $true }
     Assert ($rejected -and [IO.File]::ReadAllText($existing) -eq 'preserve') 'existing collected files are never overwritten'
 
-    $overlap = Join-Path $suiteRoot 'logs\2026-11-18 15-00'
+    $overlap = Join-Path $suiteRoot 'logs\NovaTouch LOG 2026-11-18 15-00'
     [void][IO.Directory]::CreateDirectory($overlap)
     [IO.File]::WriteAllText((Join-Path $overlap 'Sammlung.txt'), 'reserved fixture')
     $overlapResult = CollectHostLogs ([pscustomobject]@{ Host='fixture.invalid'; LogCollectionDirectory=$overlap }) ([pscustomobject]@{ Local=$true })
-    Assert ($overlapResult.Success -and $overlapResult.LogFileCount -eq 7 -and
+    Assert ($overlapResult.Success -and $overlapResult.LogFileCount -eq 6 -and
         @(Get-ChildItem -LiteralPath $overlap -Filter Sammlung.txt -Recurse).Count -eq 1) 'a collector beside the suite does not collect its own output recursively'
-    $overlapAgain = Join-Path $suiteRoot 'logs\2026-11-18 15-00 (2)'
+    $null = FixtureFile 'suite-C4U1\logs\NovaTouch LOG 2026-11-18 14-59.zip' 'owned archive, must not collect itself'
+    $null = FixtureFile 'suite-C4U1\logs\NovaTouch LOG 2026-11-18 14-58.zip.partial' 'owned partial archive'
+    $overlapAgain = Join-Path $suiteRoot 'logs\NovaTouch LOG 2026-11-18 15-00 (2)'
     [void][IO.Directory]::CreateDirectory($overlapAgain)
     [IO.File]::WriteAllText((Join-Path $overlapAgain 'Sammlung.txt'), 'reserved fixture')
     $again = CollectHostLogs ([pscustomobject]@{ Host='fixture.invalid'; LogCollectionDirectory=$overlapAgain }) ([pscustomobject]@{ Local=$true })
-    Assert ($again.Success -and $again.LogFileCount -eq 7) 'previous updater collections are excluded when the source and output logs folders coincide'
+    Assert ($again.Success -and $again.LogFileCount -eq 6) 'previous updater folders and ZIP archives are excluded when source and output logs folders coincide'
+
+    # Regression: the actual service path is AppData\Roaming\Novacom, including its archives.
+    $roamingBase = 'Windows\System32\config\systemprofile\AppData\Roaming\Novacom\'
+    $null = FixtureFile ($roamingBase + 'Nt.Payment.108\logs\Communication.log') 'current payment 108'
+    $null = FixtureFile ($roamingBase + 'Nt.Payment.108\logs\archive\Server.log') 'archived payment 108'
+    $null = FixtureFile ($roamingBase + 'Nt.Fiscal.108\logs\Server.log') 'current fiscal 108'
+    $null = FixtureFile ($roamingBase + 'Nt.Payment.109\logs\wrong.log') 'unrelated service'
+    $null = FixtureFile ($base + 'Nt.Payment.108\logs\Communication.log') 'obsolete local copy'
+    $script:services = @(
+        [pscustomobject]@{ Name='Nt.Payment.108'; Kind='payment' }
+        [pscustomobject]@{ Name='Nt.Fiscal.108'; Kind='fiscal' }
+    )
+    $script:failRemoteCopy = $false
+    foreach ($local in @($true, $false)) {
+        $output = Join-Path $root ('output-roaming-' + $local)
+        [void][IO.Directory]::CreateDirectory($output)
+        [IO.File]::WriteAllText((Join-Path $output 'Sammlung.txt'), 'reserved fixture')
+        $roamingResult = CollectHostLogs ([pscustomobject]@{ Host='fixture.invalid'; LogCollectionDirectory=$output }) ([pscustomobject]@{ Local=$local })
+        Assert ($roamingResult.Success -and $roamingResult.LogFileCount -eq 4 -and $roamingResult.LogCollectionWarnings.Count -eq 0 -and
+            [IO.File]::ReadAllText((Join-Path $output 'Nt.Payment.Nt.Payment.108\Communication.log')) -eq 'current payment 108' -and
+            [IO.File]::ReadAllText((Join-Path $output 'Nt.Payment.Nt.Payment.108\archive\Server.log')) -eq 'archived payment 108' -and
+            [IO.File]::ReadAllText((Join-Path $output 'Nt.Fiskal.Nt.Fiscal.108\Server.log')) -eq 'current fiscal 108' -and
+            @(Get-ChildItem -LiteralPath $output -Filter wrong.log -Recurse).Count -eq 0) "Roaming Novacom logs take precedence, retain service/archive folders and exclude other services; local=$local"
+    }
+
+    $posRoaming = 'AppData\Roaming\novacom software gmbh\novatouch\logs\'
+    $null = FixtureFile ('Users\operator-one\' + $posRoaming + 'Communication.log') 'operator-one roaming'
+    $null = FixtureFile ('Users\operator-one\' + $posRoaming + 'archive\Server.log') 'operator-one archive'
+    $null = FixtureFile ('Users\operator-one\' + $posRoaming + 'KassaPreh.ept') 'roaming EPT with the same name'
+    $null = FixtureFile ('Users\operator-two\' + $posRoaming + 'Communication.log') 'operator-two roaming'
+    $null = FixtureFile ('Users\roaming-only\' + $posRoaming + 'only.log') 'profile without VirtualStore'
+    [IO.File]::SetLastWriteTimeUtc((Join-Path $root ('Users\operator-one\' + $posRoaming + 'KassaPreh.ept')), [datetime]'2026-11-18T12:00:00Z')
+    [IO.File]::SetLastWriteTimeUtc((Join-Path $root ('Users\operator-one\' + $posRoaming + 'Communication.log')), [datetime]'2026-11-18T12:00:00Z')
+    [IO.File]::SetLastWriteTimeUtc((Join-Path $root ('Users\operator-two\' + $posRoaming + 'Communication.log')), [datetime]'2026-11-18T13:00:00Z')
+    $null = FixtureFile 'Users\operator-one\AppData\Roaming\novacom software gmbh\novatouch\settings.json' 'outside the requested logs directory'
+    $null = FixtureFile 'Users\operator-one\AppData\Roaming\novacom software gmbh\other-app\logs\wrong.log' 'unrelated application'
+    $script:profiles += [pscustomobject]@{ LocalPath=(Join-Path $root 'Users\roaming-only'); Special=$false }
+    foreach ($local in @($true, $false)) {
+        $output = Join-Path $root ('output-pos-roaming-' + $local)
+        [void][IO.Directory]::CreateDirectory($output)
+        [IO.File]::WriteAllText((Join-Path $output 'Sammlung.txt'), 'reserved fixture')
+        $posResult = CollectHostLogs ([pscustomobject]@{ Host='fixture.invalid'; LogCollectionDirectory=$output }) ([pscustomobject]@{ Local=$local })
+        Assert ($posResult.Success -and $posResult.LogFileCount -eq 7 -and $posResult.LogCollectionWarnings.Count -eq 0 -and
+            [IO.File]::ReadAllText((Join-Path $output 'NovaTouch POS\KassaPreh.ept')) -eq 'roaming EPT with the same name' -and
+            [IO.File]::ReadAllText((Join-Path $output 'NovaTouch POS\Communication.log')) -eq 'operator-two roaming' -and
+            [IO.File]::ReadAllText((Join-Path $output 'NovaTouch POS\archive\Server.log')) -eq 'operator-one archive' -and
+            [IO.File]::ReadAllText((Join-Path $output 'NovaTouch POS\only.log')) -eq 'profile without VirtualStore' -and
+            -not (Test-Path -LiteralPath (Join-Path $output 'NovaTouch POS\logs'))) "POS combines EPT and Roaming logs directly, preserving archives and choosing the newest duplicate; local=$local"
+        Assert (@(Get-ChildItem -LiteralPath $output -Filter settings.json -Recurse).Count -eq 0 -and
+            @(Get-ChildItem -LiteralPath $output -Filter wrong.log -Recurse).Count -eq 0 -and
+            [IO.File]::ReadAllText((Join-Path $output 'Quellen.txt')).Contains('Mehrfach vorhandene POS-Datei')) 'the POS collection records duplicate choices and excludes settings and unrelated directories'
+    }
+    $fiscalGuid = 'Nt.Fiscal.9ac37357-31ae-435a-bba1-fef156f222de'
+    $null = FixtureFile ($roamingBase + $fiscalGuid + '\logs\Service.log') 'GUID fiscal service'
+    $script:services = @([pscustomobject]@{ Name=$fiscalGuid; Kind='fiscal' })
+    $guidPlan = GetLogCollectionPlan (ConvertTo-Json -InputObject $script:services -Depth 10) $script:testSystemProfile
+    Assert (@($guidPlan.Files | Where-Object RelativePath -eq ('Nt.Fiskal.' + $fiscalGuid + '\Service.log')).Count -eq 1) 'fiscal instances with GUID service names resolve the exact Roaming Novacom logs directory'
 }
 finally {
     $absoluteRoot = [IO.Path]::GetFullPath($root)

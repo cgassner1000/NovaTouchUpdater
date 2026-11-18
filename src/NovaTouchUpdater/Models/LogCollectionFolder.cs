@@ -9,11 +9,11 @@ internal static class LogCollectionFolder
     {
         string root = Path.Combine(executableDirectory, "logs");
         Directory.CreateDirectory(root);
-        string timestamp = collectedAt.ToString("yyyy-MM-dd HH-mm", CultureInfo.InvariantCulture);
+        string timestamp = "NovaTouch LOG " + collectedAt.ToString("yyyy-MM-dd HH-mm", CultureInfo.InvariantCulture);
         for (int attempt = 0; ; attempt++)
         {
             string directory = Path.Combine(root, timestamp + (attempt == 0 ? "" : " (" + (attempt + 1) + ")"));
-            if (Directory.Exists(directory) || File.Exists(directory)) continue;
+            if (Directory.Exists(directory) || File.Exists(directory) || File.Exists(directory + ".zip") || File.Exists(directory + ".zip.partial")) continue;
             Directory.CreateDirectory(directory);
             FileStream file;
             try { file = new FileStream(Path.Combine(directory, "Sammlung.txt"), FileMode.CreateNew, FileAccess.Write, FileShare.Read); }

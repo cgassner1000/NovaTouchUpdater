@@ -23,11 +23,16 @@ internal static class HostExplorer
             target = @"\\" + server + @"\C$";
         }
 
+        return CreateDirectoryStartInfo(target);
+    }
+
+    internal static ProcessStartInfo CreateDirectoryStartInfo(string directory)
+    {
         var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"))
         {
             UseShellExecute = true
         };
-        start.ArgumentList.Add(target);
+        start.ArgumentList.Add(directory);
         return start;
     }
 }

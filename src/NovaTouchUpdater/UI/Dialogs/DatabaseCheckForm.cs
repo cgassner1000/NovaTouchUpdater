@@ -7,6 +7,7 @@ internal sealed class DatabaseCheckForm : Form
     private readonly Label status = new() { Name = "databaseStatus", AutoSize = true, Dock = DockStyle.Fill, Text = "IRIS-Instanzen werden eingelesen …" };
     private readonly TextBox details = new() { Name = "databaseDetails", Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both, WordWrap = false, MinimumSize = new Size(0, 95) };
     private readonly Button refresh = new AppButton { Name = "refreshDatabase", Text = "Aktualisieren", AutoSize = true, Padding = new Padding(12, 7, 12, 7) };
+    private readonly LoadingSpinner loadingSpinner = new() { Name = "databaseLoadingSpinner", AccessibleName = "IRIS-Instanzen werden eingelesen" };
     private IrisInventoryResult? lastInventory;
     private CancellationTokenSource? pending;
 
@@ -38,6 +39,11 @@ internal sealed class DatabaseCheckForm : Form
         buttons.Controls.Add(refresh);
         layout.Controls.Add(buttons, 0, 4);
         Controls.Add(WindowLayout.CreateScrollArea(layout, instances, details));
+        Controls.Add(loadingSpinner);
+        loadingSpinner.SendToBack();
+        ClientSizeChanged += (_, _) => CenterLoadingSpinner();
+        loadingSpinner.SizeChanged += (_, _) => CenterLoadingSpinner();
+        CenterLoadingSpinner();
         CancelButton = close;
         instances.AfterSelect += (_, _) => ShowDetails();
         ShowDetails();
@@ -47,6 +53,9 @@ internal sealed class DatabaseCheckForm : Form
         Disposed += (_, _) => pending?.Cancel();
         WindowLayout.CompleteInitialization(this);
     }
+
+    private void CenterLoadingSpinner() => loadingSpinner.Location = new Point(
+        (ClientSize.Width - loadingSpinner.Width) / 2, (ClientSize.Height - loadingSpinner.Height) / 2);
 
     internal async Task RefreshAsync()
     {
@@ -60,6 +69,9 @@ internal sealed class DatabaseCheckForm : Form
         ShowDetails();
         status.Text = "IRIS-Instanzen werden eingelesen …";
         status.ForeColor = UiTheme.Muted;
+        CenterLoadingSpinner();
+        loadingSpinner.Active = true;
+        loadingSpinner.BringToFront();
         try
         {
             IrisInventoryResult result = await readInventory(cancellation.Token);
@@ -107,6 +119,8 @@ internal sealed class DatabaseCheckForm : Form
             pending = null;
             if (!IsDisposed)
             {
+                loadingSpinner.Active = false;
+                loadingSpinner.SendToBack();
                 refresh.Enabled = true;
                 if (lastInventory is not null) ShowDetails();
             }

@@ -52,7 +52,7 @@ function Initialize-LocalWinRm([string[]]$remoteHosts, [bool]$useSsl = $false) {
         $null = Get-Command -Name $command -ErrorAction Stop
     }
     if ($useSsl) {
-        return 'WinRM-Client für HTTPS bereit. Kein lokaler Listener und keine TrustedHosts-Änderung erforderlich.'
+        return 'WinRM-Client für HTTPS bereit.'
     }
     try { $service = Get-Service -Name WinRM -ErrorAction Stop }
     catch { throw "Der lokale WinRM-Dienst ist nicht installiert oder kann nicht abgefragt werden: $($_.Exception.Message)" }

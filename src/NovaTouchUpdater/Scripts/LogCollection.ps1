@@ -30,10 +30,11 @@ function GetLogCollectionPlan([string]$servicesJson, [string]$systemProfile = ''
                 foreach ($entry in $entries) {
                     if ($excludedDirectory -and ($entry.FullName.Equals($excludedDirectory, [StringComparison]::OrdinalIgnoreCase) -or
                         $entry.FullName.StartsWith($excludedDirectory.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase))) { continue }
-                    if ($excludedDirectory -and $entry.PSIsContainer -and
-                        $entry.Parent.FullName.Equals([IO.Path]::GetDirectoryName($excludedDirectory), [StringComparison]::OrdinalIgnoreCase) -and
-                        $entry.Name -match '^\d{4}-\d{2}-\d{2} \d{2}-\d{2}(?: \(\d+\))?$' -and
-                        (Test-Path -LiteralPath (Join-Path $entry.FullName 'Sammlung.txt') -PathType Leaf)) { continue }
+                    if ($excludedDirectory -and [IO.Path]::GetDirectoryName($entry.FullName).Equals([IO.Path]::GetDirectoryName($excludedDirectory), [StringComparison]::OrdinalIgnoreCase)) {
+                        if ($entry.PSIsContainer -and $entry.Name -match '^(?:NovaTouch LOG )?\d{4}-\d{2}-\d{2} \d{2}-\d{2}(?: \(\d+\))?$' -and
+                            (Test-Path -LiteralPath (Join-Path $entry.FullName 'Sammlung.txt') -PathType Leaf)) { continue }
+                        if (-not $entry.PSIsContainer -and $entry.Name -match '^NovaTouch LOG \d{4}-\d{2}-\d{2} \d{2}-\d{2}(?: \(\d+\))?\.zip(?:\.partial)?$') { continue }
+                    }
                     if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) {
                         $warnings.Add("Verknüpfung übersprungen: $($entry.FullName)"); continue
                     }
@@ -56,8 +57,8 @@ function GetLogCollectionPlan([string]$servicesJson, [string]$systemProfile = ''
     foreach ($service in $services) {
         $name = [string]$service.Name
         if ($service.Kind -in @('payment', 'fiscal')) {
-            # AppData\Local is the physical Windows path; support older literal Local/lokal layouts too.
-            $candidates = @('AppData\Local', 'Local', 'lokal') | ForEach-Object {
+            # Current services use Roaming\Novacom; retain older Local layouts as fallbacks.
+            $candidates = @('AppData\Roaming\Novacom', 'AppData\Local', 'Local', 'lokal') | ForEach-Object {
                 Join-Path (Join-Path (Join-Path $systemProfile $_) $name) 'logs'
             }
             $directory = @($candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Container } | Select-Object -First 1)
@@ -76,18 +77,39 @@ function GetLogCollectionPlan([string]$servicesJson, [string]$systemProfile = ''
     }
 
     try {
+        $posGroup = NewLogGroup 'NovaTouch POS'
         $seenProfiles = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($profile in @(Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop | Where-Object { -not $_.Special })) {
             $profilePath = [string]$profile.LocalPath
             if (-not $profilePath -or -not $seenProfiles.Add($profilePath)) { continue }
-            $directory = Join-Path $profilePath 'AppData\Local\VirtualStore\Program Files (x86)\novatouch\bin'
-            if (-not (Test-Path -LiteralPath $directory -PathType Container)) { continue }
-            $user = Split-Path -Leaf $profilePath
-            AddLogFolder $directory (NewLogGroup ('NovaTouch POS.' + $user)) $true
+            foreach ($source in @(
+                @{ Directory=(Join-Path $profilePath 'AppData\Local\VirtualStore\Program Files (x86)\novatouch\bin'); EptOnly=$true }
+                @{ Directory=(Join-Path $profilePath 'AppData\Roaming\novacom software gmbh\novatouch\logs'); EptOnly=$false }
+            )) {
+                try {
+                    if (-not (Test-Path -LiteralPath $source.Directory -PathType Container)) { continue }
+                    AddLogFolder $source.Directory $posGroup $source.EptOnly
+                }
+                catch { $warnings.Add("POS-Logordner nicht lesbar: $($source.Directory) - $($_.Exception.Message)") }
+            }
         }
     }
     catch { $warnings.Add("POS-Benutzerprofile konnten nicht vollständig gelesen werden: $($_.Exception.Message)") }
-    return [pscustomobject]@{ Files = @($files.ToArray()); Sources = @($sources.ToArray()); Warnings = @($warnings.ToArray()) }
+    $selected = [Collections.Generic.List[object]]::new()
+    $posFiles = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in $files) {
+        if (-not $file.RelativePath.StartsWith('NovaTouch POS\', [StringComparison]::OrdinalIgnoreCase)) { $selected.Add($file); continue }
+        $previous = $null
+        if (-not $posFiles.TryGetValue([string]$file.RelativePath, [ref]$previous)) { $posFiles.Add($file.RelativePath, $file); continue }
+        $useNew = $file.LastWriteTimeUtc -gt $previous.LastWriteTimeUtc -or
+            ($file.LastWriteTimeUtc -eq $previous.LastWriteTimeUtc -and [StringComparer]::OrdinalIgnoreCase.Compare($file.Source, $previous.Source) -lt 0)
+        $chosen = if ($useNew) { $file } else { $previous }
+        $skipped = if ($useNew) { $previous } else { $file }
+        $sources.Add("Mehrfach vorhandene POS-Datei '$($file.RelativePath)': neueste Quelle '$($chosen.Source)'; weitere Quelle '$($skipped.Source)' nicht zusätzlich kopiert.")
+        if ($useNew) { $posFiles[$file.RelativePath] = $file }
+    }
+    foreach ($file in $posFiles.Values) { $selected.Add($file) }
+    return [pscustomobject]@{ Files = @($selected.ToArray()); Sources = @($sources.ToArray()); Warnings = @($warnings.ToArray()) }
 }
 
 function GetLogCollectionDestination([string]$root, [string]$relativePath) {
