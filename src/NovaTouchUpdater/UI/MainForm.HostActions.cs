@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace NovaTouchUpdater;
 
 public sealed partial class MainForm
@@ -9,11 +11,13 @@ public sealed partial class MainForm
     private Func<string, string, bool>? confirmHostAction = null;
     private Action<string, string>? showHostCommandReport = null;
     private Func<HostConsoleOptions, CancellationToken, Task<bool>> openHostConsole = (options, ct) => HostConsole.OpenAsync(options, ct);
+    private Action<ProcessStartInfo> launchHostExplorer = start => { using var process = Process.Start(start); };
 
     private void ConfigureHostActionsMenu()
     {
         hostActionsMenu.Font = Font;
         Add("hostUpdate", "Update", async host => await UpdateSingleHostAsync(host));
+        Add("hostExplorer", "Explorer öffnen", host => { OpenHostExplorer(host); return Task.CompletedTask; });
         Add("hostCommand", "Eingabeaufforderung", ShowHostCommandAsync);
         Add("hostConnect", "Connect", CheckRemoteHostConnectionAsync);
         Add("hostWinRm", "WinRM konfigurieren", host => { ShowWinRmConfiguration([host], [host.Host], allowUnconfirmedClientSetup: true); return Task.CompletedTask; });
@@ -49,6 +53,7 @@ public sealed partial class MainForm
         hostActionsMenu.Items["hostConnect"]!.Visible = hostActionsMenu.Items["hostWinRm"]!.Visible = connectionActions;
         hostActionsMenu.Items["hostConnect"]!.ToolTipText = "Nur die WinRM-Verbindung dieses Clients erneut prüfen.";
         hostActionsMenu.Items["hostUpdate"]!.Enabled = hostActionsMenu.Items["hostCommand"]!.Enabled = idle && !IsUnreachableRemoteHost(host);
+        hostActionsMenu.Items["hostExplorer"]!.ToolTipText = host.IsLocal ? "Windows-Explorer auf dem lokalen Systemlaufwerk öffnen." : "Explorer über die administrative Freigabe C$ öffnen. Anmeldung über Windows, unabhängig von WinRM.";
         hostActionsMenu.Items["hostCommand"]!.ToolTipText = host.IsLocal ? "Eingabeaufforderung als Administrator öffnen." : "Interaktive PowerShell mit Administratorrechten über die eingestellte WinRM-Verbindung öffnen.";
         hostActionsMenu.Items["hostRestartPos"]!.Enabled = idle && (host.InstalledPrograms.Any(program => program.Kind == "pos") || HasInstalledVersion(host.PosVersion));
         hostActionsMenu.Items["hostRestartPayment"]!.Enabled = idle && HasService(host, "payment");
@@ -90,6 +95,22 @@ public sealed partial class MainForm
     {
         if (!CanStartHostScan || host.IsLocal || !hosts.Contains(host)) return;
         ApplyRemoteHosts(hosts.Where(candidate => !candidate.IsLocal && candidate != host).Select(candidate => candidate.Host).ToArray(), "Hostliste");
+    }
+
+    private void OpenHostExplorer(HostState host)
+    {
+        if (IsDisposed || !CanStartHostScan || !hosts.Contains(host)) return;
+        try
+        {
+            ProcessStartInfo start = HostExplorer.CreateStartInfo(host);
+            launchHostExplorer(start);
+            Log(host.Host, "Explorer geöffnet: " + start.ArgumentList[0]);
+        }
+        catch (Exception ex)
+        {
+            Log(host.Host, "Explorer öffnen fehlgeschlagen: " + ex.Message);
+            if (!IsDisposed) AppMessageBox.Show(this, ex.Message, "Explorer öffnen", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private async Task ShowHostCommandAsync(HostState host)

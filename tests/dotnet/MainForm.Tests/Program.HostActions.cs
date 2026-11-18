@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using NovaTouchUpdater;
 
 internal static partial class Program
@@ -9,15 +10,28 @@ internal static partial class Program
         var paths = new AppDataPaths(root);
         try
         {
+            foreach ((string host, string server) in new[] { ("10.1.80.11", "10.1.80.11"), ("PC_A.invalid", "PC_A.invalid"),
+                ("2001:db8::1", "2001-db8--1.ipv6-literal.net"), ("fe80::1%12", "fe80--1s12.ipv6-literal.net") })
+                Assert(HostExplorer.CreateStartInfo(new() { Host = host }).ArgumentList.Single() == @"\\" + server + @"\C$",
+                    "remote Explorer supports hostnames, IPv4 and UNC-encoded IPv6: " + host);
+            foreach (string host in new[] { "", @"server\share", @"\\server\C$", "server /root,C:\\", "server\" /select,C:\\" })
+            {
+                bool rejected = false;
+                try { HostExplorer.CreateStartInfo(new() { Host = host }); }
+                catch (ArgumentException) { rejected = true; }
+                Assert(rejected, "imported host values cannot inject paths or Explorer switches");
+            }
             var updates = new UpdateRunner();
             var commands = new HostActionRunner();
             var consoles = new List<HostConsoleOptions>();
+            var explorers = new List<ProcessStartInfo>();
             using var form = new MainForm(preview: true, updates, new FakeRunner(), dataPaths: paths);
             _ = form.Handle;
             HostState[] remote = Populate(form);
             Field<ComboBox>(form, "executionMode").SelectedIndex = (int)UpdateExecutionMode.LocalAndRemote;
             SetField(form, "createCommandRunner", new Func<IWorkerRunner>(() => commands));
             SetField(form, "openHostConsole", new Func<HostConsoleOptions, CancellationToken, Task<bool>>((options, ct) => { ct.ThrowIfCancellationRequested(); consoles.Add(options); return Task.FromResult(true); }));
+            SetField(form, "launchHostExplorer", new Action<ProcessStartInfo>(explorers.Add));
             SetField(form, "confirmHostAction", new Func<string, string, bool>((_, _) => true));
             SetField(form, "showHostCommandReport", new Action<string, string>((_, _) => { }));
             SetField(form, "isProcessElevated", new Func<bool>(() => true));
@@ -63,7 +77,7 @@ internal static partial class Program
                 }
                 Assert(selected.SequenceEqual(Field<List<HostState>>(form, "hosts").Select(host => host.IsSelected)), "right-clicking the selection cell does not change any checkbox");
                 Assert(rowMenu.Items.OfType<ToolStripMenuItem>().Where(item => item.Available).Select(item => item.Text).SequenceEqual(new[]
-                    { "Update", "Eingabeaufforderung", "NovaTouch POS neustarten", "Nt.Payment neustarten", "Nt.Fiskal neustarten", "NT3.Server.Suite neustarten", "Client entfernen" }) &&
+                    { "Update", "Explorer öffnen", "Eingabeaufforderung", "NovaTouch POS neustarten", "Nt.Payment neustarten", "Nt.Fiskal neustarten", "NT3.Server.Suite neustarten", "Client entfernen" }) &&
                     rowMenu.Items.OfType<ToolStripSeparator>().Count() == 2, "host actions have the requested order and separators");
                 Rectangle last = table.GetRowDisplayRectangle(table.Rows.Count - 1, false);
                 ShowContext(new Point(20, last.Bottom + 30));
@@ -89,6 +103,10 @@ internal static partial class Program
                 Assert(!rowMenu.Items["hostUpdate"]!.Enabled && !rowMenu.Items["hostCommand"]!.Enabled && rowMenu.Items["hostRemove"]!.Enabled &&
                     updates.Requests.Count == 0 && commands.Requests.Count == 0 && consoles.Count == 0,
                     "an unreachable remote disables update and command without starting workers or preventing removal");
+                rowMenu.Items["hostExplorer"]!.PerformClick(); WaitIdle();
+                Assert(rowMenu.Items["hostExplorer"]!.Enabled && explorers.Single().ArgumentList.Single() == @"\\PC-A.invalid\C$",
+                    "SMB Explorer access remains available independently of a failed WinRM connection");
+                explorers.Clear();
                 remote[0].Connection = "Verbunden";
                 Call(form, "PrepareHostActionsMenu", remote[0]);
                 Assert(rowMenu.Items["hostUpdate"]!.Enabled && rowMenu.Items["hostCommand"]!.Enabled, "a reachable remote regains update and command actions");
@@ -118,6 +136,13 @@ internal static partial class Program
                     Field<CheckBox>(form, "chkSsl").Checked = true;
                     Field<NumericUpDown>(form, "nHttpsPort").Value = 443;
                     string before = host.Result;
+                    rowMenu.Items["hostExplorer"]!.PerformClick(); WaitIdle();
+                    ProcessStartInfo explorer = explorers.Single(); explorers.Clear();
+                    Assert(explorer.FileName == Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe") &&
+                        explorer.UseShellExecute && explorer.Arguments.Length == 0 && explorer.ArgumentList.Single() ==
+                            (host.IsLocal ? Path.GetPathRoot(Environment.SystemDirectory) : @"\\" + host.Host + @"\C$") &&
+                        consoles.Count == 0 && commands.Requests.Count == 0 && host.Result == before,
+                        "Explorer opens only the clicked local drive or remote administrative share without WinRM credentials, workers or result changes; local=" + host.IsLocal);
                     rowMenu.Items["hostCommand"]!.PerformClick(); WaitIdle();
                     HostConsoleOptions console = consoles.Single();
                     Assert(console.Host == host.Host && console.LocalExecution == host.IsLocal && commands.Requests.Count == 0 && host.Result == before &&
@@ -137,7 +162,7 @@ internal static partial class Program
                     Assert(updates.Requests.Any(request => request.Action == "update") && updates.Requests.All(request => request.Host == host.Host && request.LocalExecution == host.IsLocal),
                         "single-host updates never include other checked hosts; local=" + host.IsLocal);
                 }
-                Assert(selected.SequenceEqual(Field<List<HostState>>(form, "hosts").Select(host => host.IsSelected)), "commands and updates preserve the complete checkbox selection");
+                Assert(selected.SequenceEqual(Field<List<HostState>>(form, "hosts").Select(host => host.IsSelected)), "Explorer, commands and updates preserve the complete checkbox selection");
 
                 foreach (string mode in new[] { "Light", "Dark" })
                 {
