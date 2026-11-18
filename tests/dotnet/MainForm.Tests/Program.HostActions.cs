@@ -77,8 +77,11 @@ internal static partial class Program
                 }
                 Assert(selected.SequenceEqual(Field<List<HostState>>(form, "hosts").Select(host => host.IsSelected)), "right-clicking the selection cell does not change any checkbox");
                 Assert(rowMenu.Items.OfType<ToolStripMenuItem>().Where(item => item.Available).Select(item => item.Text).SequenceEqual(new[]
-                    { "Update", "Explorer öffnen", "Eingabeaufforderung", "NovaTouch POS neustarten", "Nt.Payment neustarten", "Nt.Fiskal neustarten", "NT3.Server.Suite neustarten", "Client entfernen" }) &&
-                    rowMenu.Items.OfType<ToolStripSeparator>().Count() == 2, "host actions have the requested order and separators");
+                    { "Update", "Explorer öffnen", "Eingabeaufforderung", "Collect Logs", "NovaTouch POS neustarten", "Nt.Payment neustarten", "Nt.Fiskal neustarten", "NT3.Server.Suite neustarten", "Client entfernen" }) &&
+                    rowMenu.Items.OfType<ToolStripSeparator>().Count() == 3, "host actions have the requested order and separators");
+                int collectIndex = rowMenu.Items.IndexOfKey("hostCollectLogs");
+                Assert(rowMenu.Items[collectIndex - 1] is ToolStripSeparator && rowMenu.Items[collectIndex + 1] is ToolStripSeparator,
+                    "Collect Logs sits in its own section directly after the command prompt");
                 Rectangle last = table.GetRowDisplayRectangle(table.Rows.Count - 1, false);
                 ShowContext(new Point(20, last.Bottom + 30));
                 var backgroundMenu = Field<ContextMenuStrip>(form, "hostBackgroundMenu");

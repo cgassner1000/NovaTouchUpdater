@@ -18,6 +18,7 @@ internal static partial class Program
             if (args.Contains("--theme")) { ThemeTests(); return 0; }
             if (args.Contains("--actions")) { ActionLayoutTests(); return 0; }
             if (args.Contains("--host-actions")) { HostActionsTests(); return 0; }
+            if (args.Contains("--collect-logs")) { LogCollectionTests(); return 0; }
             if (args.Contains("--remote-clients")) { RemoteClientTests(); return 0; }
             if (args.Contains("--host-console")) { HostConsoleTests(); return 0; }
             if (args.Contains("--package-loading")) { PackageLoadingTests(); return 0; }

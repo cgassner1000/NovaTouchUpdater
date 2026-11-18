@@ -465,6 +465,7 @@ try {
     $remotePackageStage = $null
     try {
         $session = if ($localExecution) { [pscustomobject]@{ NovaTouchLocal=$true } } else { New-PSSession @sessionArgs }
+        if ($req.Action -eq 'collect-logs') { Emit (CollectHostLogs $req $session); exit 0 }
         if ($req.Action -eq 'compile-software-packages') { Emit (InvokeSoftwareCompilation $req $session $PSCommandPath); exit 0 }
         if ($req.Action -eq 'import-servicepacks') { Emit (ImportRemoteServicePacks $req $session $PSCommandPath); exit 0 }
         if ($req.Action -eq 'database-inventory') {

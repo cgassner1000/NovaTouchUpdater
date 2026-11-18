@@ -9,6 +9,7 @@ namespace NovaTouchUpdater;
 public sealed class WorkerRequest
 {
     public string Action { get; set; } = "";
+    public string LogCollectionDirectory { get; set; } = "";
     public bool LocalExecution { get; set; }
     public MsiPackageRequest? MsiPackage { get; set; }
     public MsiPackageRequest[] MsiPackages { get; set; } = [];
@@ -166,6 +167,8 @@ public sealed class WorkerEvent
 
 public sealed class WorkerResult
 {
+    public int LogFileCount { get; set; }
+    public string[] LogCollectionWarnings { get; set; } = [];
     public SoftwareCompilationNamespaceResult[] SoftwareCompilationResults { get; set; } = [];
     public ServicePackNamespaceResult[] ServicePackResults { get; set; } = [];
     public string[] DatabaseUploadedKinds { get; set; } = [];
@@ -236,7 +239,7 @@ public sealed class WorkerRunner : IWorkerRunner
         string script = reader.ReadToEnd();
         if (resourceName == "NovaTouchUpdater.RemoteWorker.ps1")
         {
-            foreach (string helper in new[] { "UpdateSteps", "ServerSuiteSetup", "UploadDirectory", "MsiUpdates", "SoftwareDatabase", "DatabaseStreaming", "RemoteSoftwareDatabase", "ServicePacks", "SoftwareCompilation" })
+            foreach (string helper in new[] { "UpdateSteps", "ServerSuiteSetup", "UploadDirectory", "MsiUpdates", "SoftwareDatabase", "DatabaseStreaming", "RemoteSoftwareDatabase", "ServicePacks", "SoftwareCompilation", "LogCollection" })
             {
                 using Stream steps = Assembly.GetExecutingAssembly().GetManifestResourceStream($"NovaTouchUpdater.{helper}.ps1")
                     ?? throw new InvalidOperationException($"Die eingebetteten Schritte {helper} fehlen.");

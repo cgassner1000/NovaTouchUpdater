@@ -19,9 +19,11 @@ public sealed partial class MainForm
         Add("hostUpdate", "Update", async host => await UpdateSingleHostAsync(host));
         Add("hostExplorer", "Explorer öffnen", host => { OpenHostExplorer(host); return Task.CompletedTask; });
         Add("hostCommand", "Eingabeaufforderung", ShowHostCommandAsync);
+        hostActionsMenu.Items.Add(new ToolStripSeparator());
+        Add("hostCollectLogs", "Collect Logs", CollectHostLogsAsync);
+        hostActionsMenu.Items.Add(new ToolStripSeparator());
         Add("hostConnect", "Connect", CheckRemoteHostConnectionAsync);
         Add("hostWinRm", "WinRM konfigurieren", host => { ShowWinRmConfiguration([host], [host.Host], allowUnconfirmedClientSetup: true); return Task.CompletedTask; });
-        hostActionsMenu.Items.Add(new ToolStripSeparator());
         Add("hostRestartPos", "NovaTouch POS neustarten", host => RunHostActionsAsync([host], false, true, false, false, false));
         Add("hostRestartPayment", "Nt.Payment neustarten", host => RestartHostServiceAsync(host, UpdateComponents.Payment));
         Add("hostRestartFiscal", "Nt.Fiskal neustarten", host => RestartHostServiceAsync(host, UpdateComponents.Fiscal));
@@ -36,7 +38,7 @@ public sealed partial class MainForm
             {
                 HostState? host = contextHost;
                 if (host is null || !hosts.Contains(host) || !CanStartHostScan || !hostActionTask.IsCompleted) return;
-                if (name is "hostUpdate" or "hostCommand" && IsUnreachableRemoteHost(host)) return;
+                if (name is "hostUpdate" or "hostCommand" or "hostCollectLogs" && IsUnreachableRemoteHost(host)) return;
                 hostActionTask = action(host);
                 await hostActionTask;
             };
@@ -53,6 +55,8 @@ public sealed partial class MainForm
         hostActionsMenu.Items["hostConnect"]!.Visible = hostActionsMenu.Items["hostWinRm"]!.Visible = connectionActions;
         hostActionsMenu.Items["hostConnect"]!.ToolTipText = "Nur die WinRM-Verbindung dieses Clients erneut prüfen.";
         hostActionsMenu.Items["hostUpdate"]!.Enabled = hostActionsMenu.Items["hostCommand"]!.Enabled = idle && !IsUnreachableRemoteHost(host);
+        hostActionsMenu.Items["hostCollectLogs"]!.Enabled = idle && !IsUnreachableRemoteHost(host);
+        hostActionsMenu.Items["hostCollectLogs"]!.ToolTipText = "Payment-, Fiskal-, Server.suite- und POS-Logs dieses Hosts neben der Updater-EXE sammeln.";
         hostActionsMenu.Items["hostExplorer"]!.ToolTipText = host.IsLocal ? "Windows-Explorer auf dem lokalen Systemlaufwerk öffnen." : "Explorer über die administrative Freigabe C$ öffnen. Anmeldung über Windows, unabhängig von WinRM.";
         hostActionsMenu.Items["hostCommand"]!.ToolTipText = host.IsLocal ? "Eingabeaufforderung als Administrator öffnen." : "Interaktive PowerShell mit Administratorrechten über die eingestellte WinRM-Verbindung öffnen.";
         hostActionsMenu.Items["hostRestartPos"]!.Enabled = idle && (host.InstalledPrograms.Any(program => program.Kind == "pos") || HasInstalledVersion(host.PosVersion));
