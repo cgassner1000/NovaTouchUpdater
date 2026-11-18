@@ -23,21 +23,20 @@ internal static class LogCollectionArchive
         {
             var entries = new List<(string Path, string Name, bool Directory)>();
             var pending = new Stack<string>(); pending.Push(root);
-            string prefix = Path.GetFileName(root) + "/";
             while (pending.Count > 0)
             {
                 ct.ThrowIfCancellationRequested();
                 string directory = pending.Pop();
                 if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) throw new IOException("Verknüpfung im Log-Sammelordner ist nicht erlaubt.");
                 string relative = Path.GetRelativePath(root, directory).Replace('\\', '/');
-                entries.Add((directory, prefix + (relative == "." ? "" : relative + "/"), true));
+                if (relative != ".") entries.Add((directory, relative + "/", true));
                 foreach (string path in Directory.EnumerateFileSystemEntries(directory))
                 {
                     ct.ThrowIfCancellationRequested();
                     FileAttributes attributes = File.GetAttributes(path);
                     if ((attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("Verknüpfung im Log-Sammelordner ist nicht erlaubt.");
                     if ((attributes & FileAttributes.Directory) != 0) pending.Push(path);
-                    else entries.Add((path, prefix + Path.GetRelativePath(root, path).Replace('\\', '/'), false));
+                    else entries.Add((path, Path.GetRelativePath(root, path).Replace('\\', '/'), false));
                 }
             }
             await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 131072, FileOptions.Asynchronous | FileOptions.SequentialScan))

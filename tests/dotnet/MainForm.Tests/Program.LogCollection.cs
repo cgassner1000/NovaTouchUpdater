@@ -119,7 +119,7 @@ internal static partial class Program
     private static string ReadLogZipText(string path, string relative)
     {
         using var zip = ZipFile.OpenRead(path);
-        using var reader = new StreamReader(zip.GetEntry(Path.GetFileNameWithoutExtension(path) + "/" + relative)!.Open());
+        using var reader = new StreamReader(zip.GetEntry(relative)!.Open());
         return reader.ReadToEnd();
     }
 
@@ -135,10 +135,11 @@ internal static partial class Program
             "a completed collection is atomically published as ZIP and removes only its own filled working directory");
         using (var zip = ZipFile.OpenRead(result!.ArchivePath))
         {
-            var entry = zip.GetEntry(Path.GetFileName(directory) + "/NovaTouch POS/KassaPreh.ept");
+            var entry = zip.GetEntry("NovaTouch POS/KassaPreh.ept");
             using var data = new MemoryStream(); using var input = entry!.Open(); input.CopyTo(data);
-            Assert(data.ToArray().SequenceEqual(binary) && zip.Entries.All(item => !item.FullName.Contains("NovaTouch POS.")),
-                "ZIP retains binary EPT content and the requested common POS folder");
+            Assert(data.ToArray().SequenceEqual(binary) && zip.GetEntry("Sammlung.txt") is not null &&
+                zip.Entries.All(item => !item.FullName.StartsWith("NovaTouch LOG ", StringComparison.Ordinal) && !item.FullName.Contains("NovaTouch POS.")),
+                "ZIP contains the collected files and folders directly, retaining binary content without a timestamp wrapper");
         }
         string next = LogCollectionFolder.Create(root, "next.invalid", when);
         Assert(Path.GetFileName(next).EndsWith(" (2)"), "existing ZIP files also reserve their timestamp name");
