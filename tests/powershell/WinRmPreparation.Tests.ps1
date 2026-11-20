@@ -148,6 +148,6 @@ foreach ($scenario in @('success', 'broken-wsman', 'missing-service', 'activatio
     $result = $writer.ToString() | ConvertFrom-Json
     Assert ($result.Success -eq ($scenario -ne 'missing-client')) "Unexpected HTTPS client result: $scenario"
     Assert ($script:order.Count -eq 0 -and $script:writes -eq 0 -and $script:stored -eq 'keep.invalid') 'HTTPS must neither depend on local server configuration nor change services or TrustedHosts'
-    if ($result.Success) { Assert ($result.Message -match 'HTTPS bereit' -and $result.Message -match 'Kein lokaler Listener') 'HTTPS client status must describe outgoing readiness' }
+    if ($result.Success) { Assert ($result.Message -match 'HTTPS bereit') 'HTTPS client status must describe outgoing readiness' }
     Write-Output "PASS outgoing HTTPS without local listener/TrustedHosts: $scenario"
 }

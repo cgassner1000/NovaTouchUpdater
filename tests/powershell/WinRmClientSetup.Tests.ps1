@@ -54,12 +54,30 @@ function Get-ChildItem {
 }
 function Enable-PSRemoting {
     param([switch]$SkipNetworkProfileCheck, [switch]$Force)
+    Assert ($script:transport -eq 'HTTP') 'HTTPS must never run HTTP quick configuration, even temporarily'
     Assert ($SkipNetworkProfileCheck -and $Force) 'Client endpoint registration must be noninteractive'
     $script:calls.Add('endpoints')
     foreach ($rule in $script:builtInRules) { $rule.Enabled = 'True' }
-    if (-not @($script:listeners | Where-Object { $_.Keys -contains 'Transport=HTTP' }).Count -and $script:scenario -ne 'no-auto-http') {
+    if (-not @($script:listeners | Where-Object { $_.Keys -contains 'Transport=HTTP' }).Count) {
         $script:listeners.Add([pscustomobject]@{ Keys = @('Address=*','Transport=HTTP') })
     }
+}
+function Set-WSManQuickConfig { throw 'Unexpected transport quick configuration' }
+function Enable-PSSessionConfiguration { throw 'This command can also enable the HTTP listener' }
+function Test-Path {
+    param($LiteralPath)
+    Assert ($LiteralPath -eq 'WSMan:\localhost\Plugin\Microsoft.PowerShell') 'Only inspect the Windows PowerShell endpoint'
+    return $script:scenario -eq 'existing-listener'
+}
+function Set-PSSessionConfiguration {
+    param($Name, $AccessMode, [switch]$Force)
+    Assert ($Name -eq 'Microsoft.PowerShell' -and $AccessMode -eq 'Remote' -and $Force -and $script:scenario -eq 'existing-listener') 'Configure the existing default session endpoint'
+    $script:calls.Add('configure-endpoint')
+}
+function Register-PSSessionConfiguration {
+    param($Name, $AccessMode, [switch]$Force)
+    Assert ($Name -eq 'Microsoft.PowerShell' -and $AccessMode -eq 'Remote' -and $Force -and $script:scenario -ne 'existing-listener') 'Register the missing default session endpoint'
+    $script:calls.Add('register-endpoint')
 }
 function Set-WSManInstance {
     param($ResourceURI, $SelectorSet, $ValueSet)
@@ -74,28 +92,14 @@ function New-WSManInstance {
     $script:listeners.Add([pscustomobject]@{ Keys = @('Address=*', ('Transport=' + $SelectorSet.Transport)) })
     $script:calls.Add('new-listener')
 }
-function Remove-WSManInstance {
-    param($ResourceURI, $SelectorSet)
-    Assert ($script:transport -eq 'HTTPS' -and -not $script:hadHttp -and $SelectorSet.Transport -eq 'HTTP' -and $SelectorSet.Address -eq '*') 'Only a newly created temporary HTTP listener may be removed'
-    $http = @($script:listeners | Where-Object { $_.Keys -contains 'Transport=HTTP' })
-    foreach ($listener in $http) { $null = $script:listeners.Remove($listener) }
-    $script:calls.Add('remove-temporary-http')
-}
+function Remove-WSManInstance { throw 'The setup must not delete existing listeners' }
 function Get-NetFirewallRule {
     param($Name, $ErrorAction)
-    if ($Name -eq 'WINRM-HTTP-In-TCP*') { return $script:builtInRules }
     $baseRuleName = 'NovaTouchUpdater-WinRM-HTTPS-' + $script:expectedPort
     Assert ($Name -eq $baseRuleName -or $Name -eq ($baseRuleName + '-Public')) 'Only dedicated application firewall rules may be inspected'
     if ($script:scenario -eq 'existing-listener') { [pscustomobject]@{ Name = $Name } }
 }
-function Disable-NetFirewallRule {
-    param([Parameter(ValueFromPipeline)]$InputObject)
-    process {
-        Assert ($InputObject.Name -eq 'WINRM-HTTP-In-TCP-PUBLIC') 'A previously enabled built-in firewall rule must remain enabled'
-        $InputObject.Enabled = 'False'
-        $script:calls.Add('restore-firewall')
-    }
-}
+function Disable-NetFirewallRule { throw 'Unexpected firewall change' }
 function Remove-NetFirewallRule {
     param($Name)
     $baseRuleName = 'NovaTouchUpdater-WinRM-HTTPS-' + $script:expectedPort
@@ -156,10 +160,10 @@ foreach ($transport in @('HTTP','HTTPS')) {
     }
     $adminCheck = 'if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {'
     Assert ($original.Contains($adminCheck) -and $original -notmatch '\[Net.Dns\]|GetAllNetworkInterfaces') 'HTTPS must require administration without blocking aliases or NAT addresses through local name lookup'
-    foreach ($scenario in @('new-listener','existing-listener','no-auto-http','not-admin','address-alias','invalid-certificate')) {
+    foreach ($scenario in @('new-listener','existing-listener','default-port','not-admin','address-alias','invalid-certificate')) {
         if ($transport -eq 'HTTP' -and $scenario -eq 'invalid-certificate') { continue }
         $script:scenario = $scenario; $script:transport = $transport
-        $script:expectedPort = $(if ($transport -eq 'HTTP') { 5985 } else { 443 })
+        $script:expectedPort = $(if ($scenario -eq 'default-port') { 5986 } else { 443 })
         $script:hadHttp = $scenario -eq 'existing-listener'
         $script:calls = [Collections.Generic.List[string]]::new()
         $script:listeners = [Collections.Generic.List[object]]::new()
@@ -191,7 +195,9 @@ foreach ($transport in @('HTTP','HTTPS')) {
                 Assert ([SetupTestStore]::Writes.Contains('Root') -and [SetupTestStore]::Writes.Contains('My')) 'HTTPS must install public CA and private client certificate in machine stores'
                 Assert ($script:calls.Contains('crl') -and -not [IO.File]::Exists($script:crlFile)) 'HTTPS must import the public signed CRL and remove its temporary file'
                 Assert ($script:calls.Contains('key-access')) 'HTTPS must grant WinRM read access to the client private key'
-                Assert (@($script:listeners | Where-Object { $_.Keys -contains 'Transport=HTTP' }).Count -eq $(if ($script:hadHttp) { 1 } else { 0 })) 'HTTPS preserves pre-existing HTTP and removes only its temporary HTTP listener'
+                $endpointCall = if ($scenario -eq 'existing-listener') { 'configure-endpoint' } else { 'register-endpoint' }
+                Assert ($script:calls.Contains($endpointCall)) 'HTTPS prepares the PowerShell endpoint independently of transport'
+                Assert (@($script:listeners | Where-Object { $_.Keys -contains 'Transport=HTTP' }).Count -eq $(if ($script:hadHttp) { 1 } else { 0 })) 'HTTPS must not create an HTTP listener'
             }
             else { Assert ([SetupTestStore]::Writes.Count -eq 0) 'HTTP must not access certificate stores' }
         }

@@ -49,19 +49,17 @@ try {
     finally { if ($rsa) { $rsa.Dispose() } }
     Set-Service -Name WinRM -StartupType Automatic
     Start-Service -Name WinRM
-    $previousHttp = @(Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -contains 'Transport=HTTP' })
-    $enabledRules = @(Get-NetFirewallRule -Name 'WINRM-HTTP-In-TCP*' -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' } | ForEach-Object { $_.Name })
-    try { Enable-PSRemoting -SkipNetworkProfileCheck -Force }
-    finally {
-        Get-NetFirewallRule -Name 'WINRM-HTTP-In-TCP*' -ErrorAction SilentlyContinue | Where-Object { $enabledRules -notcontains $_.Name } | Disable-NetFirewallRule | Out-Null
-    }
     $selector = @{ Address = '*'; Transport = 'HTTPS' }
     $values = @{ Hostname = $certificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false); CertificateThumbprint = $certificate.Thumbprint; Port = $Port; Enabled = 'true' }
     $listener = @(Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -contains 'Transport=HTTPS' -and $_.Keys -contains 'Address=*' })
     if ($listener.Count) { Set-WSManInstance -ResourceURI winrm/config/Listener -SelectorSet $selector -ValueSet $values | Out-Null }
     else { New-WSManInstance -ResourceURI winrm/config/Listener -SelectorSet $selector -ValueSet $values | Out-Null }
-    if (-not $previousHttp.Count) {
-        Remove-WSManInstance -ResourceURI winrm/config/Listener -SelectorSet @{ Address = '*'; Transport = 'HTTP' }
+    # Configure the PowerShell endpoint independently of HTTP quick configuration.
+    if (Test-Path -LiteralPath 'WSMan:\localhost\Plugin\Microsoft.PowerShell') {
+        Set-PSSessionConfiguration -Name Microsoft.PowerShell -AccessMode Remote -Force | Out-Null
+    }
+    else {
+        Register-PSSessionConfiguration -Name Microsoft.PowerShell -AccessMode Remote -Force | Out-Null
     }
     $ruleName = 'NovaTouchUpdater-WinRM-HTTPS-' + $Port
     if (Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue) { Remove-NetFirewallRule -Name $ruleName }
