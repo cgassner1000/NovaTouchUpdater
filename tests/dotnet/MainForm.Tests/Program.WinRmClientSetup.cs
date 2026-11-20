@@ -52,7 +52,7 @@ internal static partial class Program
         string https = Encoding.Unicode.GetString(Convert.FromBase64String(command.Split(' ')[^1]));
         JsonElement input = WinRmSetupInput(command);
         WinRmSetupShellTests(command);
-        Assert(input.GetProperty("Port").GetInt32() == 443 && https.Contains("Transport = 'HTTPS'") && https.Contains("-UseSSL:($Transport -eq 'HTTPS')") &&
+        Assert(input.GetProperty("Port").GetInt32() == 443 && https.Contains("$Transport = 'HTTPS'") && https.Contains("-UseSSL:($Transport -eq 'HTTPS')") &&
             https.Contains("New-NetFirewallRule") && https.Contains("LocalSubnet") &&
             !https.Contains("ManagementAddresses"), "HTTPS uses the selected port and Windows network profile boundaries without assuming the updater source IP");
         Assert(https.Contains("$env:PSModulePath = \"$PSHOME\\Modules;$env:ProgramFiles\\WindowsPowerShell\\Modules\""),

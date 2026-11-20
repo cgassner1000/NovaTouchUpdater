@@ -84,7 +84,7 @@ internal sealed class WinRmTestForm : Form
         certificateTools.Controls.AddRange([chooseCertificate, defaultCertificate, trustCertificate, certificateStatus]);
         layout.Controls.Add(certificateTools, 0, 1);
         layout.Controls.Add(new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 5, 3, 5),
-            Text = $"Einzeiler kopieren und auf dem Client als Administrator ausführen. Er richtet die Firewall für {protocol} ein und deaktiviert andere WinRM-Zugänge. Danach erneut prüfen." }, 0, 2);
+            Text = $"Einzeiler kopieren und auf dem Client als Administrator ausführen. Er schaltet andere WinRM-Zugänge zuerst ab und richtet {protocol} samt Firewallregeln ein. Danach erneut prüfen." }, 0, 2);
         localStatus.Text = "Lokales WinRM vorbereiten und bei Bedarf starten …";
         localStatus.Margin = new Padding(3, 8, 3, 10);
         layout.Controls.Add(localStatus, 0, 3);

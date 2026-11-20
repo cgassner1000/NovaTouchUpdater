@@ -20,6 +20,11 @@ $flags = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::MachineKe
 $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($CertificateData), $CertificatePassword, [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
 try {
     if (-not $certificate.HasPrivateKey -or $certificate.Thumbprint -ine $ExpectedThumbprint -or $certificate.NotAfter -le (Get-Date)) { throw 'Das Clientzertifikat ist ungültig oder abgelaufen.' }
+    $listenerValues = @{ Hostname = $certificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false); CertificateThumbprint = $certificate.Thumbprint; Port = $Port; Enabled = 'true' }
+}
+finally { $certificate.Dispose() }
+$Transport = 'HTTPS'
+$configureEndpoint = {
     $issuer = [Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($IssuerData))
     $rootStore = [Security.Cryptography.X509Certificates.X509Store]::new('Root', 'LocalMachine')
     try {
@@ -34,20 +39,21 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Die signierte CA-Sperrliste konnte nicht installiert werden.' }
     }
     finally { [IO.File]::Delete($crlFile) }
-    $store = [Security.Cryptography.X509Certificates.X509Store]::new('My', 'LocalMachine')
+    $certificate = $null
+    $rsa = $null
     try {
-        $store.Open('ReadWrite')
-        $existing = @($store.Certificates.Find('FindByThumbprint', $certificate.Thumbprint, $false) | Where-Object { $_.HasPrivateKey })
-        $certificate.Dispose()
-        if ($existing.Count) { $certificate = $existing[0] }
-        else {
-            $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($CertificateData), $CertificatePassword, $flags)
-            $store.Add($certificate)
+        $store = [Security.Cryptography.X509Certificates.X509Store]::new('My', 'LocalMachine')
+        try {
+            $store.Open('ReadWrite')
+            $existing = @($store.Certificates.Find('FindByThumbprint', $ExpectedThumbprint, $false) | Where-Object { $_.HasPrivateKey })
+            if ($existing.Count) { $certificate = $existing[0] }
+            else {
+                $certificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new([Convert]::FromBase64String($CertificateData), $CertificatePassword, $flags)
+                $store.Add($certificate)
+            }
         }
-    }
-    finally { $store.Close() }
-    $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($certificate)
-    try {
+        finally { $store.Close() }
+        $rsa = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($certificate)
         if ($rsa -is [Security.Cryptography.RSACng]) { $keyFile = Join-Path $env:ProgramData ('Microsoft\Crypto\Keys\' + $rsa.Key.UniqueName) }
         elseif ($rsa -is [Security.Cryptography.RSACryptoServiceProvider]) { $keyFile = Join-Path $env:ProgramData ('Microsoft\Crypto\RSA\MachineKeys\' + $rsa.CspKeyContainerInfo.UniqueKeyContainerName) }
         else { throw 'Der private RSA-Schlüssel wird nicht unterstützt.' }
@@ -55,21 +61,15 @@ try {
         $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-20'), 'Read', 'Allow'))
         Set-Acl -LiteralPath $keyFile -AclObject $acl
     }
-    finally { if ($rsa) { $rsa.Dispose() } }
-    Set-Service -Name WinRM -StartupType Automatic
-    Start-Service -Name WinRM
-    $selector = @{ Address = '*'; Transport = 'HTTPS' }
-    $values = @{ Hostname = $certificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false); CertificateThumbprint = $certificate.Thumbprint; Port = $Port; Enabled = 'true' }
-    $listener = @(Get-ChildItem WSMan:\localhost\Listener | Where-Object { $_.Keys -contains 'Transport=HTTPS' -and $_.Keys -contains 'Address=*' })
-    if ($listener.Count) { Set-WSManInstance -ResourceURI winrm/config/Listener -SelectorSet $selector -ValueSet $values | Out-Null }
-    else { New-WSManInstance -ResourceURI winrm/config/Listener -SelectorSet $selector -ValueSet $values | Out-Null }
-    # Configure the PowerShell endpoint independently of HTTP quick configuration.
+    finally {
+        if ($rsa) { $rsa.Dispose() }
+        if ($certificate) { $certificate.Dispose() }
+        $CertificateData = ''; $CertificatePassword = ''
+    }
     if (Test-Path -LiteralPath 'WSMan:\localhost\Plugin\Microsoft.PowerShell') {
         Set-PSSessionConfiguration -Name Microsoft.PowerShell -AccessMode Remote -Force | Out-Null
     }
     else {
         Register-PSSessionConfiguration -Name Microsoft.PowerShell -AccessMode Remote -Force | Out-Null
     }
-    $Transport = 'HTTPS'
 }
-finally { $certificate.Dispose(); $CertificateData = ''; $CertificatePassword = '' }

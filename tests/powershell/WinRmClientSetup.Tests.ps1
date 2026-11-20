@@ -47,25 +47,37 @@ function Set-Service {
     $script:calls.Add('service')
 }
 function Start-Service { param($Name); Assert ($Name -eq 'WinRM') 'Only WinRM may be started'; $script:calls.Add('start') }
-function Get-ChildItem {
-    param($Path)
-    Assert ($Path -eq 'WSMan:\localhost\Listener') 'Unexpected provider read'
-    $script:listeners.ToArray()
-}
 function New-TestListener($transport, $port, $address = '*') {
     [pscustomobject]@{ Keys = @("Address=$address","Transport=$transport"); Address=$address; Transport=$transport; Port=$port; Enabled='true' }
 }
 function Get-WSManInstance {
     param($ResourceURI,[switch]$Enumerate)
-    if ($ResourceURI -eq 'winrm/config/service') { return $script:compat }
+    if ($ResourceURI -eq 'winrm/config/service') {
+        return ([xml]"<Service><EnableCompatibilityHttpListener Source='GPO'>$($script:compat.EnableCompatibilityHttpListener)</EnableCompatibilityHttpListener><EnableCompatibilityHttpsListener>$($script:compat.EnableCompatibilityHttpsListener)</EnableCompatibilityHttpsListener></Service>").DocumentElement
+    }
     Assert ($ResourceURI -eq 'winrm/config/Listener' -and $Enumerate) 'Only enumerate the local WinRM listener configuration'
-    $script:listeners.ToArray()
+    foreach ($item in $script:listeners) {
+        ([xml]"<Listener xmlns='http://schemas.microsoft.com/wbem/wsman/1/config/listener'><Address>$($item.Address)</Address><Transport>$($item.Transport)</Transport><Port Source='GPO'>$($item.Port)</Port><Enabled Source='GPO'>$($item.Enabled)</Enabled></Listener>").DocumentElement
+    }
+}
+function Assert-SetupExclusive {
+    $others = @($script:listeners | Where-Object { $_.Enabled -eq 'true' -and ($_.Transport -ne $script:transport -or $_.Port -ne $script:expectedPort) })
+    Assert ($others.Count -eq 0 -and $script:compat.Values -notcontains 'true') 'Disable conflicting listeners and compatibility ports before configuring the endpoint, selected listener, firewall or probe'
+}
+function Invoke-TestEndpointRegistration {
+    Assert-SetupExclusive
+    if ($script:scenario -in @('endpoint-restart','endpoint-failure')) {
+        ($script:listeners | Where-Object Transport -eq $other)[0].Enabled = 'true'
+        $script:rules["WINRM-$other-In-TCP"].Enabled = 'True'
+        if ($script:scenario -eq 'endpoint-failure') { throw 'Simulated PowerShell endpoint registration failure' }
+    }
 }
 function Enable-PSRemoting {
     param([switch]$SkipNetworkProfileCheck, [switch]$Force)
     Assert ($script:transport -eq 'HTTP') 'HTTPS must never run HTTP quick configuration, even temporarily'
     Assert ($SkipNetworkProfileCheck -and $Force) 'Client endpoint registration must be noninteractive'
     $script:calls.Add('endpoints')
+    Invoke-TestEndpointRegistration
     $script:rules['WINRM-HTTP-In-TCP'].Enabled = 'True'
     if (-not @($script:listeners | Where-Object { $_.Keys -contains 'Transport=HTTP' }).Count) {
         $script:listeners.Add((New-TestListener HTTP 5985))
@@ -82,11 +94,13 @@ function Set-PSSessionConfiguration {
     param($Name, $AccessMode, [switch]$Force)
     Assert ($Name -eq 'Microsoft.PowerShell' -and $AccessMode -eq 'Remote' -and $Force -and $script:scenario -eq 'existing-listener') 'Configure the existing default session endpoint'
     $script:calls.Add('configure-endpoint')
+    Invoke-TestEndpointRegistration
 }
 function Register-PSSessionConfiguration {
     param($Name, $AccessMode, [switch]$Force)
     Assert ($Name -eq 'Microsoft.PowerShell' -and $AccessMode -eq 'Remote' -and $Force -and $script:scenario -ne 'existing-listener') 'Register the missing default session endpoint'
     $script:calls.Add('register-endpoint')
+    Invoke-TestEndpointRegistration
 }
 function Set-WSManInstance {
     param($ResourceURI, $SelectorSet, $ValueSet)
@@ -98,10 +112,11 @@ function Set-WSManInstance {
     }
     $item = $script:listeners | Where-Object { $_.Transport -eq $SelectorSet.Transport -and $_.Address -eq $SelectorSet.Address }
     if ($ValueSet.Enabled -ceq 'false') {
-        Assert ($item -and ($item.Port -ne $script:expectedPort -or $item.Transport -ne $script:transport) -and $script:calls.Contains('test')) 'Disable only other listeners after verifying the selected listener'
+        Assert ($item -and ($item.Port -ne $script:expectedPort -or $item.Transport -ne $script:transport)) 'Disable only conflicting listeners'
         if ($script:scenario -ne 'enforced-policy') { $item.Enabled = 'false' }
         return
     }
+    Assert-SetupExclusive
     Assert ($ResourceURI -eq 'winrm/config/Listener' -and $SelectorSet.Address -eq '*' -and $SelectorSet.Transport -eq $script:transport) 'Only the selected listener may be updated'
     Assert ($ValueSet.Port -eq $script:expectedPort -and $ValueSet.Enabled -is [string] -and [Xml.XmlConvert]::ToBoolean($ValueSet.Enabled)) 'Listener Enabled must be a valid lowercase XML boolean, not .NET True'
     if ($script:transport -eq 'HTTPS') { Assert ($ValueSet.CertificateThumbprint -eq 'TEST-CLIENT' -and $ValueSet.Hostname -eq 'TEST-CN') 'WinRM listener hostname must match the certificate CN; aliases remain in the certificate SAN' }
@@ -126,11 +141,12 @@ function Get-NetFirewallRule {
 function Disable-NetFirewallRule {
     param([Parameter(ValueFromPipeline)]$InputObject)
     process {
-        Assert ($InputObject.Name -ne 'AnotherService' -and $script:calls.Contains('test')) 'Unrelated rules and the working transport must be protected'
+        Assert ($InputObject.Name -ne 'AnotherService' -and $InputObject.Name -notin @($ruleBase, "$ruleBase-Public")) 'Protect unrelated rules and the selected transport'
         $InputObject.Enabled = 'False'
     }
 }
 function Write-TestRule($Name,$DisplayName,$Direction,$Action,$Protocol,$LocalPort,$Profile,$RemoteAddress,$Enabled) {
+    Assert-SetupExclusive
     Assert ($DisplayName.Contains("TCP $LocalPort") -and $DisplayName.Contains($script:transport) -and $Enabled -eq 'True') 'Selected protocol, port and enabled state must be explicit'
     Assert ($LocalPort -eq $script:expectedPort -and $Direction -eq 'Inbound' -and $Action -eq 'Allow' -and $Protocol -eq 'TCP') 'Incorrect firewall protocol or port'
     if ($Name.EndsWith('-Public')) { Assert ($Profile -eq 'Public' -and $RemoteAddress -eq 'LocalSubnet') 'Public HTTPS access must remain restricted to the local subnet' }
@@ -150,15 +166,20 @@ function Set-NetFirewallRule {
 }
 function Test-WSMan {
     param($ComputerName, [switch]$UseSSL, $Port, $ErrorAction)
+    Assert-SetupExclusive
     Assert ($ComputerName -eq 'localhost' -and $Port -eq $script:expectedPort -and $UseSSL.IsPresent -eq ($script:transport -eq 'HTTPS')) 'Final local test must use the selected protocol and port'
     $script:calls.Add('test')
     if ($script:scenario -eq 'probe-failure') { throw 'Simulated connection failure' }
+    if ($script:scenario -eq 'late-listener-change') {
+        ($script:listeners | Where-Object Transport -eq $other)[0].Enabled = 'true'
+        ($script:listeners | Where-Object { $_.Transport -eq $script:transport -and $_.Address -eq '*' }).Enabled = 'false'
+    }
 }
 function Invoke-TestCertutil {
     param($File)
     Assert ([IO.File]::ReadAllBytes($File)[0] -eq 3) 'Only the public signed CA revocation list may be imported'
     $script:crlFile = $File
-    $global:LASTEXITCODE = 0
+    $global:LASTEXITCODE = if ($script:scenario -eq 'certificate-install-failure') { 1 } else { 0 }
     $script:calls.Add('crl')
 }
 function Get-Acl {
@@ -187,19 +208,20 @@ foreach ($transport in @('HTTP','HTTPS')) {
     }
     $adminCheck = 'if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {'
     if ($transport -eq 'HTTPS') { Assert ($original.Contains($adminCheck) -and $original -notmatch '\[Net.Dns\]|GetAllNetworkInterfaces') 'HTTPS must require administration without blocking aliases or NAT addresses through local name lookup' }
-    foreach ($scenario in @('new-listener','existing-listener','default-port','not-admin','address-alias','invalid-certificate','firewall-policy','probe-failure','enforced-policy')) {
-        if ($transport -eq 'HTTP' -and $scenario -in @('not-admin','invalid-certificate','address-alias','default-port')) { continue }
+    foreach ($scenario in @('new-listener','existing-listener','default-port','not-admin','address-alias','invalid-certificate','certificate-install-failure','firewall-policy','probe-failure','endpoint-restart','endpoint-failure','late-listener-change','enforced-policy','port-collision')) {
+        if ($transport -eq 'HTTP' -and $scenario -in @('not-admin','invalid-certificate','certificate-install-failure','address-alias','default-port')) { continue }
         $script:scenario = $scenario; $script:transport = $transport
-        $script:expectedPort = $(if ($transport -eq 'HTTP') { 5985 } elseif ($scenario -eq 'default-port') { 5986 } else { 443 })
+        $script:expectedPort = $(if ($transport -eq 'HTTP') { 5985 } elseif ($scenario -in @('default-port','probe-failure','existing-listener')) { 5986 } else { 443 })
         $other = if ($transport -eq 'HTTP') { 'HTTPS' } else { 'HTTP' }
         $script:calls = [Collections.Generic.List[string]]::new()
         $script:listeners = [Collections.Generic.List[object]]::new()
         if ($scenario -ne 'new-listener') {
-            $script:listeners.Add((New-TestListener $other 8443))
+            $previousPort = if ($scenario -eq 'port-collision') { $script:expectedPort } elseif ($other -eq 'HTTP') { 5985 } else { 5986 }
+            $script:listeners.Add((New-TestListener $other $previousPort))
             $script:listeners.Add((New-TestListener $other 8444 'IP:192.0.2.3'))
             $script:listeners.Add((New-TestListener $transport 9999 'IP:192.0.2.4'))
         }
-        if ($scenario -eq 'existing-listener') { $script:listeners.Add((New-TestListener $transport 7443)) }
+        if ($scenario -in @('existing-listener','probe-failure')) { $script:listeners.Add((New-TestListener $transport $script:expectedPort)) }
         $script:compat = @{ EnableCompatibilityHttpListener='true'; EnableCompatibilityHttpsListener='true' }
         $script:rules = @{}
         $ruleBase = "NovaTouchUpdater-WinRM-$transport-$script:expectedPort"
@@ -221,13 +243,18 @@ foreach ($transport in @('HTTP','HTTPS')) {
         if ($scenario -in @('not-admin','invalid-certificate')) {
             Assert ($null -ne $failure -and $script:calls.Count -eq 0 -and [SetupTestStore]::Writes.Count -eq 0) "Guards must fail before changing the client ($transport/$scenario)"
         }
-        elseif ($scenario -eq 'probe-failure') {
-            Assert ($failure -and ($script:listeners | Where-Object Transport -eq $other)[0].Enabled -eq 'true' -and $script:rules["WINRM-$other-In-TCP"].Enabled -eq 'True') 'Failing probe must leave the previous access enabled'
+        elseif ($scenario -in @('probe-failure','endpoint-failure','late-listener-change','certificate-install-failure')) {
+            $expectedMessage = @{ 'probe-failure'='Simulated connection failure'; 'endpoint-failure'='Simulated PowerShell endpoint'; 'late-listener-change'='ist nicht aktiv'; 'certificate-install-failure'='Sperrliste' }[$scenario]
+            Assert ($failure -and $failure.ToString().Contains($expectedMessage) -and $script:rules["WINRM-$other-In-TCP"].Enabled -eq 'False') "Failure must be reported and the opposite firewall rule must remain disabled ($scenario)"
+            Assert-SetupExclusive
         }
         elseif ($scenario -eq 'firewall-policy') {
-            Assert ($failure -and $failure.ToString().Contains('Firewallregel') -and !$script:calls.Contains('test') -and ($script:listeners | Where-Object Transport -eq $other)[0].Enabled -eq 'true') 'An inactive effective firewall rule must stop setup before switching access'
+            Assert ($failure -and $failure.ToString().Contains('Firewallregel') -and !$script:calls.Contains('test') -and $script:rules["WINRM-$other-In-TCP"].Enabled -eq 'False') 'An inactive selected firewall rule must not restore the opposite protocol'
+            Assert-SetupExclusive
         }
-        elseif ($scenario -eq 'enforced-policy') { Assert ($failure -and $failure.ToString().Contains('WinRM-Listener')) 'A policy-enforced conflicting listener must prevent a success report' }
+        elseif ($scenario -eq 'enforced-policy') {
+            Assert ($failure -and $failure.ToString().Contains("WinRM-Listener $other/") -and !$script:calls.Contains('new-listener') -and !$script:calls.Contains('endpoints') -and !$script:calls.Contains('register-endpoint') -and !$script:calls.Contains('firewall')) 'A policy-enforced conflicting listener must abort before enabling the selected protocol'
+        }
         else {
             if ($failure) { throw $failure }
             Assert (@($script:calls | Where-Object { $_ -eq 'firewall' }).Count -eq 2 -and $script:calls[$script:calls.Count - 1] -eq 'test') "Both network-profile firewall rules must be configured before the final test ($transport/$scenario)"
