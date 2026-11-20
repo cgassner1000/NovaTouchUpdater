@@ -56,6 +56,7 @@
     <EmbeddedResource Include="Scripts\HostConsole.ps1" LogicalName="NovaTouchUpdater.HostConsole.ps1" />
     <EmbeddedResource Include="Scripts\WinRmWorker.ps1" LogicalName="NovaTouchUpdater.WinRmWorker.ps1" />
     <EmbeddedResource Include="Scripts\WinRmClientHttp.ps1" LogicalName="NovaTouchUpdater.WinRmClientHttp.ps1" />
+    <EmbeddedResource Include="Scripts\WinRmClientTransport.ps1" LogicalName="NovaTouchUpdater.WinRmClientTransport.ps1" />
     <EmbeddedResource Include="Scripts\WinRmClientHttps.ps1" LogicalName="NovaTouchUpdater.WinRmClientHttps.ps1" />
     <EmbeddedResource Include="Scripts\ConnectionWorker.ps1" LogicalName="NovaTouchUpdater.ConnectionWorker.ps1" />
     <EmbeddedResource Include="Scripts\SelfUpdate.ps1" LogicalName="NovaTouchUpdater.SelfUpdate.ps1" />

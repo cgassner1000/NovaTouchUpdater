@@ -3,6 +3,15 @@
 $ErrorActionPreference = 'Stop'
 $env:PSModulePath = "$PSHOME\Modules;$env:ProgramFiles\WindowsPowerShell\Modules"
 Set-StrictMode -Version Latest
+$setup = [Console]::ReadLine() | ConvertFrom-Json
+$Port = [int]$setup.Port
+Write-Host "WinRM HTTPS für $($setup.ExpectedHost) auf TCP-Port $Port einrichten."
+$CertificateData = $setup.CertificateData
+$CertificatePassword = $setup.CertificatePassword
+$ExpectedThumbprint = $setup.ExpectedThumbprint
+$IssuerData = $setup.IssuerData
+$RevocationData = $setup.RevocationData
+$setup = $null
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'Diesen Einzeiler in einer PowerShell als Administrator auf dem Client ausführen.'
@@ -61,12 +70,6 @@ try {
     else {
         Register-PSSessionConfiguration -Name Microsoft.PowerShell -AccessMode Remote -Force | Out-Null
     }
-    $ruleName = 'NovaTouchUpdater-WinRM-HTTPS-' + $Port
-    if (Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue) { Remove-NetFirewallRule -Name $ruleName }
-    if (Get-NetFirewallRule -Name ($ruleName + '-Public') -ErrorAction SilentlyContinue) { Remove-NetFirewallRule -Name ($ruleName + '-Public') }
-    New-NetFirewallRule -Name $ruleName -DisplayName 'NovaTouch Updater WinRM HTTPS' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Domain,Private -RemoteAddress Any | Out-Null
-    New-NetFirewallRule -Name ($ruleName + '-Public') -DisplayName 'NovaTouch Updater WinRM HTTPS (Public)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port -Profile Public -RemoteAddress LocalSubnet | Out-Null
-    Test-WSMan -ComputerName localhost -UseSSL -Port $Port -ErrorAction Stop | Out-Null
-    Write-Host "WinRM HTTPS / $Port für $ExpectedHost eingerichtet. Im Updater erneut prüfen." -ForegroundColor Green
+    $Transport = 'HTTPS'
 }
 finally { $certificate.Dispose(); $CertificateData = ''; $CertificatePassword = '' }

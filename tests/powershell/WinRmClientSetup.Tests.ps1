@@ -52,14 +52,23 @@ function Get-ChildItem {
     Assert ($Path -eq 'WSMan:\localhost\Listener') 'Unexpected provider read'
     $script:listeners.ToArray()
 }
+function New-TestListener($transport, $port, $address = '*') {
+    [pscustomobject]@{ Keys = @("Address=$address","Transport=$transport"); Address=$address; Transport=$transport; Port=$port; Enabled='true' }
+}
+function Get-WSManInstance {
+    param($ResourceURI,[switch]$Enumerate)
+    if ($ResourceURI -eq 'winrm/config/service') { return $script:compat }
+    Assert ($ResourceURI -eq 'winrm/config/Listener' -and $Enumerate) 'Only enumerate the local WinRM listener configuration'
+    $script:listeners.ToArray()
+}
 function Enable-PSRemoting {
     param([switch]$SkipNetworkProfileCheck, [switch]$Force)
     Assert ($script:transport -eq 'HTTP') 'HTTPS must never run HTTP quick configuration, even temporarily'
     Assert ($SkipNetworkProfileCheck -and $Force) 'Client endpoint registration must be noninteractive'
     $script:calls.Add('endpoints')
-    foreach ($rule in $script:builtInRules) { $rule.Enabled = 'True' }
+    $script:rules['WINRM-HTTP-In-TCP'].Enabled = 'True'
     if (-not @($script:listeners | Where-Object { $_.Keys -contains 'Transport=HTTP' }).Count) {
-        $script:listeners.Add([pscustomobject]@{ Keys = @('Address=*','Transport=HTTP') })
+        $script:listeners.Add((New-TestListener HTTP 5985))
     }
 }
 function Set-WSManQuickConfig { throw 'Unexpected transport quick configuration' }
@@ -81,42 +90,69 @@ function Register-PSSessionConfiguration {
 }
 function Set-WSManInstance {
     param($ResourceURI, $SelectorSet, $ValueSet)
+    if ($ResourceURI -eq 'winrm/config/service') {
+        $key = @($ValueSet.Keys)[0]
+        Assert ($key -in @('EnableCompatibilityHttpListener','EnableCompatibilityHttpsListener') -and $ValueSet[$key] -ceq 'false') 'Only disable compatibility listeners'
+        $script:compat[$key] = 'false'
+        return
+    }
+    $item = $script:listeners | Where-Object { $_.Transport -eq $SelectorSet.Transport -and $_.Address -eq $SelectorSet.Address }
+    if ($ValueSet.Enabled -ceq 'false') {
+        Assert ($item -and ($item.Port -ne $script:expectedPort -or $item.Transport -ne $script:transport) -and $script:calls.Contains('test')) 'Disable only other listeners after verifying the selected listener'
+        if ($script:scenario -ne 'enforced-policy') { $item.Enabled = 'false' }
+        return
+    }
     Assert ($ResourceURI -eq 'winrm/config/Listener' -and $SelectorSet.Address -eq '*' -and $SelectorSet.Transport -eq $script:transport) 'Only the selected listener may be updated'
     Assert ($ValueSet.Port -eq $script:expectedPort -and $ValueSet.Enabled -is [string] -and [Xml.XmlConvert]::ToBoolean($ValueSet.Enabled)) 'Listener Enabled must be a valid lowercase XML boolean, not .NET True'
     if ($script:transport -eq 'HTTPS') { Assert ($ValueSet.CertificateThumbprint -eq 'TEST-CLIENT' -and $ValueSet.Hostname -eq 'TEST-CN') 'WinRM listener hostname must match the certificate CN; aliases remain in the certificate SAN' }
+    $item.Port = $ValueSet.Port
+    $item.Enabled = $ValueSet.Enabled
     $script:calls.Add('set-listener')
 }
 function New-WSManInstance {
     param($ResourceURI, $SelectorSet, $ValueSet)
+    $script:listeners.Add((New-TestListener $SelectorSet.Transport $ValueSet.Port))
     Set-WSManInstance $ResourceURI $SelectorSet $ValueSet
-    $script:listeners.Add([pscustomobject]@{ Keys = @('Address=*', ('Transport=' + $SelectorSet.Transport)) })
     $script:calls.Add('new-listener')
 }
 function Remove-WSManInstance { throw 'The setup must not delete existing listeners' }
 function Get-NetFirewallRule {
-    param($Name, $ErrorAction)
-    $baseRuleName = 'NovaTouchUpdater-WinRM-HTTPS-' + $script:expectedPort
-    Assert ($Name -eq $baseRuleName -or $Name -eq ($baseRuleName + '-Public')) 'Only dedicated application firewall rules may be inspected'
-    if ($script:scenario -eq 'existing-listener') { [pscustomobject]@{ Name = $Name } }
+    param($Name, $ErrorAction, $PolicyStore)
+    if ($PolicyStore -eq 'ActiveStore' -and $script:scenario -eq 'firewall-policy') { return [pscustomobject]@{ Name=$Name; Enabled='False' } }
+    foreach ($pattern in $Name) {
+        foreach ($rule in $script:rules.Values) { if ($rule.Name -like $pattern) { $rule } }
+    }
 }
-function Disable-NetFirewallRule { throw 'Unexpected firewall change' }
-function Remove-NetFirewallRule {
-    param($Name)
-    $baseRuleName = 'NovaTouchUpdater-WinRM-HTTPS-' + $script:expectedPort
-    Assert ($Name -eq $baseRuleName -or $Name -eq ($baseRuleName + '-Public')) 'Unrelated firewall rules must not be removed'
-    $script:calls.Add('replace-rule')
+function Disable-NetFirewallRule {
+    param([Parameter(ValueFromPipeline)]$InputObject)
+    process {
+        Assert ($InputObject.Name -ne 'AnotherService' -and $script:calls.Contains('test')) 'Unrelated rules and the working transport must be protected'
+        $InputObject.Enabled = 'False'
+    }
 }
-function New-NetFirewallRule {
-    param($Name, $DisplayName, $Direction, $Action, $Protocol, $LocalPort, $Profile, $RemoteAddress)
+function Write-TestRule($Name,$DisplayName,$Direction,$Action,$Protocol,$LocalPort,$Profile,$RemoteAddress,$Enabled) {
+    Assert ($DisplayName.Contains("TCP $LocalPort") -and $DisplayName.Contains($script:transport) -and $Enabled -eq 'True') 'Selected protocol, port and enabled state must be explicit'
     Assert ($LocalPort -eq $script:expectedPort -and $Direction -eq 'Inbound' -and $Action -eq 'Allow' -and $Protocol -eq 'TCP') 'Incorrect firewall protocol or port'
     if ($Name.EndsWith('-Public')) { Assert ($Profile -eq 'Public' -and $RemoteAddress -eq 'LocalSubnet') 'Public HTTPS access must remain restricted to the local subnet' }
     else { Assert (($Profile -join ',') -eq 'Domain,Private' -and $RemoteAddress -eq 'Any') 'Domain/private HTTPS must allow routed and NAT connections using Windows standard scope' }
     $script:calls.Add('firewall')
+    $script:rules[$Name] = [pscustomobject]@{ Name=$Name; Enabled=$Enabled; Direction=$Direction; Action=$Action }
+}
+function New-NetFirewallRule {
+    param($Name,$DisplayName,$Direction,$Action,$Protocol,$LocalPort,$Profile,$RemoteAddress,$Enabled)
+    Assert (!$script:rules.ContainsKey($Name)) 'Do not duplicate existing rules'
+    Write-TestRule @PSBoundParameters
+}
+function Set-NetFirewallRule {
+    param($Name,$NewDisplayName,$Direction,$Action,$Protocol,$LocalPort,$Profile,$RemoteAddress,$Enabled)
+    Assert ($script:rules.ContainsKey($Name)) 'Only update existing rules'
+    Write-TestRule $Name $NewDisplayName $Direction $Action $Protocol $LocalPort $Profile $RemoteAddress $Enabled
 }
 function Test-WSMan {
     param($ComputerName, [switch]$UseSSL, $Port, $ErrorAction)
     Assert ($ComputerName -eq 'localhost' -and $Port -eq $script:expectedPort -and $UseSSL.IsPresent -eq ($script:transport -eq 'HTTPS')) 'Final local test must use the selected protocol and port'
     $script:calls.Add('test')
+    if ($script:scenario -eq 'probe-failure') { throw 'Simulated connection failure' }
 }
 function Invoke-TestCertutil {
     param($File)
@@ -142,62 +178,69 @@ function Set-Acl {
 }
 foreach ($transport in @('HTTP','HTTPS')) {
     $original = Get-Content -LiteralPath (Join-Path $TestScriptsRoot ('WinRmClient' + $(if ($transport -eq 'HTTP') { 'Http' } else { 'Https' }) + '.ps1')) -Raw -Encoding UTF8
+    $original += [Environment]::NewLine + (Get-Content -LiteralPath (Join-Path $TestScriptsRoot 'WinRmClientTransport.ps1') -Raw -Encoding UTF8)
     if ($transport -eq 'HTTP') {
         $original = (($original -split '\r?\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') }) -join ' ')
         $parseTokens = $null; $parseErrors = $null
         $null = [Management.Automation.Language.Parser]::ParseInput($original, [ref]$parseTokens, [ref]$parseErrors)
         Assert ($parseErrors.Count -eq 0) 'The readable HTTP one-liner must parse in Windows PowerShell 5.1'
-        Assert ($original -eq 'Enable-PSRemoting -SkipNetworkProfileCheck -Force') 'HTTP must remain the single standard setup command'
-        $script:calls = [Collections.Generic.List[string]]::new()
-        $script:listeners = [Collections.Generic.List[object]]::new()
-        $script:builtInRules = @([pscustomobject]@{ Name = 'WINRM-HTTP-In-TCP'; Enabled = 'False' })
-        $script:scenario = 'simple-http'
-        [SetupTestStore]::Writes.Clear()
-        & ([scriptblock]::Create($original))
-        Assert ($script:calls.Count -eq 1 -and $script:calls[0] -eq 'endpoints' -and [SetupTestStore]::Writes.Count -eq 0) 'HTTP delegates service, endpoints and firewall setup to Windows; no certificate or custom setup operations'
-        Write-Output 'PASS simple HTTP setup (all system mutations mocked)'
-        continue
     }
     $adminCheck = 'if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {'
-    Assert ($original.Contains($adminCheck) -and $original -notmatch '\[Net.Dns\]|GetAllNetworkInterfaces') 'HTTPS must require administration without blocking aliases or NAT addresses through local name lookup'
-    foreach ($scenario in @('new-listener','existing-listener','default-port','not-admin','address-alias','invalid-certificate')) {
-        if ($transport -eq 'HTTP' -and $scenario -eq 'invalid-certificate') { continue }
+    if ($transport -eq 'HTTPS') { Assert ($original.Contains($adminCheck) -and $original -notmatch '\[Net.Dns\]|GetAllNetworkInterfaces') 'HTTPS must require administration without blocking aliases or NAT addresses through local name lookup' }
+    foreach ($scenario in @('new-listener','existing-listener','default-port','not-admin','address-alias','invalid-certificate','firewall-policy','probe-failure','enforced-policy')) {
+        if ($transport -eq 'HTTP' -and $scenario -in @('not-admin','invalid-certificate','address-alias','default-port')) { continue }
         $script:scenario = $scenario; $script:transport = $transport
-        $script:expectedPort = $(if ($scenario -eq 'default-port') { 5986 } else { 443 })
-        $script:hadHttp = $scenario -eq 'existing-listener'
+        $script:expectedPort = $(if ($transport -eq 'HTTP') { 5985 } elseif ($scenario -eq 'default-port') { 5986 } else { 443 })
+        $other = if ($transport -eq 'HTTP') { 'HTTPS' } else { 'HTTP' }
         $script:calls = [Collections.Generic.List[string]]::new()
         $script:listeners = [Collections.Generic.List[object]]::new()
-        if ($script:hadHttp) {
-            $script:listeners.Add([pscustomobject]@{ Keys = @('Address=*','Transport=HTTP') })
-            if ($transport -eq 'HTTPS') { $script:listeners.Add([pscustomobject]@{ Keys = @('Address=*','Transport=HTTPS') }) }
+        if ($scenario -ne 'new-listener') {
+            $script:listeners.Add((New-TestListener $other 8443))
+            $script:listeners.Add((New-TestListener $other 8444 'IP:192.0.2.3'))
+            $script:listeners.Add((New-TestListener $transport 9999 'IP:192.0.2.4'))
         }
-        $script:builtInRules = @([pscustomobject]@{ Name = 'WINRM-HTTP-In-TCP'; Enabled = 'True' }, [pscustomobject]@{ Name = 'WINRM-HTTP-In-TCP-PUBLIC'; Enabled = 'False' })
+        if ($scenario -eq 'existing-listener') { $script:listeners.Add((New-TestListener $transport 7443)) }
+        $script:compat = @{ EnableCompatibilityHttpListener='true'; EnableCompatibilityHttpsListener='true' }
+        $script:rules = @{}
+        $ruleBase = "NovaTouchUpdater-WinRM-$transport-$script:expectedPort"
+        $ruleNames = @('AnotherService','WINRM-HTTP-In-TCP','WINRM-HTTPS-In-TCP','NovaTouchUpdater-WinRM-HTTPS-8443')
+        if ($scenario -eq 'existing-listener') { $ruleNames += $ruleBase }
+        foreach ($name in $ruleNames) { $script:rules[$name] = [pscustomobject]@{ Name=$name; Enabled='True'; Direction='Inbound'; Action='Allow' } }
         [SetupTestStore]::Data.Clear(); [SetupTestStore]::Writes.Clear(); [SetupTestCertificate]::Invalid = $scenario -eq 'invalid-certificate'
         $source = $original.Replace($adminCheck, $(if ($scenario -eq 'not-admin') { 'if ($true) {' } else { 'if ($false) {' }))
         $source = $source.Replace('[Security.Cryptography.X509Certificates.X509Certificate2]', '[SetupTestCertificate]').Replace('[Security.Cryptography.X509Certificates.X509Store]', '[SetupTestStore]')
         $source = $source.Replace('& "$env:SystemRoot\System32\certutil.exe" -f -addstore CA $crlFile', 'Invoke-TestCertutil $crlFile')
         $source = $source.Replace('[Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($certificate)', '[SetupTestPrivateKey]::new()').Replace('[Security.Cryptography.RSACng]', '[SetupTestPrivateKey]')
         Assert (-not $source.Contains('certutil.exe')) 'The real certificate utility must be replaced at the test boundary'
-        $ExpectedHost = $(if ($scenario -eq 'address-alias') { '203.0.113.254' } else { $env:COMPUTERNAME })
-        $Port = $script:expectedPort
-        $CertificateData = 'AQ=='; $CertificatePassword = 'synthetic'; $IssuerData = 'Ag=='; $ExpectedThumbprint = 'TEST-CLIENT'; $RevocationData = 'Aw=='
+        $source = $source.Replace('[Console]::ReadLine()', '$script:setupInput')
+        $expectedHost = if ($scenario -eq 'address-alias') { '203.0.113.254' } else { $env:COMPUTERNAME }
+        $script:setupInput = @{ ExpectedHost=$expectedHost; Port=$script:expectedPort; CertificateData='AQ=='; CertificatePassword='synthetic'; IssuerData='Ag=='; ExpectedThumbprint='TEST-CLIENT'; RevocationData='Aw==' } | ConvertTo-Json -Compress
         $failure = $null
         try { & ([scriptblock]::Create($source)) 6>$null }
         catch { $failure = $_ }
         if ($scenario -in @('not-admin','invalid-certificate')) {
             Assert ($null -ne $failure -and $script:calls.Count -eq 0 -and [SetupTestStore]::Writes.Count -eq 0) "Guards must fail before changing the client ($transport/$scenario)"
         }
+        elseif ($scenario -eq 'probe-failure') {
+            Assert ($failure -and ($script:listeners | Where-Object Transport -eq $other)[0].Enabled -eq 'true' -and $script:rules["WINRM-$other-In-TCP"].Enabled -eq 'True') 'Failing probe must leave the previous access enabled'
+        }
+        elseif ($scenario -eq 'firewall-policy') {
+            Assert ($failure -and $failure.ToString().Contains('Firewallregel') -and !$script:calls.Contains('test') -and ($script:listeners | Where-Object Transport -eq $other)[0].Enabled -eq 'true') 'An inactive effective firewall rule must stop setup before switching access'
+        }
+        elseif ($scenario -eq 'enforced-policy') { Assert ($failure -and $failure.ToString().Contains('WinRM-Listener')) 'A policy-enforced conflicting listener must prevent a success report' }
         else {
             if ($failure) { throw $failure }
             Assert (@($script:calls | Where-Object { $_ -eq 'firewall' }).Count -eq 2 -and $script:calls[$script:calls.Count - 1] -eq 'test') "Both network-profile firewall rules must be configured before the final test ($transport/$scenario)"
-            Assert ($script:builtInRules[0].Enabled -eq 'True' -and $script:builtInRules[1].Enabled -eq 'False') 'Endpoint registration must retain previous built-in firewall enablement'
+            $active = @($script:listeners | Where-Object Enabled -eq 'true')
+            Assert ($active.Count -eq 1 -and $active[0].Transport -eq $transport -and $active[0].Port -eq $script:expectedPort) 'Exactly the selected protocol and port may listen'
+            Assert ($script:compat.Values -notcontains 'true') 'Both legacy compatibility listeners are disabled'
+            Assert ($script:rules[$ruleBase].Enabled -eq 'True' -and $script:rules["$ruleBase-Public"].Enabled -eq 'True' -and $script:rules["WINRM-$other-In-TCP"].Enabled -eq 'False' -and $script:rules['NovaTouchUpdater-WinRM-HTTPS-8443'].Enabled -eq 'False' -and $script:rules['AnotherService'].Enabled -eq 'True') 'Explicit firewall rules protect the selected port and only obsolete WinRM rules are disabled'
             if ($transport -eq 'HTTPS') {
                 Assert ([SetupTestStore]::Writes.Contains('Root') -and [SetupTestStore]::Writes.Contains('My')) 'HTTPS must install public CA and private client certificate in machine stores'
                 Assert ($script:calls.Contains('crl') -and -not [IO.File]::Exists($script:crlFile)) 'HTTPS must import the public signed CRL and remove its temporary file'
                 Assert ($script:calls.Contains('key-access')) 'HTTPS must grant WinRM read access to the client private key'
                 $endpointCall = if ($scenario -eq 'existing-listener') { 'configure-endpoint' } else { 'register-endpoint' }
                 Assert ($script:calls.Contains($endpointCall)) 'HTTPS prepares the PowerShell endpoint independently of transport'
-                Assert (@($script:listeners | Where-Object { $_.Keys -contains 'Transport=HTTP' }).Count -eq $(if ($script:hadHttp) { 1 } else { 0 })) 'HTTPS must not create an HTTP listener'
             }
             else { Assert ([SetupTestStore]::Writes.Count -eq 0) 'HTTP must not access certificate stores' }
         }

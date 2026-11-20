@@ -84,7 +84,7 @@ internal sealed class WinRmTestForm : Form
         certificateTools.Controls.AddRange([chooseCertificate, defaultCertificate, trustCertificate, certificateStatus]);
         layout.Controls.Add(certificateTools, 0, 1);
         layout.Controls.Add(new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 5, 3, 5),
-            Text = "Bei Fehler: Einzeiler über das Kopiersymbol kopieren und auf dem Client in einer PowerShell als Administrator ausführen. Danach erneut prüfen." }, 0, 2);
+            Text = $"Einzeiler kopieren und auf dem Client als Administrator ausführen. Er richtet die Firewall für {protocol} ein und deaktiviert andere WinRM-Zugänge. Danach erneut prüfen." }, 0, 2);
         localStatus.Text = "Lokales WinRM vorbereiten und bei Bedarf starten …";
         localStatus.Margin = new Padding(3, 8, 3, 10);
         layout.Controls.Add(localStatus, 0, 3);
@@ -262,10 +262,10 @@ internal sealed class WinRmTestForm : Form
     {
         row.Cells[2].Value = result.Tcp;
         row.Cells["result"].Value = result.Success ? "OK" : "Fehler";
-        row.Cells["clientSetup"].Value = result.Success ? WinRmSetupState.None : WinRmSetupState.Ready;
+        row.Cells["clientSetup"].Value = WinRmSetupState.Ready;
         row.Tag = $"{row.Cells[0].Value} – {row.Cells[1].Value}\r\nTCP: {result.Tcp}\r\nNew-PSSession: {result.Session}\r\nInvoke-Command: {result.Command}\r\n\r\n{result.Message}\r\n{result.Error}";
         foreach (DataGridViewCell cell in row.Cells) cell.ToolTipText = result.Error;
-        row.Cells["clientSetup"].ToolTipText = result.Success ? "" : "Einzeiler für diesen Client kopieren; dort als Administrator ausführen.";
+        row.Cells["clientSetup"].ToolTipText = $"Einzeiler für {protocol} kopieren und auf diesem Client als Administrator ausführen.";
         completed++;
         summary.Text = $"{completed} Hosttests abgeschlossen. Zeile auswählen für vollständige Details.";
         ShowDetails();
@@ -354,8 +354,7 @@ internal sealed class WinRmTestForm : Form
     }
 
     private bool CanCopyClientSetup(int rowIndex) => rowIndex >= 0 && rowIndex < rows.Length &&
-        (rows[rowIndex].Cells["result"].Value is "Fehler" ||
-            (allowUnconfirmedClientSetup && !running && rows[rowIndex].Cells["result"].Value is not ("OK" or "Wartet" or "Läuft")));
+        rows[rowIndex].Cells["clientSetup"].Value is WinRmSetupState.Ready or WinRmSetupState.Copied;
 
     internal async Task CopyClientSetupAsync(int rowIndex)
     {
@@ -381,8 +380,7 @@ internal sealed class WinRmTestForm : Form
                 if (IsDisposed) { certificate.Dispose(); return; }
                 clientCertificates.Add(host, certificate);
             }
-            string script = WinRmClientSetup.CreateScript(host, useHttps, httpsPort, certificate);
-            copyText(WinRmClientSetup.OneLine(script, useHttps));
+            copyText(WinRmClientSetup.CreateCommand(host, useHttps, httpsPort, certificate));
             row.Cells["clientSetup"].Value = WinRmSetupState.Copied;
             row.Cells["clientSetup"].ToolTipText = "Kopiert. Auf " + host + " in einer PowerShell als Administrator ausführen; danach erneut prüfen.";
             localStatus.Text = host + ": " + (useHttps ? "HTTPS" : "HTTP / 5985") + "-Einzeiler kopiert. Auf diesem Client als Administrator ausführen.";

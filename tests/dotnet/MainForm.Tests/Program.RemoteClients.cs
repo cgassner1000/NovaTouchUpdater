@@ -89,7 +89,7 @@ internal static partial class Program
                 }));
                 Call(form, "PrepareHostActionsMenu", added);
                 menu.Items["hostWinRm"]!.PerformClick(); Complete(Field<Task>(form, "hostActionTask"));
-                Assert(copied == WinRmClientSetup.OneLine(WinRmClientSetup.CreateScript(added.Host, false, 5986), false) &&
+                Assert(copied == WinRmClientSetup.CreateCommand(added.Host, false, 5986) &&
                     diagnostic.Requests.All(request => request.Action == "winrm-prepare" ? request.Hosts.SequenceEqual([added.Host]) : request.Host == added.Host),
                     "the unchanged HTTP copy/paste command is available for this host, even if local preparation fails=" + prepFails);
             }

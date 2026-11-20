@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.Json;
 using NovaTouchUpdater;
 
 internal static partial class Program
@@ -41,28 +42,30 @@ internal static partial class Program
             Assert(ipCertificate.Extensions.OfType<X509SubjectAlternativeNameExtension>().Single().EnumerateIPAddresses().Contains(IPAddress.Parse("192.0.2.20")),
                 "IP-based targets receive an IP subject alternative name");
 
-        string http = WinRmClientSetup.CreateScript("POS01", false, 443);
-        string httpCommand = WinRmClientSetup.OneLine(http, false);
-        Assert(httpCommand == "powershell.exe -NoLogo -NoProfile -Command { Enable-PSRemoting -SkipNetworkProfileCheck -Force }",
-            "HTTP copies only the standard WinRM setup command without host checks, firewall scripting or Base64");
-        Assert(httpCommand == WinRmClientSetup.OneLine(WinRmClientSetup.CreateScript("192.0.2.20", false, 0), false),
+        string httpCommand = WinRmClientSetup.CreateCommand("POS01", false, 443);
+        Assert(httpCommand.StartsWith("powershell.exe -NoLogo -NoProfile -Command { ") && httpCommand.Contains("$Port = 5985;") &&
+            httpCommand.Contains("New-NetFirewallRule") && !httpCommand.Contains("CertificateData") && !httpCommand.Contains('\n'),
+            "HTTP copies a readable one-liner for TCP 5985 with an explicit firewall rule");
+        Assert(httpCommand == WinRmClientSetup.CreateCommand("192.0.2.20", false, 0),
             "the simple HTTP command works independently of hostname, target IP, HTTPS port and local network adapters");
-        WinRmHttpShellTests();
-        string https = WinRmClientSetup.CreateScript("POS01.example.invalid", true, 443, material);
-        string command = WinRmClientSetup.OneLine(https, true);
-        Assert(https.Contains("$Port=443;") && https.Contains("Transport = 'HTTPS'") && https.Contains("-UseSSL -Port $Port") &&
-            https.Contains("-Profile Domain,Private -RemoteAddress Any") && https.Contains("-Profile Public -RemoteAddress LocalSubnet") &&
+        string command = WinRmClientSetup.CreateCommand("POS01.example.invalid", true, 443, material);
+        string https = Encoding.Unicode.GetString(Convert.FromBase64String(command.Split(' ')[^1]));
+        JsonElement input = WinRmSetupInput(command);
+        WinRmSetupShellTests(command);
+        Assert(input.GetProperty("Port").GetInt32() == 443 && https.Contains("Transport = 'HTTPS'") && https.Contains("-UseSSL:($Transport -eq 'HTTPS')") &&
+            https.Contains("New-NetFirewallRule") && https.Contains("LocalSubnet") &&
             !https.Contains("ManagementAddresses"), "HTTPS uses the selected port and Windows network profile boundaries without assuming the updater source IP");
         Assert(https.Contains("$env:PSModulePath = \"$PSHOME\\Modules;$env:ProgramFiles\\WindowsPowerShell\\Modules\""),
             "HTTPS setup uses native Windows PowerShell modules even when launched by PowerShell 7 or a separate process");
         Assert(command.Length < 32760 && !command.Contains('\n') &&
-            Encoding.Unicode.GetString(Convert.FromBase64String(command.Split(' ')[^1])) == https, "the copied HTTPS command fits one Windows command line and round-trips without quoting loss");
-        Assert(!https.Contains(Convert.ToBase64String(fixture.Key.ExportPkcs8PrivateKey())) &&
+            input.GetProperty("CertificateData").GetBytesFromBase64().SequenceEqual(material.Pfx) &&
+            input.GetProperty("CertificatePassword").GetString() == material.Password, "the copied HTTPS command fits one Windows command line and carries the original client PFX on stdin");
+        Assert(!command.Contains(Convert.ToBase64String(fixture.Key.ExportPkcs8PrivateKey())) &&
             !https.Contains("SkipCACheck") && !https.Contains("SkipCNCheck") && !https.Contains("AllowUnencrypted"),
             "the client setup never contains the CA private key or disables TLS certificate checks");
-        Assert(RejectsSetup(() => WinRmClientSetup.CreateScript("POS01';exit", false, 0)) &&
-            RejectsSetup(() => WinRmClientSetup.CreateScript("POS01", true, 443)) &&
-            RejectsSetup(() => WinRmClientSetup.CreateScript("POS01", true, 0, material)),
+        Assert(RejectsSetup(() => WinRmClientSetup.CreateCommand("POS01';exit", false, 0)) &&
+            RejectsSetup(() => WinRmClientSetup.CreateCommand("POS01", true, 443)) &&
+            RejectsSetup(() => WinRmClientSetup.CreateCommand("POS01", true, 0, material)),
             "invalid hostnames, missing HTTPS material and invalid HTTPS ports are rejected");
         using (var nonCa = new WinRmCaFixture(isCa: false))
             Assert(RejectsSetup(() => WinRmCertificateAuthority.Load(nonCa.CertificatePath, nonCa.KeyPath)), "a normal server certificate cannot be misused as an issuing CA");
@@ -91,7 +94,7 @@ internal static partial class Program
         using var material = authority.Issue(Environment.MachineName);
         using var leaf = new X509Certificate2(material.Pfx, material.Password, X509KeyStorageFlags.EphemeralKeySet);
         WinRmRevocationTests(issuer, leaf, material.RevocationList);
-        string command = WinRmClientSetup.OneLine(WinRmClientSetup.CreateScript(Environment.MachineName, true, 5986, material), true);
+        string command = WinRmClientSetup.CreateCommand(Environment.MachineName, true, 5986, material);
         Console.WriteLine("PASS supplied PEM pair signs a valid host certificate; one-line length: " + command.Length);
     }
 
@@ -118,21 +121,21 @@ internal static partial class Program
         Assert(grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells["clientSetup"].Value is WinRmSetupState.None), "pending diagnostics offer no repair command");
         worker.Prepared.SetResult(true);
         Complete(first);
-        Assert(grid.Rows[0].Cells["clientSetup"].Value is WinRmSetupState.None && grid.Rows[1].Cells["clientSetup"].Value is WinRmSetupState.Ready,
-            "only failed host tests offer the copy icon");
+        Assert(grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells["clientSetup"].Value is WinRmSetupState.Ready),
+            "both failed and reachable hosts offer the exclusive transport setup");
         Assert(grid.Rows[1].Cells["clientSetup"].AccessibilityObject.Name == "Client-Einrichtung kopieren", "the icon has an accessible action name");
         Preview("copy");
         Complete(dialog.CopyClientSetupAsync(0));
-        Assert(copied.Length == 0, "successful rows cannot copy a repair command");
+        Assert(copied.Length > 0 && grid.Rows[0].Cells["clientSetup"].Value is WinRmSetupState.Copied, "reachable hosts can switch to a single transport");
         Complete(dialog.CopyClientSetupAsync(1));
-        Assert(copied.StartsWith(https ? "powershell.exe -NoLogo -NoProfile -EncodedCommand " : "powershell.exe -NoLogo -NoProfile -Command { "),
+        Assert(https ? copied.Contains("' | powershell.exe -NoLogo -NoProfile -EncodedCommand ") : copied.StartsWith("powershell.exe -NoLogo -NoProfile -Command { "),
             "the failed row copies a self-contained PowerShell one-liner in the appropriate format");
         Assert(grid.Rows[1].Cells["clientSetup"].Value is WinRmSetupState.Copied && grid.Rows[1].Cells["clientSetup"].AccessibilityObject.Name == "Kopiert; erneut kopieren",
             "successful clipboard copy replaces the icon with a checkmark and accessible confirmation");
         string decoded = https ? Encoding.Unicode.GetString(Convert.FromBase64String(copied.Split(' ')[^1])) : copied;
-        Assert(https ? decoded.Contains("$ExpectedHost='POS02.example.invalid';") && decoded.Contains("$Port=443;")
+        Assert(https ? WinRmSetupInput(copied).GetProperty("ExpectedHost").GetString() == "POS02.example.invalid" && WinRmSetupInput(copied).GetProperty("Port").GetInt32() == 443
             : decoded.Contains("Enable-PSRemoting -SkipNetworkProfileCheck -Force") && !decoded.Contains("ExpectedHost") && !decoded.Contains("CertificateData"),
-            "HTTPS uses the selected host and port while HTTP needs only the standard setup command");
+            "HTTPS uses the selected host and port while HTTP setup is independent of host and certificate");
         string previous = copied;
         Complete(dialog.CopyClientSetupAsync(1));
         Assert(previous == copied, "repeated copying reuses the same host certificate within the dialog");
@@ -161,9 +164,9 @@ internal static partial class Program
             "retry immediately clears old errors, copy actions and failure details");
         retryWorker.Prepared.SetResult(true);
         Complete(second);
-        Assert(grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells["result"].Value is "OK" && row.Cells["clientSetup"].Value is WinRmSetupState.None) &&
+        Assert(grid.Rows.Cast<DataGridViewRow>().All(row => row.Cells["result"].Value is "OK" && row.Cells["clientSetup"].Value is WinRmSetupState.Ready) &&
             retryWorker.Requests.Where(request => request.Action == "winrm-test").All(request => request.Password == ""),
-            "retry retains credentials only while testing and clears successful repair actions");
+            "retry clears copied confirmations and retains credentials only while testing");
         Assert(trusts == (https ? 1 : 0), "repeated diagnostics do not repeat an already completed CA trust change");
         UiTheme.SetMode("System");
 
@@ -213,7 +216,7 @@ internal static partial class Program
             "the active built-in certificate and automatic preparation are visible in the dialog");
         Complete(dialog.CopyClientSetupAsync(0));
         string decoded = Encoding.Unicode.GetString(Convert.FromBase64String(copied.Split(' ')[^1]));
-        Assert(decoded.Contains("$ExpectedHost='POS02.example.invalid';") && decoded.Contains("$CertificateData=") && !decoded.Contains("novacom_default_cert.pem") && trusts == 1,
+        Assert(WinRmSetupInput(copied).GetProperty("ExpectedHost").GetString() == "POS02.example.invalid" && WinRmSetupInput(copied).GetProperty("CertificateData").GetBytesFromBase64().Length > 0 && !decoded.Contains("novacom_default_cert.pem") && trusts == 1,
             "the embedded default produces self-contained HTTPS client setup without file selection or repeated trust changes");
         typeof(WinRmTestForm).GetMethod("LoadCertificateFiles", Private)!.Invoke(dialog, [fixture.CertificatePath, fixture.KeyPath, false]);
         Assert(!Read<bool>("usingDefaultCertificate") && Read<WinRmCertificateAuthority>("authority").Thumbprint != embedded.Thumbprint,
@@ -235,23 +238,30 @@ internal static partial class Program
             "missing trust-store permissions are reported while independent diagnostics still complete");
     }
 
-    private static void WinRmHttpShellTests()
+    private static JsonElement WinRmSetupInput(string command) =>
+        JsonSerializer.Deserialize<JsonElement>(command[1..command.IndexOf("' | powershell.exe", StringComparison.Ordinal)]);
+
+    private static void WinRmSetupShellTests(string httpsCommand)
     {
         // No WinRM commands: exercise only cross-shell ScriptBlock argument
         // passing and literal quotes/$ so testing cannot configure this PC.
-        string probe = WinRmClientSetup.OneLine("$value='a\"b ''c $literal'; if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Wrong PowerShell endpoint host' }; Write-Output ('NTU-HTTP-PROBE:' + $value);", false);
+        string probe = WinRmClientSetup.HttpOneLine("$value='a\"b ''c $literal'; if ($PSVersionTable.PSVersion.Major -ne 5) { throw 'Wrong PowerShell endpoint host' }; Write-Output ('NTU-HTTP-PROBE:' + $value);");
+        const string readInput = "$data=[Console]::ReadLine() | ConvertFrom-Json; if ($data.ExpectedHost -eq 'POS01.example.invalid' -and $data.Port -eq 443 -and ([Convert]::FromBase64String($data.CertificateData)).Length -gt 0) { 'NTU-HTTPS-STDIN-OK' }";
+        string httpsProbe = httpsCommand[..(httpsCommand.LastIndexOf(' ') + 1)] + Convert.ToBase64String(Encoding.Unicode.GetBytes(readInput));
         string windowsPowerShell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
         string powerShell7 = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe");
         foreach (string shell in new[] { windowsPowerShell, powerShell7 }.Where(File.Exists))
         {
             var start = new System.Diagnostics.ProcessStartInfo(shell) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             start.ArgumentList.Add("-NoLogo"); start.ArgumentList.Add("-NoProfile"); start.ArgumentList.Add("-EncodedCommand");
-            start.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes("$ErrorActionPreference='Stop'; " + probe)));
+            start.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes("$ErrorActionPreference='Stop'; " + probe + "; " + httpsProbe)));
             using var process = System.Diagnostics.Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
             if (!process.WaitForExit(15000)) { process.Kill(true); throw new InvalidOperationException("PowerShell argument test timed out."); }
-            Assert(process.ExitCode == 0 && output.GetAwaiter().GetResult().Contains("NTU-HTTP-PROBE:a\"b 'c $literal"),
-                "readable HTTP command preserves literals and runs in Windows PowerShell when pasted into " + Path.GetFileName(shell) + ": " + error.GetAwaiter().GetResult());
+            string stdout = output.GetAwaiter().GetResult();
+            _ = error.GetAwaiter().GetResult();
+            Assert(process.ExitCode == 0 && stdout.Contains("NTU-HTTP-PROBE:a\"b 'c $literal") && stdout.Contains("NTU-HTTPS-STDIN-OK"),
+                "HTTP literals and HTTPS certificate data reach Windows PowerShell from " + Path.GetFileName(shell));
         }
     }
 

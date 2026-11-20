@@ -33,8 +33,8 @@ internal static partial class Program
             Assert(WinRmField<Label>(dialog, "summary").Text.Contains("2 von 2") &&
                 WinRmField<Label>(dialog, "summary").Text.Contains("Hinweis") == !success,
                 "completed remote tests and local preparation warnings are reported independently");
-            if (!success) Assert(grid.Rows[1].Cells["clientSetup"].Value is WinRmSetupState.Ready && grid.Rows[0].Cells["clientSetup"].Value is WinRmSetupState.None,
-                "actual failed hosts offer the setup-copy icon after a local preparation warning");
+            if (!success) Assert(grid.Rows[1].Cells["clientSetup"].Value is WinRmSetupState.Ready && grid.Rows[0].Cells["clientSetup"].Value is WinRmSetupState.Ready,
+                "both completed host tests offer client configuration after a local preparation warning");
             Assert(details.Text.Contains(success ? "TrustedHosts" : "Administrator"),
                 "local preparation results and actionable failures remain visible in the details");
             Assert(worker.Requests.Where(r => r.Action == "winrm-test").All(r => r.Host != "UNSELECTED.invalid"),
